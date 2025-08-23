@@ -1,0 +1,57 @@
+
+[project]
+name = "yde-ard25"
+description = "Yves' attempt to beat the ARC Prize 2025"
+readme = "README.md"
+version = "25.8.1"
+authors = [
+    {name = "Yves Delley", email = "pu.y@delley.net"},
+]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "nicegui",
+    "attrs",
+    "anyio",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+native = ["pywebview"]
+
+[dependency-groups]
+test = [
+    "pytest",
+]
+build = [
+    "pyinstaller>=6.10",
+    "pillow",
+]
+
+[project.urls]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.isort]
+profile = "black"
+known_first_party = "arc25"
+
+[tool.flake8]
+max-line-length = 120
+extend-select = "B950"
+extend-ignore = "E203,E501,E701,F401"
+exclude = "app/main.py"
+
+[tool.pdm]
+package-dir = "src"
+
+[tool.pdm.build]
+includes = ["src/arc25"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]

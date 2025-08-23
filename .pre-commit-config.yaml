@@ -1,0 +1,35 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v3.2.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-added-large-files
+  - id: check-merge-conflict
+  - id: check-yaml
+  - id: check-toml
+  - id: check-json
+# Using this mirror lets us use mypyc-compiled black, which is about 2x faster
+- repo: https://github.com/psf/black-pre-commit-mirror
+  rev: 24.8.0
+  hooks:
+  - id: black
+    language_version: python3
+    exclude: sketches/
+- repo: https://github.com/pycqa/flake8
+  rev: 7.0.0
+  hooks:
+  - id: flake8
+    entry: pflake8
+    additional_dependencies: [ pyproject-flake8, flake8-bugbear ]
+    exclude: sketches/
+- repo: https://github.com/pycqa/isort
+  rev: 6.0.0
+  hooks:
+  - id: isort
+- repo: https://github.com/pdm-project/pdm
+  rev: 2.22.2
+  hooks:
+    - id: pdm-lock-check
