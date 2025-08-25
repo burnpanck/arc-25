@@ -1,0 +1,8 @@
+- Input consists of a large cyan object and a smaller (always 3 by 3) blue object on black background.
+- Output consists only of the larger object, but recolored, on black background.
+- The color of the large object in the output does not appear in the input, so another mechanism must specify the color.
+- The shape of the (removed) small blue object correlates with the output color; it must be the color indicator.
+- Specifically, the mapping is as follows:
+  * [xxx|xox|oxo] maps to orange
+  * [xox|oxo|xxx] maps to green
+  * [oxo|xxx|oxo] maps to red

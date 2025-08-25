@@ -1,22 +1,15 @@
 from typing import TypeAlias
 
-from .types import (
-    Axis4,
-    Axis8,
-    Canvas,
-    Color,
-)
+from . import primitives, types
+from .primitives import *
 from .types import Coord as _Coord
-from .types import (
-    Dir4,
-    Dir8,
-    Image,
-    Mask,
-    MaskedImage,
-)
+from .types import *
 
 Coord: TypeAlias = _Coord | tuple[int, int]
 
-for e in [Axis8, Axis4, Dir8, Dir4, Color]:
+__all__ = types.__all__ + primitives.__all__
+
+for e in [Axis8, Axis4, Dir8, Dir4, Color, Transform]:
     for v in e:
         globals()[v.name] = v
+        __all__.append(v.name)

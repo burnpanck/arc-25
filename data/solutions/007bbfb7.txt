@@ -1,0 +1,3 @@
+- Input is a 3 by 3 image of a single color on black.
+- Output is a 3 by 3 tiling of the input.
+- Each tile is either taken as is or replaced by an all-black tile, depending on the color of the corresponding in the input: black cells are replaced by black tiles, non-black cells use a copy of the input.

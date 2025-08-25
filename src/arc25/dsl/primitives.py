@@ -1,23 +1,34 @@
+import dataclasses
 from typing import Iterable, Literal, TypeAlias
 
+import numpy as np
+
+from .. import symmetry
+from .types import *
 from .types import (
-    AnyImage,
     Axis8,
+    Canvas,
     Color,
-    ColorArray,
 )
 from .types import Coord as _Coord
 from .types import (
     Dir4,
     Dir8,
+    Image,
     Mask,
+    MaskedImage,
     Paintable,
     Pattern,
     ShapeSpec,
-    SymOp,
+    Transform,
 )
 
 Coord: TypeAlias = _Coord | tuple[int, int]
+
+
+_evolve = dataclasses.replace
+
+_start = set(locals())
 
 # ---------------------------------------------------------------------------
 # Stroke patterns
@@ -130,7 +141,41 @@ def paste(canvas: Paintable, image: Paintable, *, at: Coord | None = None) -> Pa
     If `image` has a mask, only pixels that are `True` will be painted.
     `at` can be outside of the canvas, and any image pixels outside of the canvas will be ignored.
     """
-    ...
+    if isinstance(canvas, Canvas):
+        return _evolve(canvas, image=paste(canvas.image, image, at=at))
+    if isinstance(image, Canvas):
+        image = image.image
+    assert isinstance(canvas, (Image, MaskedImage))
+    assert isinstance(image, (Image, MaskedImage))
+    at = _Coord.to_array(at)
+    dslc = tuple(
+        slice(*v)
+        for v in zip(
+            np.maximum(0, at),
+            np.minimum(canvas.shape, at + image.shape),
+        )
+    )
+    sslc = tuple(
+        slice(*v)
+        for v in zip(
+            np.maximum(0, -at),
+            np.minimum(image.shape, canvas.shape - at),
+        )
+    )
+    nimg = canvas._data.copy()
+    dimg = nimg[dslc]
+    simg = image._data[sslc]
+    if isinstance(image, MaskedImage):
+        smask = image._mask[sslc]
+        dimg[...] = np.where(smask, simg, dimg)
+    else:
+        smask = True
+        dimg[...] = simg
+    if not isinstance(canvas, MaskedImage):
+        return Image(_data=nimg)
+    nmask = canvas._mask.copy()
+    nmask[dslc] |= smask
+    return MaskedImage(_data=nimg, _mask=nmask)
 
 
 def fill(
@@ -142,10 +187,42 @@ def fill(
 ) -> Paintable: ...
 
 
+def make_canvas(
+    nrow: int, ncol: int, orientation: symmetry.SymOp = symmetry.SymOp.e
+) -> Canvas:
+    return Canvas.make((nrow, ncol), orientation=orientation)
+
+
 def extract_image(canvas: Paintable, *, rect: ..., mask: Mask) -> AnyImage: ...
 
 
-def transform(canvas: Paintable, symop: SymOp) -> Paintable: ...
+def transform(canvas: Paintable, op: Transform) -> Paintable:
+    match op:
+        case Transform():
+            sop = op.value
+        case symmetry.SymOp():
+            sop = op
+        case _:
+            raise TypeError(f"Invalid type for `op` argument: {type(op).__name__}")
+    match canvas:
+        case Canvas():
+            return _evolve(
+                canvas,
+                image=transform(canvas.image, op),
+                orientation=sop.combine(canvas.orientation),
+            )
+        case Image():
+            return _evolve(canvas, _data=symmetry.transform_image(sop, canvas._data))
+        case MaskedImage():
+            return _evolve(
+                canvas,
+                _data=symmetry.transform_image(sop, canvas._data),
+                _mask=symmetry.transform_image(sop, canvas._mask),
+            )
+        case _:
+            raise TypeError(
+                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
+            )
 
 
 # ----------------------------------------------------------------------------
@@ -153,7 +230,7 @@ def transform(canvas: Paintable, symop: SymOp) -> Paintable: ...
 # ----------------------------------------------------------------------------
 
 
-def count_colors(canvas: Paintable) -> ColorArray[int]: ...
+def count_colors(canvas: Paintable) -> ColorArray: ...
 
 
 def most_common_color(
@@ -201,3 +278,11 @@ def dilate(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask: 
 
 
 def erode(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask: ...
+
+
+# -------------
+
+_end = set(locals())
+
+__all__ = sorted([k for k in _end - _start if not k.startswith("_")])
+del _start, _end

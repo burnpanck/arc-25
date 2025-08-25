@@ -1,0 +1,6 @@
+- Input consists of one or more red squares with a red dot in the centre.
+- Output is the same, with the black space between the rectangle and its centre filled with a different color.
+- The color is determined by the size of the rectangle. Specifically:
+  * 5x5 rectangles are filled in cyan
+  * 7x7 rectangles are filled in yellow
+  * 9x9 rectangles are filled in green

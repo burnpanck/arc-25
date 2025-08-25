@@ -1,6 +1,6 @@
 
 [project]
-name = "yde-ard25"
+name = "yde-arc25"
 description = "Yves' attempt to beat the ARC Prize 2025"
 readme = "README.md"
 version = "25.8.1"
@@ -17,6 +17,9 @@ dependencies = [
     "attrs",
     "anyio",
     "matplotlib",
+    "platformdirs>=4.3.8",
+    "pyyaml>=6.0.2",
+    "watchfiles>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -31,8 +34,6 @@ build = [
     "pillow",
 ]
 
-[project.urls]
-
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
@@ -44,7 +45,7 @@ known_first_party = "arc25"
 [tool.flake8]
 max-line-length = 120
 extend-select = "B950"
-extend-ignore = "E203,E501,E701,F401"
+extend-ignore = "E203,E501,E701,F401,F403,F405"
 exclude = "app/main.py"
 
 [tool.pdm]

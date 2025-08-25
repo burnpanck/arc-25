@@ -1,5 +1,6 @@
 import contextlib
 import json
+import typing
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .dataset import IAETriple, IOPair
 from .dsl.types import Canvas, Color, Image, MaskedImage, Paintable
 
 # ARC color map - colors for values 0-9
@@ -45,86 +47,50 @@ def show_image(img: Paintable, *, ax=None):
     return ax
 
 
-def show_test_case(test_case):
-    pairs = test_case.train + test_case.test
-    N = len(pairs)
-    fig, axes = plt.subplots(2, N, figsize=(12, 2 * 12 / N))
-    for i, (p, axe) in enumerate(zip(pairs, axes.T)):
-        c = "green" if i < len(test_case.train) else "red"
-        for k, ax in zip(["input", "output"], axe):
-            v = getattr(p, k, None)
+def show_test_case(
+    examples: typing.Iterable[IOPair] | typing.Iterable[IAETriple],
+    *,
+    n_train: int | None = None,
+    fig=None,
+    width=None,
+    example_width=None,
+    orientation: typing.Literal["h", "v"] = "v",
+):
+    assert width is None or example_width is None
+    examples = list(examples)
+    N = len(examples)
+    M = {IOPair: 2, IAETriple: 3}[type(examples[0])]
+    if fig is None:
+        fig = plt.gcf()
+    if example_width is not None:
+        match orientation:
+            case "h":
+                width = N * example_width
+            case "v":
+                width = M * example_width
+    if width is None:
+        width = 12
+    match orientation:
+        case "h":
+            fig.set_size_inches(width, M * width / N)
+            axes = fig.subplots(M, N)
+        case "v":
+            fig.set_size_inches(width, N * width / M)
+            axes = fig.subplots(N, M).T
+        case _:
+            raise KeyError(orientation)
+    for i, (e, axe) in enumerate(zip(examples, axes.T)):
+        c = "black" if n_train is None else "green" if i < n_train else "red"
+        for k, ax in zip(
+            {
+                2: ["input", "output"],
+                3: ["input", "actual", "expected"],
+            }[M],
+            axe,
+        ):
+            v = getattr(e, k, None)
             if v is None:
                 continue
             show_image(v, ax=ax)
             for spine in ax.spines.values():
                 spine.set_edgecolor(c)
-
-
-@attrs.frozen
-class IOPair:
-    input: Canvas
-    output: Canvas
-
-
-@attrs.frozen
-class Challenge:
-    id: str
-    train: tuple[IOPair, ...]
-    test: tuple[IOPair | Canvas, ...]
-
-
-def parse_inputs(v, had_list=False, id=None):
-    match v:
-        case dict():
-            v = {kk: parse_inputs(vv, had_list) for kk, vv in v.items()}
-            if had_list:
-                return IOPair(**v)
-            else:
-                assert id is not None
-                return Challenge(id=id, **v)
-        case list():
-            if not had_list:
-                return tuple(parse_inputs(vv, True) for vv in v)
-            else:
-                return Canvas(Image(np.array(v, dtype="i1")))
-        case _:
-            raise TypeError(f"Unsupported type {type(v).__name__}")
-
-
-@contextlib.contextmanager
-def load_file(root, relative, mode="r"):
-    match root.suffix:
-        case ".zip":
-            with zipfile.ZipFile(root, "r") as zfh:
-                fh = zfh.open(relative)
-                yield fh
-        case "":
-            with open(root / relative, mode) as fh:
-                yield fh
-        case _:
-            raise KeyError(f"Unknown suffix {root.suffix!r}")
-
-
-def load_dataset(
-    root: Path, challenges: Path, solutions: Path | None = None
-) -> dict[str, Challenge]:
-    with load_file(root, challenges, "rt") as fh:
-        challenges = {k: parse_inputs(v, id=k) for k, v in json.load(fh).items()}
-    if solutions is not None:
-        with load_file(root, solutions, "rt") as fh:
-            solutions = {k: parse_inputs(v) for k, v in json.load(fh).items()}
-        dataset = {}
-        for k, v in challenges.items():
-            dataset[k] = Challenge(
-                train=v.train,
-                test=tuple(
-                    IOPair(
-                        input=i.input,
-                        output=o,
-                    )
-                    for i, o in zip(v.test, solutions[k])
-                ),
-            )
-    else:
-        dataset = challenges
-    return dataset

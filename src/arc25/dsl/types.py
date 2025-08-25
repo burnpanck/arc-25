@@ -1,10 +1,15 @@
+import typing
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import TypeAlias
+from enum import Enum, StrEnum
+from typing import Self, TypeAlias
 
 import numpy as np
 
 from ..symmetry import SymOp
+
+_start = set(locals())
+
+# --------
 
 Axis4 = StrEnum("Axis4", [(k.upper(), k) for k in "row col".split()])
 Axis8 = StrEnum(
@@ -18,6 +23,17 @@ Dir8 = StrEnum(
         for k in "right up_right up up_left left down_left down down_right".split()
     ],
 )
+
+
+class Transform(Enum):
+    IDENTITY = SymOp.e
+    FLIP_LR = SymOp.x
+    FLIP_UD = SymOp.y
+    ROTATE_180 = SymOp.i
+    FLIP_DIAG_MAIN = SymOp.t
+    ROTATE_LEFT = SymOp.l
+    ROTATE_RIGHT = SymOp.r
+    FLIP_DIAG_ANTI = SymOp.d
 
 
 class Color(StrEnum):
@@ -42,6 +58,14 @@ class Pattern:
 class Coord:
     row: int
     col: int
+
+    @classmethod
+    def to_array(cls, obj: Self | tuple[int, int]) -> np.ndarray:
+        if isinstance(obj, Coord):
+            obj = (obj.row, obj.col)
+        ret = np.empty(2, int)
+        ret[:] = obj
+        return ret
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +106,21 @@ class Canvas:
     # describes how physical/original coordinates have been mapped to the current orientation
     orientation: SymOp = SymOp.e
 
+    @classmethod
+    def make(
+        cls,
+        shape: tuple[int, int],
+        *,
+        orientation: SymOp = SymOp.e,
+        fill: Color | None = None,
+    ) -> Self:
+        idata = np.tile(Color(fill).index if fill is not None else 0, shape)
+        if fill is None:
+            image = MaskedImage(_data=idata, _mask=np.zeros(shape, bool))
+        else:
+            image = Image(_data=idata)
+        return cls(image=image, orientation=orientation)
+
     @property
     def shape(self):
         return self.image.shape
@@ -95,3 +134,11 @@ ShapeSpec: TypeAlias = Paintable | tuple[int, int]
 @dataclass(frozen=True, slots=True)
 class ColorArray:
     data: np.ndarray
+
+
+# -------------
+
+_end = set(locals())
+
+__all__ = sorted([k for k in _end - _start if not k.startswith("_")])
+del _start, _end

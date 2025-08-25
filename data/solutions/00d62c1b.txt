@@ -1,0 +1,3 @@
+- Input consists of an arbitrary green shape on black background.
+- Output is the same, but with all black cells completely enclosed by green cells replaced with yellow cells.
+- Diagonal cells are not considered as neighbours in this challenge.

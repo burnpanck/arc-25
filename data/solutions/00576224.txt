@@ -1,0 +1,2 @@
+- Output is a 3 by 3 tiling of the input.
+- Middle row of tiles are horizontally flipped.
