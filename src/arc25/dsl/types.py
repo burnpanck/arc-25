@@ -1,6 +1,7 @@
 import typing
 from dataclasses import dataclass
 from enum import Enum, StrEnum
+from types import MappingProxyType
 from typing import Self, TypeAlias
 
 import numpy as np
@@ -47,6 +48,10 @@ class Color(StrEnum):
     ORANGE = "#FF851B"
     CYAN = "#7FDBFF"
     BROWN = "#870C25"
+
+
+_color2index = MappingProxyType({v: k for k, v in enumerate(Color)})
+_index2color = tuple(Color)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +125,37 @@ class Mask:
     @property
     def as_numpy(self):
         return self._mask.copy()
+
+    @property
+    def count(self):
+        return self._mask.sum()
+
+    def __and__(self, other: Self | np.ndarray | bool) -> Self:
+        if isinstance(other, Mask):
+            other = other._mask
+        return Mask(self._mask & other)
+
+    def __rand__(self, other: Self | np.ndarray | bool) -> Self:
+        return self.__and__(other)
+
+    def __or__(self, other: Self | np.ndarray | bool) -> Self:
+        if isinstance(other, Mask):
+            other = other._mask
+        return Mask(self._mask | other)
+
+    def __ror__(self, other: Self | np.ndarray | bool) -> Self:
+        return self.__or__(other)
+
+    def __xor__(self, other: Self | np.ndarray | bool) -> Self:
+        if isinstance(other, Mask):
+            other = other._mask
+        return Mask(self._mask ^ other)
+
+    def __rxor__(self, other: Self | np.ndarray | bool) -> Self:
+        return self.__xor__(other)
+
+    def __invert__(self) -> Self:
+        return Mask(~self._mask)
 
 
 @dataclass(frozen=True, slots=True)

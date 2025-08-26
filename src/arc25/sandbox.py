@@ -1,4 +1,5 @@
 import itertools
+import traceback
 from typing import Iterable, Literal, TypeAlias
 
 import attrs
@@ -56,8 +57,9 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
                     raise TypeError(
                         f"`solution` must return a `Canvas`, got `{type(actual).__name__}`"
                     )
-            except Exception as ex:
-                eval = ExampleEval(error=repr(ex), full_match=False, pixel_match=0)
+            except Exception:
+                error = "\n".join(traceback.format_exc().split("\n")[-12:])
+                eval = ExampleEval(error=error, full_match=False, pixel_match=0)
             else:
                 warnings = []
                 if isinstance(actual.image, types.MaskedImage):

@@ -1,0 +1,6 @@
+- Input has:
+  * Incomplete horizontal and vertical lines of a single random color on black
+  * Sometimes a small number of random pixels colored differently (not yellow)
+  * A small number of "lilys"; a shape centered around a yellow cell, with the four adjacent cells colored in a single, random color.
+- Output is a single cell colored in the color of the most abundant lily color
+- Because every lily has four leaves, we can instead just pick the most abundant leaf color.

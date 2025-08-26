@@ -238,7 +238,7 @@ def main_page(*, request: Request):
             language="python",
             theme="githubLight",
         ).classes("w-full h-full")
-        output = ui.log()
+        output = ui.log().classes("w-full h-full")
 
         def show_eval_output(eval):
             for k in ["train", "test"]:

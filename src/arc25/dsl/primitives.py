@@ -1,6 +1,6 @@
 import dataclasses
 from types import MappingProxyType
-from typing import Iterable, Literal, TypeAlias
+from typing import Any, Iterable, Literal, TypeAlias
 
 import numpy as np
 from scipy import ndimage
@@ -24,6 +24,9 @@ from .types import (
     Rect,
     ShapeSpec,
     Transform,
+    _color2index,
+    _index2color,
+    _shape_from_spec,
 )
 
 Coord: TypeAlias = _Coord | tuple[int, int]
@@ -31,7 +34,26 @@ Coord: TypeAlias = _Coord | tuple[int, int]
 
 _evolve = dataclasses.replace
 
+
+def _make_type_error(argument: Any, argument_name: str, type_signature: str):
+    return TypeError(
+        f"{type(argument).__name__!r} is an invalid type for argument {argument_name}."
+        f" Expected {type_signature!r}"
+    )
+
+
+def _set_of_colors(color: Color | set[Color], *, argname: str = "color") -> set[Color]:
+    match color:
+        case str() | Color():
+            return {Color(color)}
+        case set() | list() | tuple():
+            return {Color(c) for c in color}
+        case _:
+            raise _make_type_error(color, argname, "Color | set[Color]")
+
+
 _start = set(locals())
+
 
 # ---------------------------------------------------------------------------
 # Stroke patterns
@@ -185,9 +207,38 @@ def fill(
     canvas: Paintable,
     style: Color | Pattern,
     *,
-    dir: Dir8 | None,
+    dir: Dir8 | None = None,
     clip: Mask | None = None,
-) -> Paintable: ...
+) -> Paintable:
+    if isinstance(canvas, Canvas):
+        return _evolve(canvas, image=fill(canvas.image, style, dir=dir, clip=clip))
+    match style:
+        case str() | Color():
+            style = [Color(style)]
+        case list():
+            pass
+        case _:
+            raise _make_type_error(style, "style", "Color | Pattern")
+    if clip is None:
+        mask = True
+    else:
+        mask = clip._mask
+    if len(style) > 1:
+        if dir is None:
+            raise ValueError("When filling with a pattern, `dir` cannot be `None`")
+        raise NotImplementedError("Pattern-fill is not implemented")
+    else:
+        assert len(style) == 1
+        (c,) = style
+        fill_value = np.tile(_color2index[c], canvas.shape)
+    new_img = np.where(mask, fill_value, canvas._data)
+    match canvas:
+        case Image():
+            return _evolve(canvas, _data=new_img)
+        case MaskedImage():
+            return _evolve(canvas, _data=new_img, _mask=canvas._mask | mask)
+        case _:
+            raise _make_type_error(canvas, "canvas", "Paintable")
 
 
 def make_canvas(
@@ -208,9 +259,7 @@ def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:
         case Mask():
             return _evolve(canvas, _mask=canvas._mask[slc])
         case _:
-            raise TypeError(
-                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
-            )
+            raise _make_type_error(canvas, "canvas", "Paintable | Mask")
 
 
 def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
@@ -222,13 +271,11 @@ def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
         case Canvas():
             return _evolve(canvas, image=apply_mask(canvas.image, mask))
         case Image():
-            return MaskedImage(canvas, _data=canvas._data, _mask=mask)
+            return MaskedImage(_data=canvas._data, _mask=mask)
         case MaskedImage():
             return _evolve(canvas, _mask=canvas._mask & mask)
         case _:
-            raise TypeError(
-                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
-            )
+            raise _make_type_error(canvas, "canvas", "Paintable")
 
 
 def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
@@ -238,7 +285,7 @@ def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
         case symmetry.SymOp():
             sop = op
         case _:
-            raise TypeError(f"Invalid type for `op` argument: {type(op).__name__}")
+            raise _make_type_error(op, "op", "Transform")
     match canvas:
         case Canvas():
             return _evolve(
@@ -260,9 +307,7 @@ def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
                 _mask=symmetry.transform_image(sop, canvas._mask),
             )
         case _:
-            raise TypeError(
-                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
-            )
+            raise _make_type_error(canvas, "canvas", "Paintable | Mask")
 
 
 # ----------------------------------------------------------------------------
@@ -270,12 +315,36 @@ def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
 # ----------------------------------------------------------------------------
 
 
-def count_colors(canvas: Paintable) -> ColorArray: ...
+def count_colors(canvas: Paintable) -> ColorArray:
+    match canvas:
+        case Canvas():
+            return count_colors(canvas.image)
+        case Image():
+            mask = np.s_[:, :]
+        case MaskedImage():
+            mask = canvas._mask._mask
+        case _:
+            raise _make_type_error(canvas, "canvas", "Paintable")
+    cells = canvas._data[mask].ravel()
+    return ColorArray(np.bincount(cells, minlength=10))
 
 
-def most_common_color(
-    canvas: Paintable, *, exclude: Color | set[Color] | None = None
-) -> Color: ...
+def most_common_colors(
+    color_count: ColorArray, *, exclude: Color | set[Color] | None = None
+) -> set[Color]:
+    match color_count:
+        case ColorArray():
+            color_count = color_count.data
+        case np.ndarray():
+            assert color_count.shape == (10,)
+        case _:
+            raise _make_type_error(color_count, "color_count", "ColorArray")
+    for c in _set_of_colors(exclude, "exclude") if exclude is not None else []:
+        color_count[_color2index[c]] = -1
+    max_count = color_count.max()
+    if max_count < 0:
+        return set()
+    return {_index2color[i] for i in np.flatnonzero(color_count == max_count)}
 
 
 _structures = MappingProxyType(
@@ -316,15 +385,29 @@ def path_to_mask(shape: ShapeSpec, path: Iterable[Coord]) -> Mask: ...
 def new_mask_like(shape: ShapeSpec, *, fill: bool) -> Mask: ...
 
 
-def mask_all(shape: ShapeSpec) -> Mask: ...
+def mask_all(shape: ShapeSpec) -> Mask:
+    return Mask(np.ones(_shape_from_spec(shape), bool))
 
 
-def mask_none(shape: ShapeSpec) -> Mask: ...
+def mask_none(shape: ShapeSpec) -> Mask:
+    return Mask(np.zeros(_shape_from_spec(shape), bool))
 
 
 def mask_color(canvas: Paintable, color: Color | set[Color]) -> Mask:
     """Build a Mask from Color | set[Color]."""
-    ...
+    color = _set_of_colors(color)
+    match canvas:
+        case Canvas():
+            return mask_color(canvas.image, color)
+        case Image():
+            mask = mask_all(canvas)
+        case MaskedImage():
+            mask = canvas._mask._mask
+    ret = mask_none(canvas)
+    for c in color:
+        m = canvas._data == _color2index[c]
+        ret |= m
+    return ret & mask
 
 
 def mask_unpainted(canvas: Paintable) -> Mask:
@@ -336,9 +419,7 @@ def mask_unpainted(canvas: Paintable) -> Mask:
         case Image():
             return mask_none(canvas)
         case _:
-            raise TypeError(
-                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
-            )
+            raise _make_type_error(canvas, "canvas", "Paintable")
 
 
 def mask_row(shape: ShapeSpec, i: int) -> Mask: ...
@@ -355,10 +436,12 @@ def masks_touch(a: Mask, b: Mask, *, connectivity: Literal[4, 8] = 4) -> bool:
     pass
 
 
-def dilate(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask: ...
+def dilate(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask:
+    return Mask(ndimage.binary_dilation(mask._mask, _structures[connectivity], k))
 
 
-def erode(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask: ...
+def erode(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask:
+    return Mask(ndimage.binary_erosion(mask._mask, _structures[connectivity], k))
 
 
 # -------------
