@@ -2,8 +2,10 @@ import argparse
 import contextlib
 import importlib.metadata
 import logging
+import itertools
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import anyio
 import attrs
@@ -69,6 +71,12 @@ class App:
             with anyio.CancelScope(shield=True):
                 await single_pass()
 
+rule_placeholder = """
+def solution(input: Canvas) -> Canvas:
+    # determine output from input
+    return output
+""".lstrip()
+
 
 @ui.page("/")
 def main_page(*, request: Request):
@@ -77,10 +85,15 @@ def main_page(*, request: Request):
     fig = ui.matplotlib().figure
 
     def update_figure(cur_c):
+        chal = cur_ds.challenges[cur_c]
         with fig:
             fig.clear()
             arc_tools.show_test_case(
-                cur_ds.challenges[cur_c], fig=fig, example_width=3, orientation="v"
+                chal.train + chal.test,
+                n_train=len(chal.train),
+                fig=fig,
+                example_width=3,
+                orientation="v",
             )
 
     with ui.left_drawer(fixed=True).props("width=500"):
@@ -119,19 +132,25 @@ def main_page(*, request: Request):
             ckeys = list(cur_ds.challenges)
             csel.set_value(0)
             csel.props["max"] = len(ckeys) - 1
+            update_challenge(SimpleNamespace(value=0))
 
         ds_select.on_value_change(update_dataset)
         clabel = ui.label(f"{cur_ds.title}: {1}/{len(ckeys)}")
 
+        store_holdoff = anyio.current_time()
         def update_challenge(evt):
-            nonlocal cur_c
+            nonlocal cur_c, store_holdoff
             remember_solution()
+            store_holdoff = anyio.current_time()
             idx = int(evt.value)
-            clabel.set_text(f"{cur_ds.title}: {idx+1}/{len(ckeys)}")
             cur_c = ckeys[idx]
-            sol = app.solutions.get(cur_c, Solution.make_empty(id=cur_c))
+            clabel.set_text(f"{cur_ds.title}: {cur_c} ({idx+1}/{len(ckeys)})")
+            sol = app.solutions_db.solutions.get(cur_c, Solution.make(id=cur_c))
             explanation.set_value(sol.explanation)
-            rule.set_value(sol.rule)
+            r = sol.rule
+            if not r.strip():
+                r = rule_placeholder
+            rule.set_value(r)
             update_figure(cur_c)
 
         csel.on_value_change(update_challenge)
@@ -150,16 +169,24 @@ def main_page(*, request: Request):
         ).classes("w-full h-full")
 
         def remember_solution():
+            r = rule.value.strip()
+            if r == rule_placeholder.strip():
+                r = ""
             sol = Solution(
                 id=cur_c,
-                explanation=explanation.value.strip(),
-                rule=rule.value.strip(),
+                explanation=explanation.value.strip()+"\n",
+                rule=r+"\n",
             )
-            if not sol.is_empty and sol != app.solutions.get(sol.id):
+            if not sol.is_empty and sol != app.solutions_db.solutions.get(sol.id):
+                if anyio.current_time() < store_holdoff+1:
+                    logger.warning(f"Not storing solution {sol.id} due to being recently loaded: {sol}")
+                    return
+                logger.debug(f"Storing solution {sol.id}: {sol}")
                 app.store_solution(sol)
 
         explanation.on_value_change(lambda evt: remember_solution())
         rule.on_value_change(lambda evt: remember_solution())
+        update_challenge(SimpleNamespace(value=0))
 
     update_figure(cur_c)
 
@@ -243,22 +270,32 @@ def run(**kw):
     db_root = data_path / "solutions"
     db_root.mkdir(exist_ok=True, parents=True)
     challenges_root = data_path / "arc-prize-2025.zip"
-    logger.info(f"Loading data from {challenges_root}")
 
-    datasets = {}
-    for k in ["training", "evaluation", "test"]:
-        ds = arc_tools.load_dataset(
-            challenges_root,
-            f"arc-agi_{k}_challenges.json",
-            f"arc-agi_{k}_solutions.json" if k != "test" else None,
+    async def load_datasets():
+        logger.info(f"Loading data from {challenges_root}")
+        datasets = {}
+        for k in ["training", "evaluation", "test"]:
+            ds = await Dataset.load(
+                id=k,
+                root=challenges_root,
+                challenges=f"arc-agi_{k}_challenges.json",
+                solutions=f"arc-agi_{k}_solutions.json" if k != "test" else None,
+            )
+            datasets[k] = ds
+        datasets["combined"] = Dataset(
+            id="combined",
+            challenges=dict(
+                itertools.chain(*[ds.challenges.items() for ds in datasets.values()])
+            ),
         )
-        datasets[k] = Dataset(id=k, title=k.title(), challenges=ds)
+        return datasets
 
     _orig_lifespan_context = nicegui.app.router.lifespan_context
 
     @contextlib.asynccontextmanager
     async def lifespan(nicegui_app):
         async with _orig_lifespan_context(nicegui_app):
+            datasets = await load_datasets()
             async with App.run(
                 datasets=datasets,
                 solutions_db=db_root,

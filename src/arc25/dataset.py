@@ -122,12 +122,13 @@ class Solution:
     rule: str
 
     @classmethod
-    def make_empty(cls, id):
-        return Solution(id=id, explanation="", rule="")
+    def make(cls, id, *, explanation="", rule=""):
+        return Solution(id=id, explanation=explanation, rule=rule)
+
 
     @property
     def is_empty(self):
-        return not self.explanation and not self.rule
+        return not self.explanation.strip() and not self.rule.strip()
 
 
 @attrs.frozen
@@ -147,19 +148,19 @@ class SolutionDB:
             id = f.with_suffix("").name
             rule = await f.read_text()
             self.solutions[id] = attrs.evolve(
-                self.solutions.get(id, Solution.make_empty(id)),
+                self.solutions.get(id, Solution.make(id)),
                 rule=rule,
             )
         async for f in root.glob("*.txt"):
             id = f.with_suffix("").name
             explanation = await f.read_text()
             self.solutions[id] = attrs.evolve(
-                self.solutions.get(id, Solution.make_empty(id)),
+                self.solutions.get(id, Solution.make(id)),
                 explanation=explanation,
             )
 
     async def store(self, solution: Solution):
-        db_root = self.root
+        db_root = anyio.Path(self.root)
         sol = solution
         id = sol.id
         if sol.rule:
