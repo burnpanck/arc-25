@@ -1,0 +1,2 @@
+- Input are coloured shapes on blue background.
+- Output is the minimal crop to non-background cells, with background cells within the crop replaced by black cells.

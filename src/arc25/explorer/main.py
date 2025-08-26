@@ -4,6 +4,7 @@ import importlib.metadata
 import logging
 import itertools
 import sys
+import random
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -80,7 +81,8 @@ def solution(input: Canvas) -> Canvas:
 
 @ui.page("/")
 def main_page(*, request: Request):
-    app: App = request.app.app_impl
+    nicegui_app = request.app
+    app: App = nicegui_app.app_impl
 
     fig = ui.matplotlib().figure
 
@@ -101,29 +103,11 @@ def main_page(*, request: Request):
         ds_select = ui.select(
             {d.id: d.title for d in app.datasets.values()},
             value=initial_value,
-        )
-        if False:
+        ).bind_value(nicegui_app.storage.user, 'dataset')
 
-            def load_dataset(ds_id):
-                ds = app.datasets[ds_id]
-                return [dict(id=k, status="") for k, v in ds.challenges.items()]
-
-            ds_table = ui.table(
-                columns={k: k.title() for k in ["id", "status"]},
-                rows=load_dataset(initial_value)[:20],
-                row_key="id",
-                #            selection="single",
-            )
-
-            def update_dataset(evt):
-                ds = load_dataset(evt.value)
-                ds_table.clear()
-                ds_table.add_rows(ds)
-
-            ds_select.on_value_change(update_dataset)
         cur_ds = app.datasets[initial_value]
         ckeys = list(cur_ds.challenges)
-        csel = ui.slider(min=0, max=len(ckeys) - 1, value=0)
+        csel = ui.slider(min=0, max=len(ckeys) - 1, value=0).bind_value(nicegui_app.storage.user, 'challenge')
         cur_c = ckeys[csel.value]
 
         def update_dataset(evt):
@@ -159,6 +143,8 @@ def main_page(*, request: Request):
             prev.on_click(lambda: csel.set_value(max(0, csel.value - 1)))
             next = ui.button("Next")
             next.on_click(lambda: csel.set_value(min(len(ckeys) - 1, csel.value + 1)))
+            rnd = ui.button("Random")
+            rnd.on_click(lambda: csel.set_value(random.randint(0, len(ckeys)-1)))
 
         explanation = ui.textarea(
             placeholder="Explanation",
@@ -179,14 +165,14 @@ def main_page(*, request: Request):
             )
             if not sol.is_empty and sol != app.solutions_db.solutions.get(sol.id):
                 if anyio.current_time() < store_holdoff+1:
-                    logger.warning(f"Not storing solution {sol.id} due to being recently loaded: {sol}")
+                    # logger.warning(f"Not storing solution {sol.id} due to being recently loaded: {sol}")
                     return
-                logger.debug(f"Storing solution {sol.id}: {sol}")
+                # logger.debug(f"Storing solution {sol.id}: {sol}")
                 app.store_solution(sol)
 
         explanation.on_value_change(lambda evt: remember_solution())
         rule.on_value_change(lambda evt: remember_solution())
-        update_challenge(SimpleNamespace(value=0))
+        update_challenge(SimpleNamespace(value=csel.value))
 
     update_figure(cur_c)
 
@@ -288,6 +274,8 @@ def run(**kw):
                 itertools.chain(*[ds.challenges.items() for ds in datasets.values()])
             ),
         )
+        for v in datasets.values():
+            logger.debug(f"Dataset {v.title} has {len(v.challenges)} challenges")
         return datasets
 
     _orig_lifespan_context = nicegui.app.router.lifespan_context
@@ -305,7 +293,7 @@ def run(**kw):
 
     nicegui.app.router.lifespan_context = lifespan
 
-    #    kw.setdefault("storage_secret", "1234123asdfqsd")
+    kw.setdefault("storage_secret", "27c245153ef0511d7a3b933107de24b3")
 
     if args.on_air:
         kw["on_air"] = args.on_air

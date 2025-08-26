@@ -193,10 +193,10 @@ def make_canvas(
     return Canvas.make((nrow, ncol), orientation=orientation)
 
 
-def extract_image(canvas: Paintable, *, rect: ..., mask: Mask) -> AnyImage: ...
+def extract_image(canvas: Paintable | Mask, *, rect: ..., mask: Mask) -> Paintable | Mask: ...
 
 
-def transform(canvas: Paintable, op: Transform) -> Paintable:
+def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
     match op:
         case Transform():
             sop = op.value
@@ -217,6 +217,11 @@ def transform(canvas: Paintable, op: Transform) -> Paintable:
             return _evolve(
                 canvas,
                 _data=symmetry.transform_image(sop, canvas._data),
+                _mask=symmetry.transform_image(sop, canvas._mask),
+            )
+        case Mask():
+            return _evolve(
+                canvas,
                 _mask=symmetry.transform_image(sop, canvas._mask),
             )
         case _:
@@ -259,6 +264,18 @@ def mask_color(canvas: Paintable, color: Color | set[Color]) -> Mask:
     """Build a Mask from Color | set[Color]."""
     ...
 
+def mask_unpainted(canvas: Paintable) -> Mask:
+    match canvas:
+        case Canvas():
+            return mask_unpainted(canvas.image)
+        case MaskedImage():
+            return Mask(~canvas._mask)
+        case Image():
+            return mask_none(canvas)
+        case _:
+            raise TypeError(
+                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
+            )
 
 def mask_row(shape: ShapeSpec, i: int) -> Mask: ...
 

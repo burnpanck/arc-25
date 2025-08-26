@@ -1,0 +1,4 @@
+- Input are random gray cells on black background.
+- Output background cells match input background cells.
+- Output contains gray and blue foreground cells.
+- Blue foreground cells are symmetric with respect to horizontal flip.

@@ -163,8 +163,8 @@ class SolutionDB:
         db_root = anyio.Path(self.root)
         sol = solution
         id = sol.id
-        if sol.rule:
+        if sol.rule.strip():
             await (db_root / f"{id}.py").write_text(sol.rule)
-        if sol.explanation:
+        if sol.explanation.strip():
             await (db_root / f"{id}.txt").write_text(sol.explanation)
         self.solutions[id] = sol

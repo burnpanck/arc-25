@@ -1,0 +1,2 @@
+- Input contains a large black square with random cells colored in a single, random color, an diagonally adjacent a 2 by 2 square of four random colours, on a cyan background.
+- In the output, the random cells within the black square are recolored in the colors indicated by the 2 by 2 square: The black square is divided into four equal sub-square, each of which has the coloured cells recoloured in the colour of the corresponding cell of the 2 by 2 square.

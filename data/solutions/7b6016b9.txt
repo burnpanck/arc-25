@@ -1,0 +1,2 @@
+- Input are colored lines on black background.
+- Output contains the same colored lines, but background cells are recolored green, unless they don't touch the canvas edge, which are recolored red.
