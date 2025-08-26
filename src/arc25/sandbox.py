@@ -1,5 +1,5 @@
 import itertools
-from typing import TypeAlias
+from typing import TypeAlias, Iterable, Literal
 
 import numpy as np
 import attrs
@@ -29,7 +29,12 @@ class ChallengeEval:
     example_match: float
     pixel_match: float
 
-def evaluate_solution(challenge: Challenge, solution: Solution) -> ChallengeEval:
+    def get_eval_triples(self, subset:Literal["train","test","all"] = "all")->Iterable[IAETriple]:
+        for k in dict(all=["train","test"]).get(subset,[subset]):
+            for io,e in zip(getattr(self.challenge,k),getattr(self,f"{k}_eval")):
+                yield io.compare_output(e.output)
+
+async def evaluate_solution(challenge: Challenge, solution: Solution) -> ChallengeEval:
     chal = challenge
     sol = solution
     result = dict(train=[],test=[])
@@ -41,7 +46,7 @@ def evaluate_solution(challenge: Challenge, solution: Solution) -> ChallengeEval
                 exec(sol.rule,globals=glob,locals=loc)
                 solver = loc.get("solution")
                 if solver is None:
-                    raise ValueError(f"Rule must contain a function called `solution`")
+                    raise ValueError("Rule must contain a function called `solution`")
                 actual = solver(io.input)
                 if not isinstance(actual, types.Canvas):
                     raise TypeError(f"`solution` must return a `Canvas`, got `{type(actual).__name__}`")

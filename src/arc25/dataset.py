@@ -2,7 +2,7 @@ import contextlib
 import json
 import zipfile
 from pathlib import Path
-from typing import Self
+from typing import Self, Iterable,Literal
 
 import anyio
 import attrs
@@ -14,7 +14,7 @@ from .dsl.types import Canvas, Image
 @attrs.frozen
 class IAETriple:
     input: Canvas
-    actual: Canvas
+    actual: Canvas | None = None
     expected: Canvas | None = None
 
 
@@ -32,6 +32,11 @@ class Challenge:
     id: str
     train: tuple[IOPair, ...]
     test: tuple[IOPair | Canvas, ...]
+
+    def get_empty_eval_triples(self, subset:Literal["train","test","all"] = "all")->Iterable[IAETriple]:
+        for k in dict(all=["train","test"]).get(subset,[subset]):
+            for io in getattr(self,k):
+                yield io.compare_output(None)
 
 
 def parse_inputs(v, had_list=False, id=None):
@@ -163,8 +168,8 @@ class SolutionDB:
         db_root = anyio.Path(self.root)
         sol = solution
         id = sol.id
+        self.solutions[id] = sol
         if sol.rule.strip():
             await (db_root / f"{id}.py").write_text(sol.rule)
         if sol.explanation.strip():
             await (db_root / f"{id}.txt").write_text(sol.explanation)
-        self.solutions[id] = sol

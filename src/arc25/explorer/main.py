@@ -4,7 +4,9 @@ import importlib.metadata
 import logging
 import itertools
 import sys
+import typing
 import random
+from weakref import WeakKeyDictionary
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +20,7 @@ from nicegui import ui
 
 from .. import tools as arc_tools
 from ..dataset import Dataset, Solution, SolutionDB
+from ..sandbox import ChallengeEval, evaluate_solution
 
 logger = logging.getLogger("arc25.explorer")
 
@@ -26,8 +29,14 @@ logger = logging.getLogger("arc25.explorer")
 class App:
     datasets: dict[str, Dataset]
     solutions_db: SolutionDB
-    _pending_solutions: dict[str, Solution] = attrs.field(factory=dict)
+    solutions: dict[str, Solution] = attrs.field(factory=dict)
+    _pending_solutions: set[str] = attrs.field(factory=set)
     _new_solution: anyio.Event = attrs.field(factory=anyio.Event)
+
+    _pending_evaluations: dict[Solution, WeakKeyDictionary] = attrs.field(factory=dict)
+    _need_evaluation: anyio.Event = attrs.field(factory=anyio.Event)
+    evaluations: dict[str, ChallengeEval] = attrs.field(factory=dict)
+
 
     @classmethod
     @contextlib.asynccontextmanager
@@ -40,32 +49,82 @@ class App:
             solutions_db=await SolutionDB.load(solutions_db),
             **kw,
         )
+        self.solutions.update(self.solutions_db.solutions)
         async with contextlib.AsyncExitStack() as stack:
             tg = await stack.enter_async_context(anyio.create_task_group())
             stack.callback(tg.cancel_scope.cancel)
             tg.start_soon(self._db_runner)
+            tg.start_soon(self._eval_runner)
             yield self
 
     def store_solution(self, sol: Solution):
-        self._pending_solutions[sol.id] = sol
+        id = sol.id
+        prev = self.solutions.get(id)
+        self.solutions[id] = sol
+        if prev is not None and prev.rule != sol.rule:
+            self.evaluations.pop(id, None)
+        self._pending_solutions.add(sol.id)
         self._new_solution.set()
 
     async def _db_runner(self):
         async def single_pass():
             pending = self._pending_solutions
             for id in list(pending):
+                pending.discard(id)
                 logger.debug(f"Storing solution for challenge {id}")
-                sol = pending.pop(id)
+                sol = self.solutions[id]
                 try:
                     await self.solutions_db.store(sol)
                 except BaseException:
-                    pending.setdefault(id, sol)
+                    pending.add(id)
                     raise
 
         try:
             while True:
                 await self._new_solution.wait()
                 self._new_solution = anyio.Event()
+                await single_pass()
+                await anyio.sleep(1)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await single_pass()
+
+    def evaluate_solution(self, sol: Solution, owner: typing.Any, callback: typing.Callable):
+        logger.debug(f"Trigger evaluation of solution for {sol.id}")
+        self._pending_evaluations.setdefault(sol, WeakKeyDictionary())[owner] = callback
+        self._need_evaluation.set()
+
+    async def _eval_runner(self):
+        async def single_pass():
+            pending = self._pending_evaluations
+            for sol in list(pending):
+                clients = pending.pop(sol)
+                if not clients:
+                    continue
+                id = sol.id
+                if sol.rule != self.solutions[id].rule:
+                    logger.info(f"Skipping evaluation of outdated solution for challenge {id}")
+                    continue
+                logger.debug(f"Evaluating solution for challenge {id}")
+                chal = self.datasets["combined"].challenges[id]
+                eval = await evaluate_solution(
+                    challenge=chal,
+                    solution=sol,
+                )
+                if sol.rule != self.solutions[id].rule:
+                    logger.info(f"Ignoring evaluation of outdated solution for challenge {id}")
+                    continue
+                self.evaluations[sol.id] = eval
+                for owner,callback in clients.items():
+                    try:
+                        callback(owner, sol, eval)
+                    except Exception as ex:
+                        logger.warning(f"Ignoring exception in evaluation callback: {ex!r}")
+
+        try:
+            while True:
+                await self._need_evaluation.wait()
+                self._need_evaluation = anyio.Event()
                 await single_pass()
                 await anyio.sleep(1)
         finally:
@@ -88,10 +147,17 @@ def main_page(*, request: Request):
 
     def update_figure(cur_c):
         chal = cur_ds.challenges[cur_c]
+        eval = app.evaluations.get(cur_c)
+        output.clear()
+        if eval is None:
+            triples = chal.get_empty_eval_triples()
+        else:
+            triples = eval.get_eval_triples()
+            show_eval_output(eval)
         with fig:
             fig.clear()
             arc_tools.show_test_case(
-                chal.train + chal.test,
+                triples,
                 n_train=len(chal.train),
                 fig=fig,
                 example_width=3,
@@ -122,6 +188,9 @@ def main_page(*, request: Request):
         clabel = ui.label(f"{cur_ds.title}: {1}/{len(ckeys)}")
 
         store_holdoff = anyio.current_time()
+        def eval_callback(owner, sol, eval):
+            logger.debug(f"Eval for solution for {sol.id} completed: {eval.full_match=}")
+            update_figure(sol.id)
         def update_challenge(evt):
             nonlocal cur_c, store_holdoff
             remember_solution()
@@ -129,12 +198,14 @@ def main_page(*, request: Request):
             idx = int(evt.value)
             cur_c = ckeys[idx]
             clabel.set_text(f"{cur_ds.title}: {cur_c} ({idx+1}/{len(ckeys)})")
-            sol = app.solutions_db.solutions.get(cur_c, Solution.make(id=cur_c))
+            sol = app.solutions.get(cur_c, Solution.make(id=cur_c))
             explanation.set_value(sol.explanation)
             r = sol.rule
             if not r.strip():
                 r = rule_placeholder
             rule.set_value(r)
+            if not sol.is_empty and cur_c not in app.evaluations:
+                app.evaluate_solution(sol,fig,eval_callback)
             update_figure(cur_c)
 
         csel.on_value_change(update_challenge)
@@ -153,6 +224,18 @@ def main_page(*, request: Request):
             language="python",
             theme="githubLight",
         ).classes("w-full h-full")
+        output = ui.log()
+
+        def show_eval_output(eval):
+            for k in ["train","test"]:
+                for i,e in enumerate(getattr(eval, f"{k}_eval"),1):
+                    if e.warnings or e.error:
+                        output.push(f"{k.title()} {i}:")
+                    for w in e.warnings:
+                        output.push(w,classes="text-orange")
+                    if e.error:
+                        output.push(e.error,classes="text-red")
+            output.push(f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %, cell fraction {eval.pixel_match*100:.0f} %")
 
         def remember_solution():
             r = rule.value.strip()
@@ -163,12 +246,14 @@ def main_page(*, request: Request):
                 explanation=explanation.value.strip()+"\n",
                 rule=r+"\n",
             )
-            if not sol.is_empty and sol != app.solutions_db.solutions.get(sol.id):
+            if not sol.is_empty and sol != app.solutions.get(sol.id):
                 if anyio.current_time() < store_holdoff+1:
                     # logger.warning(f"Not storing solution {sol.id} due to being recently loaded: {sol}")
                     return
                 # logger.debug(f"Storing solution {sol.id}: {sol}")
                 app.store_solution(sol)
+                if sol.id not in app.evaluations:
+                    app.evaluate_solution(sol, fig, eval_callback)
 
         explanation.on_value_change(lambda evt: remember_solution())
         rule.on_value_change(lambda evt: remember_solution())
