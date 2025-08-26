@@ -1,14 +1,14 @@
 import argparse
 import contextlib
 import importlib.metadata
-import logging
 import itertools
+import logging
+import random
 import sys
 import typing
-import random
-from weakref import WeakKeyDictionary
 from pathlib import Path
 from types import SimpleNamespace
+from weakref import WeakKeyDictionary
 
 import anyio
 import attrs
@@ -36,7 +36,6 @@ class App:
     _pending_evaluations: dict[Solution, WeakKeyDictionary] = attrs.field(factory=dict)
     _need_evaluation: anyio.Event = attrs.field(factory=anyio.Event)
     evaluations: dict[str, ChallengeEval] = attrs.field(factory=dict)
-
 
     @classmethod
     @contextlib.asynccontextmanager
@@ -89,7 +88,9 @@ class App:
             with anyio.CancelScope(shield=True):
                 await single_pass()
 
-    def evaluate_solution(self, sol: Solution, owner: typing.Any, callback: typing.Callable):
+    def evaluate_solution(
+        self, sol: Solution, owner: typing.Any, callback: typing.Callable
+    ):
         logger.debug(f"Trigger evaluation of solution for {sol.id}")
         self._pending_evaluations.setdefault(sol, WeakKeyDictionary())[owner] = callback
         self._need_evaluation.set()
@@ -103,7 +104,9 @@ class App:
                     continue
                 id = sol.id
                 if sol.rule != self.solutions[id].rule:
-                    logger.info(f"Skipping evaluation of outdated solution for challenge {id}")
+                    logger.info(
+                        f"Skipping evaluation of outdated solution for challenge {id}"
+                    )
                     continue
                 logger.debug(f"Evaluating solution for challenge {id}")
                 chal = self.datasets["combined"].challenges[id]
@@ -112,14 +115,18 @@ class App:
                     solution=sol,
                 )
                 if sol.rule != self.solutions[id].rule:
-                    logger.info(f"Ignoring evaluation of outdated solution for challenge {id}")
+                    logger.info(
+                        f"Ignoring evaluation of outdated solution for challenge {id}"
+                    )
                     continue
                 self.evaluations[sol.id] = eval
-                for owner,callback in clients.items():
+                for owner, callback in clients.items():
                     try:
                         callback(owner, sol, eval)
                     except Exception as ex:
-                        logger.warning(f"Ignoring exception in evaluation callback: {ex!r}")
+                        logger.warning(
+                            f"Ignoring exception in evaluation callback: {ex!r}"
+                        )
 
         try:
             while True:
@@ -130,6 +137,7 @@ class App:
         finally:
             with anyio.CancelScope(shield=True):
                 await single_pass()
+
 
 rule_placeholder = """
 def solution(input: Canvas) -> Canvas:
@@ -169,11 +177,13 @@ def main_page(*, request: Request):
         ds_select = ui.select(
             {d.id: d.title for d in app.datasets.values()},
             value=initial_value,
-        ).bind_value(nicegui_app.storage.user, 'dataset')
+        ).bind_value(nicegui_app.storage.user, "dataset")
 
         cur_ds = app.datasets[initial_value]
         ckeys = list(cur_ds.challenges)
-        csel = ui.slider(min=0, max=len(ckeys) - 1, value=0).bind_value(nicegui_app.storage.user, 'challenge')
+        csel = ui.slider(min=0, max=len(ckeys) - 1, value=0).bind_value(
+            nicegui_app.storage.user, "challenge"
+        )
         cur_c = ckeys[csel.value]
 
         def update_dataset(evt):
@@ -188,9 +198,13 @@ def main_page(*, request: Request):
         clabel = ui.label(f"{cur_ds.title}: {1}/{len(ckeys)}")
 
         store_holdoff = anyio.current_time()
+
         def eval_callback(owner, sol, eval):
-            logger.debug(f"Eval for solution for {sol.id} completed: {eval.full_match=}")
+            logger.debug(
+                f"Eval for solution for {sol.id} completed: {eval.full_match=}"
+            )
             update_figure(sol.id)
+
         def update_challenge(evt):
             nonlocal cur_c, store_holdoff
             remember_solution()
@@ -205,7 +219,7 @@ def main_page(*, request: Request):
                 r = rule_placeholder
             rule.set_value(r)
             if not sol.is_empty and cur_c not in app.evaluations:
-                app.evaluate_solution(sol,fig,eval_callback)
+                app.evaluate_solution(sol, fig, eval_callback)
             update_figure(cur_c)
 
         csel.on_value_change(update_challenge)
@@ -215,7 +229,7 @@ def main_page(*, request: Request):
             next = ui.button("Next")
             next.on_click(lambda: csel.set_value(min(len(ckeys) - 1, csel.value + 1)))
             rnd = ui.button("Random")
-            rnd.on_click(lambda: csel.set_value(random.randint(0, len(ckeys)-1)))
+            rnd.on_click(lambda: csel.set_value(random.randint(0, len(ckeys) - 1)))
 
         explanation = ui.textarea(
             placeholder="Explanation",
@@ -227,15 +241,18 @@ def main_page(*, request: Request):
         output = ui.log()
 
         def show_eval_output(eval):
-            for k in ["train","test"]:
-                for i,e in enumerate(getattr(eval, f"{k}_eval"),1):
+            for k in ["train", "test"]:
+                for i, e in enumerate(getattr(eval, f"{k}_eval"), 1):
                     if e.warnings or e.error:
                         output.push(f"{k.title()} {i}:")
                     for w in e.warnings:
-                        output.push(w,classes="text-orange")
+                        output.push(w, classes="text-orange")
                     if e.error:
-                        output.push(e.error,classes="text-red")
-            output.push(f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %, cell fraction {eval.pixel_match*100:.0f} %")
+                        output.push(e.error, classes="text-red")
+            output.push(
+                f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %,"
+                f" cell fraction {eval.pixel_match*100:.0f} %"
+            )
 
         def remember_solution():
             r = rule.value.strip()
@@ -243,14 +260,14 @@ def main_page(*, request: Request):
                 r = ""
             sol = Solution(
                 id=cur_c,
-                explanation=explanation.value.strip()+"\n",
-                rule=r+"\n",
+                explanation=explanation.value.strip() + "\n",
+                rule=r + "\n",
             )
             if not sol.is_empty and sol != app.solutions.get(sol.id):
-                if anyio.current_time() < store_holdoff+1:
+                if anyio.current_time() < store_holdoff + 1:
                     # logger.warning(f"Not storing solution {sol.id} due to being recently loaded: {sol}")
                     return
-                # logger.debug(f"Storing solution {sol.id}: {sol}")
+                # logger.debug(f"Storing solution {sol.id}: {sol}")
                 app.store_solution(sol)
                 if sol.id not in app.evaluations:
                     app.evaluate_solution(sol, fig, eval_callback)

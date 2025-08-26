@@ -2,7 +2,7 @@ import contextlib
 import json
 import zipfile
 from pathlib import Path
-from typing import Self, Iterable,Literal
+from typing import Iterable, Literal, Self
 
 import anyio
 import attrs
@@ -33,9 +33,11 @@ class Challenge:
     train: tuple[IOPair, ...]
     test: tuple[IOPair | Canvas, ...]
 
-    def get_empty_eval_triples(self, subset:Literal["train","test","all"] = "all")->Iterable[IAETriple]:
-        for k in dict(all=["train","test"]).get(subset,[subset]):
-            for io in getattr(self,k):
+    def get_empty_eval_triples(
+        self, subset: Literal["train", "test", "all"] = "all"
+    ) -> Iterable[IAETriple]:
+        for k in dict(all=["train", "test"]).get(subset, [subset]):
+            for io in getattr(self, k):
                 yield io.compare_output(None)
 
 
@@ -129,7 +131,6 @@ class Solution:
     @classmethod
     def make(cls, id, *, explanation="", rule=""):
         return Solution(id=id, explanation=explanation, rule=rule)
-
 
     @property
     def is_empty(self):

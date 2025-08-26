@@ -21,8 +21,8 @@ from .types import (
     MaskedImage,
     Paintable,
     Pattern,
-    ShapeSpec,
     Rect,
+    ShapeSpec,
     Transform,
 )
 
@@ -212,9 +212,12 @@ def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:
                 f"Invalid type for `canvas` argument: {type(canvas).__name__}"
             )
 
+
 def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
     if canvas.shape != mask.shape:
-        raise ValueError(f"Mismatched shapes; `canvas` has {canvas.shape}, `mask` has {mask.shape}")
+        raise ValueError(
+            f"Mismatched shapes; `canvas` has {canvas.shape}, `mask` has {mask.shape}"
+        )
     match canvas:
         case Canvas():
             return _evolve(canvas, image=apply_mask(canvas.image, mask))
@@ -226,7 +229,7 @@ def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
             raise TypeError(
                 f"Invalid type for `canvas` argument: {type(canvas).__name__}"
             )
-                        
+
 
 def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
     match op:
@@ -275,15 +278,21 @@ def most_common_color(
 ) -> Color: ...
 
 
-_structures = MappingProxyType({
-    4: ndimage.generate_binary_structure(2,1),
-    8: ndimage.generate_binary_structure(2,2),
-})
+_structures = MappingProxyType(
+    {
+        4: ndimage.generate_binary_structure(2, 1),
+        8: ndimage.generate_binary_structure(2, 2),
+    }
+)
+
 
 def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> Iterable[Mask]:
-    labeled_array, num_features = ndimage.label(objects._mask, _structures[connectivity])
-    for label in range(1,num_features+1):
-        yield Mask(labeled_array==label)
+    labeled_array, num_features = ndimage.label(
+        objects._mask, _structures[connectivity]
+    )
+    for label in range(1, num_features + 1):
+        yield Mask(labeled_array == label)
+
 
 def find_bbox(mask: Mask) -> Rect:
     if not np.any(mask):
@@ -291,9 +300,9 @@ def find_bbox(mask: Mask) -> Rect:
     lim = []
     for axis in range(2):
         proj = mask._mask.any(axis=axis)
-        lim.append(np.flatnonzero(proj)[[0,-1]]+[0,1])
+        lim.append(np.flatnonzero(proj)[[0, -1]] + [0, 1])
     start, stop = [Coord(*v) for v in zip(*lim)]
-    return Rect(start=start,stop=stop)
+    return Rect(start=start, stop=stop)
 
 
 # ----------------------------------------------------------------------------
@@ -317,6 +326,7 @@ def mask_color(canvas: Paintable, color: Color | set[Color]) -> Mask:
     """Build a Mask from Color | set[Color]."""
     ...
 
+
 def mask_unpainted(canvas: Paintable) -> Mask:
     match canvas:
         case Canvas():
@@ -329,6 +339,7 @@ def mask_unpainted(canvas: Paintable) -> Mask:
             raise TypeError(
                 f"Invalid type for `canvas` argument: {type(canvas).__name__}"
             )
+
 
 def mask_row(shape: ShapeSpec, i: int) -> Mask: ...
 

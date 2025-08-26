@@ -71,7 +71,7 @@ class Coord:
         return ret
 
 
-def _shape_from_spec(shape: "ShapeSpec") -> tuple[int,int]:
+def _shape_from_spec(shape: "ShapeSpec") -> tuple[int, int]:
     match shape:
         case tuple():
             assert len(shape) == 2
@@ -79,7 +79,10 @@ def _shape_from_spec(shape: "ShapeSpec") -> tuple[int,int]:
         case Image() | MaskedImage() | Mask() | Canvas():
             return shape.shape
         case _:
-            raise TypeError(f"Invalid type for `shape` argument: {type(shape).__name__}")
+            raise TypeError(
+                f"Invalid type for `shape` argument: {type(shape).__name__}"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class Rect:
@@ -89,17 +92,20 @@ class Rect:
     @classmethod
     def full_shape(self, shape: "ShapeSpec") -> Self:
         shape = _shape_from_spec(shape)
-        return Rect(start=Coord(0,0),stop=Coord(*shape))
+        return Rect(start=Coord(0, 0), stop=Coord(*shape))
 
     def as_slices(self) -> tuple[slice, slice]:
-        return tuple(slice(*v) for v in zip(self.start.as_tuple(),self.stop.as_tuple()))
+        return tuple(
+            slice(*v) for v in zip(self.start.as_tuple(), self.stop.as_tuple())
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Image:
     _data: np.ndarray
 
     @property
-    def shape(self) -> tuple[int,int]:
+    def shape(self) -> tuple[int, int]:
         return self._data.shape
 
 
@@ -110,7 +116,7 @@ class Mask:
     @property
     def shape(self):
         return self._mask.shape
-    
+
     @property
     def as_numpy(self):
         return self._mask.copy()

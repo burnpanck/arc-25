@@ -4,7 +4,8 @@ import platform
 
 
 def test_importing():
-    todo = set( """
+    todo = set(
+        """
         arc25
     """.split()
     )
