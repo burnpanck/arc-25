@@ -4,10 +4,8 @@ import platform
 
 
 def test_importing():
-    todo = set(
-        f"arc25.{p}"
-        for p in """
-        emda2
+    todo = set( """
+        arc25
     """.split()
     )
     skip = set()

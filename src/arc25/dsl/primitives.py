@@ -1,7 +1,9 @@
 import dataclasses
+from types import MappingProxyType
 from typing import Iterable, Literal, TypeAlias
 
 import numpy as np
+from scipy import ndimage
 
 from .. import symmetry
 from .types import *
@@ -20,6 +22,7 @@ from .types import (
     Paintable,
     Pattern,
     ShapeSpec,
+    Rect,
     Transform,
 )
 
@@ -193,8 +196,37 @@ def make_canvas(
     return Canvas.make((nrow, ncol), orientation=orientation)
 
 
-def extract_image(canvas: Paintable | Mask, *, rect: ..., mask: Mask) -> Paintable | Mask: ...
+def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:
+    slc = rect.as_slices()
+    match canvas:
+        case Canvas():
+            return _evolve(canvas, image=extract_image(canvas.image, rect=rect))
+        case Image():
+            return _evolve(canvas, _data=canvas._data[slc])
+        case MaskedImage():
+            return _evolve(canvas, _data=canvas._data[slc], _mask=canvas._mask[slc])
+        case Mask():
+            return _evolve(canvas, _mask=canvas._mask[slc])
+        case _:
+            raise TypeError(
+                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
+            )
 
+def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
+    if canvas.shape != mask.shape:
+        raise ValueError(f"Mismatched shapes; `canvas` has {canvas.shape}, `mask` has {mask.shape}")
+    match canvas:
+        case Canvas():
+            return _evolve(canvas, image=apply_mask(canvas.image, mask))
+        case Image():
+            return MaskedImage(canvas, _data=canvas._data, _mask=mask)
+        case MaskedImage():
+            return _evolve(canvas, _mask=canvas._mask & mask)
+        case _:
+            raise TypeError(
+                f"Invalid type for `canvas` argument: {type(canvas).__name__}"
+            )
+                        
 
 def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
     match op:
@@ -241,6 +273,27 @@ def count_colors(canvas: Paintable) -> ColorArray: ...
 def most_common_color(
     canvas: Paintable, *, exclude: Color | set[Color] | None = None
 ) -> Color: ...
+
+
+_structures = MappingProxyType({
+    4: ndimage.generate_binary_structure(2,1),
+    8: ndimage.generate_binary_structure(2,2),
+})
+
+def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> Iterable[Mask]:
+    labeled_array, num_features = ndimage.label(objects._mask, _structures[connectivity])
+    for label in range(1,num_features+1):
+        yield Mask(labeled_array==label)
+
+def find_bbox(mask: Mask) -> Rect:
+    if not np.any(mask):
+        raise ValueError("`find_bbox` requires that at least one cell is selected")
+    lim = []
+    for axis in range(2):
+        proj = mask._mask.any(axis=axis)
+        lim.append(np.flatnonzero(proj)[[0,-1]]+[0,1])
+    start, stop = [Coord(*v) for v in zip(*lim)]
+    return Rect(start=start,stop=stop)
 
 
 # ----------------------------------------------------------------------------
