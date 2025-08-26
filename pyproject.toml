@@ -29,6 +29,7 @@ native = ["pywebview"]
 [dependency-groups]
 test = [
     "pytest",
+    "pytest-asyncio>=1.1.0",
 ]
 build = [
     "pyinstaller>=6.10",

@@ -19,7 +19,7 @@ from fastapi import Request
 from nicegui import ui
 
 from .. import tools as arc_tools
-from ..dataset import Dataset, Solution, SolutionDB
+from ..dataset import Dataset, Solution, SolutionDB, load_datasets
 from ..sandbox import ChallengeEval, evaluate_solution
 
 logger = logging.getLogger("arc25.explorer")
@@ -359,33 +359,12 @@ def run(**kw):
     db_root.mkdir(exist_ok=True, parents=True)
     challenges_root = data_path / "arc-prize-2025.zip"
 
-    async def load_datasets():
-        logger.info(f"Loading data from {challenges_root}")
-        datasets = {}
-        for k in ["training", "evaluation", "test"]:
-            ds = await Dataset.load(
-                id=k,
-                root=challenges_root,
-                challenges=f"arc-agi_{k}_challenges.json",
-                solutions=f"arc-agi_{k}_solutions.json" if k != "test" else None,
-            )
-            datasets[k] = ds
-        datasets["combined"] = Dataset(
-            id="combined",
-            challenges=dict(
-                itertools.chain(*[ds.challenges.items() for ds in datasets.values()])
-            ),
-        )
-        for v in datasets.values():
-            logger.debug(f"Dataset {v.title} has {len(v.challenges)} challenges")
-        return datasets
-
     _orig_lifespan_context = nicegui.app.router.lifespan_context
 
     @contextlib.asynccontextmanager
     async def lifespan(nicegui_app):
         async with _orig_lifespan_context(nicegui_app):
-            datasets = await load_datasets()
+            datasets = await load_datasets(challenges_root)
             async with App.run(
                 datasets=datasets,
                 solutions_db=db_root,

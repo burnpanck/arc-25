@@ -1,5 +1,7 @@
 import contextlib
+import itertools
 import json
+import logging
 import zipfile
 from pathlib import Path
 from typing import Iterable, Literal, Self
@@ -9,6 +11,8 @@ import attrs
 import numpy as np
 
 from .dsl.types import Canvas, Image
+
+logger = logging.getLogger(__name__)
 
 
 @attrs.frozen
@@ -174,3 +178,25 @@ class SolutionDB:
             await (db_root / f"{id}.py").write_text(sol.rule)
         if sol.explanation.strip():
             await (db_root / f"{id}.txt").write_text(sol.explanation)
+
+
+async def load_datasets(challenges_root):
+    logger.info(f"Loading data from {challenges_root}")
+    datasets = {}
+    for k in ["training", "evaluation", "test"]:
+        ds = await Dataset.load(
+            id=k,
+            root=challenges_root,
+            challenges=f"arc-agi_{k}_challenges.json",
+            solutions=f"arc-agi_{k}_solutions.json" if k != "test" else None,
+        )
+        datasets[k] = ds
+    datasets["combined"] = Dataset(
+        id="combined",
+        challenges=dict(
+            itertools.chain(*[ds.challenges.items() for ds in datasets.values()])
+        ),
+    )
+    for v in datasets.values():
+        logger.debug(f"Dataset {v.title} has {len(v.challenges)} challenges")
+    return datasets
