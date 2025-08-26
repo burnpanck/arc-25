@@ -1,0 +1,3 @@
+- Input contains a blue bar (either diagonal or axis-aligned) on cyan background, with shapes in two random colors on one side of the bar.
+- Output is the mirror-symmetric completion along the blue bar of all shapes of one of the two colors.
+- It is not clear what rules govern the  selection of the selected color, but because we're given two shots, we can just try both.

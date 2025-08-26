@@ -70,7 +70,7 @@ class App:
             pending = self._pending_solutions
             for id in list(pending):
                 pending.discard(id)
-                logger.debug(f"Storing solution for challenge {id}")
+                # logger.debug(f"Storing solution for challenge {id}")
                 sol = self.solutions[id]
                 try:
                     await self.solutions_db.store(sol)

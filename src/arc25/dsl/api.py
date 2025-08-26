@@ -2,10 +2,7 @@ from typing import TypeAlias
 
 from . import primitives, types
 from .primitives import *
-from .types import Coord as _Coord
 from .types import *
-
-Coord: TypeAlias = _Coord | tuple[int, int]
 
 __all__ = types.__all__ + primitives.__all__
 

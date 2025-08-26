@@ -122,7 +122,6 @@ class Mask:
     def shape(self):
         return self._mask.shape
 
-    @property
     def as_numpy(self):
         return self._mask.copy()
 

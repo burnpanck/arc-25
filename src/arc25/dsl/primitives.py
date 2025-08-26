@@ -11,9 +11,7 @@ from .types import (
     Axis8,
     Canvas,
     Color,
-)
-from .types import Coord as _Coord
-from .types import (
+    Coord,
     Dir4,
     Dir8,
     Image,
@@ -28,9 +26,6 @@ from .types import (
     _index2color,
     _shape_from_spec,
 )
-
-Coord: TypeAlias = _Coord | tuple[int, int]
-
 
 _evolve = dataclasses.replace
 
@@ -379,7 +374,12 @@ def find_bbox(mask: Mask) -> Rect:
 # ----------------------------------------------------------------------------
 
 
-def path_to_mask(shape: ShapeSpec, path: Iterable[Coord]) -> Mask: ...
+def path_to_mask(shape: ShapeSpec, path: Iterable[Coord]) -> Mask:
+    ret = np.zeros(_shape_from_spec(shape), bool)
+    rc = np.array([c.as_tuple() for c in path]).T
+    r, c = rc
+    ret[r, c] = True
+    return Mask(ret)
 
 
 def new_mask_like(shape: ShapeSpec, *, fill: bool) -> Mask: ...
@@ -428,8 +428,24 @@ def mask_row(shape: ShapeSpec, i: int) -> Mask: ...
 def mask_col(shape: ShapeSpec, j: int) -> Mask: ...
 
 
+def correlate_masks(
+    input: Mask, pattern: Mask, *, threshold: int | None = None
+) -> Mask:
+    """
+    Essentially performs `scipy.ndimage.correlate(input,pattern,mode="constant",cval=0)>=threshold`
+    """
+    if threshold is None:
+        threshold = pattern._mask.sum()
+    return Mask(
+        ndimage.correlate(
+            input._mask.astype(int), pattern._mask.astype(int), mode="constant"
+        )
+        >= threshold
+    )
+
+
 def cell_count(mask: Mask) -> int:
-    pass
+    return mask.count
 
 
 def masks_touch(a: Mask, b: Mask, *, connectivity: Literal[4, 8] = 4) -> bool:

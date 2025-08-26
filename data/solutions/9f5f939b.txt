@@ -1,0 +1,2 @@
+- Input consists of blue two-cell bars on cyan background
+- Output is the same as input, with cells in the centre of blue "crosshairs" painted yellow. A "crosshair" is formed from two horizontal two-cell bars and two vertical two-cell bars each separated by three cells, crossing each other in the middle.
