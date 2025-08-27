@@ -47,7 +47,7 @@ known_first_party = "arc25"
 [tool.flake8]
 max-line-length = 120
 extend-select = "B950"
-extend-ignore = "E203,E501,E701,F401,F403,F405"
+extend-ignore = "E203,E501,E701,E731,F401,F403,F405"
 exclude = "app/main.py"
 
 [tool.pdm]

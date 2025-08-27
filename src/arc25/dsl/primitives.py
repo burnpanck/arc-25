@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from types import MappingProxyType
 from typing import Any, Iterable, Literal, TypeAlias
 
@@ -22,6 +23,7 @@ from .types import (
     Rect,
     ShapeSpec,
     Transform,
+    Vector,
     _color2index,
     _index2color,
     _shape_from_spec,
@@ -93,7 +95,7 @@ def path_segment(start: Coord, end: Coord) -> list[Coord]:
     Cells from start to end inclusive along an axis-aligned or 45° diagonal.
     Raise ValueError for other angles.
     """
-    ...
+    raise NotImplementedError
 
 
 def path_ray(
@@ -108,7 +110,20 @@ def path_ray(
     include that cell if `endpoint="include"`.
     If no such cell is hit, stop at the edge.
     """
-    ...
+    rng = Rect.full_shape(stop)
+    step = Vector.elementary_vector(dir)
+    ret = []
+    cur = start
+    while True:
+        if not rng.contains(cur):
+            break
+        if stop[cur]:
+            if endpoint == "include":
+                ret.append(cur)
+            break
+        ret.append(cur)
+        cur += step
+    return ret
 
 
 def path_span(
@@ -132,11 +147,17 @@ def path_span(
         raise ValueError(
             "`path_span` requires exactly one of the `index=` or `through=` keywords"
         )
+    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------
 # Painter
 # ---------------------------------------------------------------------------
+
+
+class _BlackHole:
+    def __setitem__(self, idx, value):
+        pass
 
 
 def stroke(
@@ -152,7 +173,40 @@ def stroke(
     - Path determines order; Pattern advances per visited cell (including gaps).
     - Returns a NEW Canvas (immutability by design).
     """
-    ...
+    match canvas:
+        case Canvas():
+            return _evolve(canvas, image=stroke(canvas.image, path, style, clip=clip))
+        case MaskedImage():
+            mask = canvas._mask.copy()
+        case Image():
+            mask = _BlackHole()
+        case _:
+            raise _make_type_error(canvas, "canvas", "Paintable")
+    match style:
+        case Color():
+            pattern = Pattern((style,))
+        case Pattern():
+            pattern = style
+        case _:
+            raise _make_type_error(style, "style", "Color | Pattern")
+    seq = tuple(_color2index[c] if c is not None else -1 for c in pattern.sequence)
+    n = len(seq)
+    assert n > 0
+    ret = canvas._data.copy()
+    for i, p in enumerate(path):
+        if clip is not None and not clip[c]:
+            continue
+        c = seq[i % n]
+        if c < 0:
+            continue
+        p = p.as_tuple()
+        ret[p] = c
+        mask[p] = True
+    return _evolve(
+        canvas,
+        _data=ret,
+        **(dict(_mask=mask) if not isinstance(mask, _BlackHole) else {}),
+    )
 
 
 def paste(canvas: Paintable, image: Paintable, *, at: Coord | None = None) -> Paintable:
@@ -167,7 +221,10 @@ def paste(canvas: Paintable, image: Paintable, *, at: Coord | None = None) -> Pa
         image = image.image
     assert isinstance(canvas, (Image, MaskedImage))
     assert isinstance(image, (Image, MaskedImage))
-    at = _Coord.to_array(at)
+    if at is not None:
+        at = Coord.to_array(at)
+    else:
+        at = np.array([0, 0])
     dslc = tuple(
         slice(*v)
         for v in zip(
@@ -325,8 +382,15 @@ def count_colors(canvas: Paintable) -> ColorArray:
 
 
 def most_common_colors(
-    color_count: ColorArray, *, exclude: Color | set[Color] | None = None
+    input: ColorArray | Paintable, *, exclude: Color | set[Color] | None = None
 ) -> set[Color]:
+    match input:
+        case ColorArray():
+            color_count = input
+        case Canvas() | Image() | MaskedImage():
+            color_count = count_colors(input)
+        case _:
+            raise _make_type_error(input, "input", "ColorArray | Paintable")
     match color_count:
         case ColorArray():
             color_count = color_count.data
@@ -342,6 +406,29 @@ def most_common_colors(
     return {_index2color[i] for i in np.flatnonzero(color_count == max_count)}
 
 
+def identify_background(
+    canvas: Paintable, *, mode: Literal["frequency", "edge"] = "frequency"
+) -> Color:
+    match mode:
+        case "frequency":
+            mask = mask_all(canvas)
+        case "edge":
+            mask = mask_all(canvas)
+            mask = mask & ~erode(mask)
+        case _:
+            raise KeyError(
+                f'Invalid `mode` {mode!r}, must be one of `["frequency","edge"]`'
+            )
+    counts = count_colors(apply_mask(canvas, mask))
+    cs = most_common_colors(counts)
+    if len(cs) != 1:
+        raise RuntimeError(
+            f"Ambigous background color with method `{mode!r}` ({counts=})"
+        )
+    (c,) = cs
+    return c
+
+
 _structures = MappingProxyType(
     {
         4: ndimage.generate_binary_structure(2, 1),
@@ -350,12 +437,34 @@ _structures = MappingProxyType(
 )
 
 
-def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> Iterable[Mask]:
+def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, ...]:
+    """Returns one full-sized mask for each object found, in unspecified order.
+
+    Objects are defined by their connectivity.
+    """
     labeled_array, num_features = ndimage.label(
         objects._mask, _structures[connectivity]
     )
+    ret = []
     for label in range(1, num_features + 1):
-        yield Mask(labeled_array == label)
+        ret.append(Mask(labeled_array == label))
+    return tuple(ret)
+
+
+def find_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, ...]:
+    """Returns one full-sized mask for each hole in each of the objects.
+
+    Holes are defined as being completely enclosed by the object (i.e. not touching the edge).
+    """
+    complement = ~object
+    edge = mask_all(object)
+    edge = edge & ~erode(edge, connectivity=connectivity)
+    ret = []
+    for obj in find_objects(complement):
+        if (obj & edge).count:
+            continue
+        ret.append(obj)
+    return tuple(ret)
 
 
 def find_bbox(mask: Mask) -> Rect:
@@ -365,7 +474,7 @@ def find_bbox(mask: Mask) -> Rect:
     for axis in range(2):
         proj = mask._mask.any(axis=axis)
         lim.append(np.flatnonzero(proj)[[0, -1]] + [0, 1])
-    start, stop = [Coord(*v) for v in zip(*lim)]
+    start, stop = [Coord(int(r), int(c)) for r, c in zip(*lim[::-1])]
     return Rect(start=start, stop=stop)
 
 
@@ -382,7 +491,14 @@ def path_to_mask(shape: ShapeSpec, path: Iterable[Coord]) -> Mask:
     return Mask(ret)
 
 
-def new_mask_like(shape: ShapeSpec, *, fill: bool) -> Mask: ...
+def rect_to_mask(shape: ShapeSpec, rect: Rect) -> Mask:
+    ret = np.zeros(_shape_from_spec(shape), bool)
+    ret[rect.as_slices()] = True
+    return Mask(ret)
+
+
+def new_mask_like(shape: ShapeSpec, *, fill: bool) -> Mask:
+    return Mask(np.tile(fill, _shape_from_spec(shape)).astype(bool))
 
 
 def mask_all(shape: ShapeSpec) -> Mask:
@@ -422,10 +538,12 @@ def mask_unpainted(canvas: Paintable) -> Mask:
             raise _make_type_error(canvas, "canvas", "Paintable")
 
 
-def mask_row(shape: ShapeSpec, i: int) -> Mask: ...
+def mask_row(shape: ShapeSpec, i: int) -> Mask:
+    raise NotImplementedError
 
 
-def mask_col(shape: ShapeSpec, j: int) -> Mask: ...
+def mask_col(shape: ShapeSpec, j: int) -> Mask:
+    raise NotImplementedError
 
 
 def correlate_masks(
@@ -458,6 +576,73 @@ def dilate(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask:
 
 def erode(mask: Mask, k: int = 1, *, connectivity: Literal[4, 8] = 4) -> Mask:
     return Mask(ndimage.binary_erosion(mask._mask, _structures[connectivity], k))
+
+
+def connected_component(
+    mask: Mask, seed: Coord | Mask, *, connectivity: Literal[4, 8] = 4
+) -> Mask:
+    raise NotImplementedError
+
+
+def reduce_rect(
+    rect: Rect,
+    *,
+    amount: int = 0,
+    height: int | None = None,
+    width: int | None = None,
+    left: int | None = None,
+    right: int | None = None,
+    top: int | None = None,
+    bottom: int | None = None,
+) -> Rect | None:
+    if height is None:
+        height = amount
+    if width is None:
+        width = amount
+    if left is None:
+        left = width
+    if right is None:
+        right = width
+    if top is None:
+        top = height
+    if bottom is None:
+        bottom = height
+    ret = Rect(
+        start=rect.start + Vector(top, left),
+        stop=rect.stop - Vector(bottom, right),
+    )
+    if not ret.area:
+        return None
+    return ret
+
+
+def center_of_mass(obj: Mask | Rect) -> Coord:
+    match obj:
+        case Rect():
+            if not obj.finite:
+                raise ValueError("Empty rect has no center of mass")
+            return Coord(0.5 * (obj.top + obj.bottom), 0.5 * (obj.left + obj.right))
+        case Mask():
+            h, w = obj.shape
+            r, c = np.mgrid[:h, :w]
+            m = obj._mask
+            if not m.any():
+                raise ValueError("Empty mask has no center of mass")
+            return Coord(float(r[m].mean()), float(c[m].mean()))
+        case _:
+            raise _make_type_error(obj, "obj", "Mask | Rect")
+
+
+def vec2dir8(vec: Vector) -> Dir8:
+    lim = vec.length() * math.sin(math.pi / 8)
+    elementary = tuple(
+        0 if abs(v) < lim else -1 if v < 0 else 1 for v in [vec.row, vec.col]
+    )
+    return Vector._vec2dir[elementary]
+
+
+def round2grid(coord: Coord) -> Coord:
+    return Coord(*(int(round(v)) for v in coord.as_tuple()))
 
 
 # -------------

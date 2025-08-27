@@ -30,14 +30,16 @@ async def test_all_solutions():
     newly_missing = known_good - now_available
     extra_good = good - known_good
     extra_bad = bad - known_good
-    if still_good != known_good:
-        raise ValueError(
-            f"We lost some solutions! Newly bad: {sorted(newly_bad)},"
-            f" missing: {sorted(newly_missing)}."
-            f" (Additional bad: {sorted(extra_bad)})"
-        )
     if extra_good:
         print(f"Have new good solutions: {sorted(extra_good)}")
         await known_good_path.write_text(
             "".join(f"{k}\n" for k in sorted(known_good | extra_good))
         )
+    if still_good != known_good:
+        raise ValueError(
+            f"We lost some solutions! Newly bad: {sorted(newly_bad)},"
+            f" missing: {sorted(newly_missing)}."
+            f" (Unfinished: {sorted(extra_bad)})"
+        )
+    if extra_bad:
+        print(f"Have unfinished solutions: {sorted(extra_bad)}")

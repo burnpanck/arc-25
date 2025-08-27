@@ -172,7 +172,7 @@ def main_page(*, request: Request):
                 orientation="v",
             )
 
-    with ui.left_drawer(fixed=True).props("width=500"):
+    with ui.left_drawer(fixed=True).props("width=600"):
         initial_value = "training"
         ds_select = ui.select(
             {d.id: d.title for d in app.datasets.values()},

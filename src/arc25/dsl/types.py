@@ -1,8 +1,9 @@
+import math
 import typing
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from types import MappingProxyType
-from typing import Self, TypeAlias
+from typing import Self, TypeAlias, overload
 
 import numpy as np
 
@@ -60,7 +61,7 @@ class Pattern:
 
 
 @dataclass(frozen=True, slots=True)
-class Coord:
+class _VectorBase:
     row: int
     col: int
 
@@ -69,11 +70,109 @@ class Coord:
 
     @classmethod
     def to_array(cls, obj: Self | tuple[int, int]) -> np.ndarray:
-        if isinstance(obj, Coord):
+        if isinstance(obj, _VectorBase):
             obj = (obj.row, obj.col)
         ret = np.empty(2, int)
         ret[:] = obj
         return ret
+
+
+@dataclass(frozen=True, slots=True)
+class Vector(_VectorBase):
+    _dir2vec = MappingProxyType(
+        {
+            d: dict(
+                right=(0, 1),
+                up_right=(-1, 1),
+                up=(-1, 0),
+                up_left=(-1, -1),
+                left=(0, -1),
+                down_left=(1, -1),
+                down=(1, 0),
+                down_right=(1, 1),
+            )[d]
+            for d in Dir8
+        }
+    )
+    _vec2dir = MappingProxyType({v: k for k, v in _dir2vec.items()})
+
+    @classmethod
+    def coerce(cls, arg: Self | tuple[int, int]) -> Self:
+        return _to_vec(arg)
+
+    @classmethod
+    def elementary_vector(cls, dir: Dir8) -> Self:
+        return Vector(*cls._dir2vec[Dir8(dir)])
+
+    def length(self):
+        return math.sqrt(self.row**2 + self.col**2)
+
+    def __add__(self, other: Self) -> Self:
+        return Vector(self.row + other.row, self.col + other.col)
+
+    def __sub__(self, other: Self) -> Self:
+        return Vector(self.row - other.row, self.col - other.col)
+
+    def __mul__(self, other: int | float) -> Self:
+        return Vector(self.row * other, self.col * other)
+
+    def __rmul__(self, other: int | float) -> Self:
+        return self.__mul__(other)
+
+    def __truediv__(self, other: int | float) -> Self:
+        return Vector(self.row / other, self.col / other)
+
+    def __rtruediv__(self, other: int | float) -> Self:
+        return self.__truediv__(other)
+
+    def __floordiv__(self, other: int | float) -> Self:
+        return Vector(self.row // other, self.col // other)
+
+    def __rfloordiv__(self, other: int | float) -> Self:
+        return self.__floordiv__(other)
+
+
+def _to_vec(vec: _VectorBase | tuple[int, int]):
+    if isinstance(vec, Vector):
+        return vec
+    if isinstance(vec, _VectorBase):
+        vec = vec.as_tuple()
+    return Vector(*vec)
+
+
+@dataclass(frozen=True, slots=True)
+class Coord(_VectorBase):
+
+    @classmethod
+    def coerce(cls, arg: Self | tuple[int, int]) -> Self:
+        return _to_coord(arg)
+
+    def __add__(self, other: Vector) -> Self:
+        return _to_coord(_to_vec(self) + other)
+
+    @overload
+    def __sub__(self, other: Vector) -> Self: ...
+
+    @overload
+    def __sub__(self, other: Self) -> Vector: ...
+
+    def __sub__(self, other: Vector | Self) -> Vector | Self:
+        match other:
+            case Vector():
+                wrap = _to_coord
+            case Coord():
+                wrap = lambda x: x
+            case _:
+                return NotImplemented
+        return wrap(_to_vec(self) - _to_vec(other))
+
+
+def _to_coord(vec: _VectorBase | tuple[int, int]):
+    if isinstance(vec, Coord):
+        return vec
+    if isinstance(vec, _VectorBase):
+        vec = vec.as_tuple()
+    return Coord(*vec)
 
 
 def _shape_from_spec(shape: "ShapeSpec") -> tuple[int, int]:
@@ -99,9 +198,107 @@ class Rect:
         shape = _shape_from_spec(shape)
         return Rect(start=Coord(0, 0), stop=Coord(*shape))
 
+    @classmethod
+    def make(
+        cls,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        shape: tuple[int, int] | None = None,
+        left: int | None = None,
+        right: int | None = None,
+        top: int | None = None,
+        bottom: int | None = None,
+        topleft: Coord | None = None,
+        bottomright: Coord | None = None,
+    ) -> Self:
+        if shape is not None:
+            assert width is None and height is None
+            width, height = shape
+        if topleft is not None:
+            assert top is None and left is None
+            top, left = topleft.as_tuple()
+        if bottomright is not None:
+            assert bottom is None and right is None
+            bottom, right = bottomright.as_tuple()
+        assert (
+            sum(v is not None for v in [left, right, width]) == 2
+        ), 'Need exactly two among `["left","right","width"]`'
+        assert (
+            sum(v is not None for v in [top, bottom, height]) == 2
+        ), 'Need exactly two among `["top","bottom","height"]`'
+        if left is None:
+            left = right + 1 - width
+        if width is None:
+            width = right + 1 - left
+        if top is None:
+            top = bottom + 1 - height
+        if height is None:
+            height = bottom + 1 - top
+        start = Coord(top, left)
+        return Rect(start=start, stop=start + Vector(height, width))
+
+    def __str__(self):
+        args = ",".join(
+            f"{k}={getattr(self, k)}" for k in "left right top bottom".split()
+        )
+        return f"{type(self).__qualname__}({args})"
+
+    @property
+    def topleft(self) -> Coord:
+        return self.start
+
+    @property
+    def bottomright(self) -> Coord:
+        return self.stop - Vector(1, 1)
+
+    @property
+    def top(self):
+        return self.start.row
+
+    @property
+    def left(self):
+        return self.start.col
+
+    @property
+    def bottom(self):
+        return self.stop.row - 1
+
+    @property
+    def right(self):
+        return self.stop.col - 1
+
+    @property
+    def height(self) -> tuple[int, int]:
+        return max(0, self.stop.row - self.start.row)
+
+    @property
+    def width(self) -> tuple[int, int]:
+        return max(0, self.stop.col - self.start.col)
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (_to_vec(self.stop) - _to_vec(self.start)).as_tuple()
+
+    @property
+    def finite(self) -> bool:
+        return self.area > 0
+
+    @property
+    def area(self):
+        return self.height * self.width
+
     def as_slices(self) -> tuple[slice, slice]:
         return tuple(
             slice(*v) for v in zip(self.start.as_tuple(), self.stop.as_tuple())
+        )
+
+    def contains(self, coord: Coord) -> bool:
+        return all(
+            lo <= v < hi
+            for lo, v, hi in zip(
+                *(c.as_tuple() for c in [self.start, Coord.coerce(coord), self.stop])
+            )
         )
 
 
@@ -155,6 +352,9 @@ class Mask:
 
     def __invert__(self) -> Self:
         return Mask(~self._mask)
+
+    def __getitem__(self, coord: Coord):
+        coord = Coord.coerce(coord)
 
 
 @dataclass(frozen=True, slots=True)
