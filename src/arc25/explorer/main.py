@@ -240,19 +240,40 @@ def main_page(*, request: Request):
         ).classes("w-full h-full")
         output = ui.log().classes("w-full h-full")
 
-        def show_eval_output(eval):
+        def ifp(s, **kw):
+            if s:
+                output.push(s, **kw)
+
+        def show_eval_output(eval: ChallengeEval):
+            ei = eval.exec_info
+            if not ei.error:
+                output.push(
+                    f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %,"
+                    f" cell fraction {eval.cell_match*100:.0f} %",
+                    classes="text-green" if eval.full_match else "text-yellow",
+                )
+            else:
+                output.push(
+                    f"Error: {ei.error}",
+                    classes="text-red",
+                )
+            ifp(ei.stdout)
+            ifp(ei.stderr, classes="text-orange")
             for k in ["train", "test"]:
                 for i, e in enumerate(getattr(eval, f"{k}_eval"), 1):
-                    if e.warnings or e.error:
-                        output.push(f"{k.title()} {i}:")
-                    for w in e.warnings:
-                        output.push(w, classes="text-orange")
-                    if e.error:
-                        output.push(e.error, classes="text-red")
-            output.push(
-                f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %,"
-                f" cell fraction {eval.pixel_match*100:.0f} %"
-            )
+                    ei = e.exec_info
+                    if not ei.error:
+                        output.push(
+                            f"{k.title()} {i}: Correct? {e.full_match}, cell fraction {e.cell_match*100:.0f} %",
+                            classes="text-green" if e.full_match else "text-yellow",
+                        )
+                    else:
+                        output.push(
+                            f"{k.title()} {i}: Error: {ei.error}",
+                            classes="text-red",
+                        )
+                    ifp(ei.stdout)
+                    ifp(ei.stderr, classes="text-orange")
 
         def remember_solution():
             r = rule.value.strip()

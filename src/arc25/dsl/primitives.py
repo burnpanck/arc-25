@@ -451,6 +451,10 @@ def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mas
     return tuple(ret)
 
 
+def find_cells(cells: Mask) -> tuple[Coord]:
+    return tuple(Coord(int(c), int(r)) for c, r in zip(*np.nonzero(cells._mask)))
+
+
 def find_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, ...]:
     """Returns one full-sized mask for each hole in each of the objects.
 
@@ -499,6 +503,19 @@ def rect_to_mask(shape: ShapeSpec, rect: Rect) -> Mask:
 
 def new_mask_like(shape: ShapeSpec, *, fill: bool) -> Mask:
     return Mask(np.tile(fill, _shape_from_spec(shape)).astype(bool))
+
+
+def mask_from_string(descr: str) -> Mask:
+    descr = descr.lstrip("[").rstrip("]")
+    lines = descr.split("|")
+    m = len(lines)
+    n = len(lines[0])
+    assert all(len(ln) == n and all(c in "xo" for c in ln) for ln in lines)
+    ret = np.empty((m, n), bool)
+    for i, ln in enumerate(lines):
+        for j, c in enumerate(ln):
+            ret[i, j] = c == "x"
+    return Mask(ret)
 
 
 def mask_all(shape: ShapeSpec) -> Mask:
