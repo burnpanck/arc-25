@@ -315,6 +315,19 @@ class Image:
 class Mask:
     _mask: np.ndarray
 
+    @classmethod
+    def coerce(cls, arg: Self | np.ndarray) -> Self:
+        match arg:
+            case Mask():
+                return arg
+            case np.ndarray():
+                assert arg.ndim == 2 and arg.dtype == bool
+                return cls(arg)
+            case _:
+                raise TypeError(
+                    f"Expected an argument that can be converted to a Mask; got {type(arg).__name__}"
+                )
+
     @property
     def shape(self):
         return self._mask.shape

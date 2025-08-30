@@ -442,6 +442,7 @@ def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mas
 
     Objects are defined by their connectivity.
     """
+    objects = Mask.coerce(objects)
     labeled_array, num_features = ndimage.label(
         objects._mask, _structures[connectivity]
     )
@@ -452,6 +453,7 @@ def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mas
 
 
 def find_cells(cells: Mask) -> tuple[Coord]:
+    cells = Mask.coerce(cells)
     return tuple(Coord(int(c), int(r)) for c, r in zip(*np.nonzero(cells._mask)))
 
 
@@ -460,6 +462,7 @@ def find_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, 
 
     Holes are defined as being completely enclosed by the object (i.e. not touching the edge).
     """
+    object = Mask.coerce(object)
     complement = ~object
     edge = mask_all(object)
     edge = edge & ~erode(edge, connectivity=connectivity)
@@ -472,7 +475,8 @@ def find_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, 
 
 
 def find_bbox(mask: Mask) -> Rect:
-    if not np.any(mask):
+    mask = Mask.coerce(mask)
+    if not mask.any():
         raise ValueError("`find_bbox` requires that at least one cell is selected")
     lim = []
     for axis in range(2):
