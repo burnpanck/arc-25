@@ -1,0 +1,131 @@
+name: build-wheelhouse-and-publish-to-kaggle
+
+on:
+  push:
+    tags: ["v*"]     # e.g. v0.3.2
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: "Target Python version (match Kaggle)"
+        default: "3.11"
+        required: true
+
+jobs:
+  wheelhouse:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PYTHON_VERSION: ${{ inputs.python-version || '3.11' }}
+      # Optional override: "<kaggle-username>/<dataset-slug>"
+      KAGGLE_DATASET_ID: ${{ vars.KAGGLE_DATASET_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Set up PDM + Python
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # pdm-version: "2.12.3"    # safe with pdm-wheel (avoid 2.13.0/2.13.1)
+          cache: true
+
+      - name: Show tool versions
+        run: |
+          python -V
+          pdm -V
+
+      - name: Install pdm-wheel plugin
+        run: |
+          pdm self add pdm-wheel
+          pdm wheel --help | head -n 20
+
+      # Optional but recommended for faster pdm wheel runs (keeps URLs in the lock)
+      # - name: Ensure lock has static URLs
+      #   run: pdm lock --static-urls --check
+
+      # --- Test gate ---------------------------------------------------------
+      - name: Install project + test deps from lock (no solving)
+        run: |
+          pdm install --frozen-lockfile -G test
+
+      - name: Run tests
+        run: |
+          pdm run pytest
+      # ----------------------------------------------------------------------
+
+      - name: Build project wheel with PDM
+        run: |
+          pdm build
+          mkdir -p wheelhouse
+          cp dist/*.whl wheelhouse/
+
+      - name: Build dependency wheels from pdm.lock with pdm-wheel
+        run: |
+          # Production deps only; add flags below if you need extras/groups
+          pdm wheel -w wheelhouse --prod
+          # Examples:
+          # pdm wheel -w wheelhouse --prod -G inference
+          # pdm wheel -w wheelhouse --prod -E "torch,vision"
+
+      - name: Resolve project metadata and prepare dataset files
+        env:
+          TAG: ${{ github.ref_name }}   # e.g. v0.3.2
+          KU: ${{ vars.KAGGLE_USERNAME }}
+        run: |
+          set -e
+          python - <<'PY'
+          import os, re, pathlib
+          try:
+              import tomllib  # py311+
+          except ModuleNotFoundError:
+              import tomli as tomllib      # py310 fallback
+          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+          # Prefer PEP 621 [project] name; fallback to tool.pdm if needed
+          name = (data.get("project", {}) or data.get("tool", {}).get("pdm", {})).get("name")
+          if not name:
+              raise SystemExit("ERROR: project.name is required in pyproject.toml")
+          slug = re.sub(r'[^a-z0-9]+','-', name.lower()).strip('-')
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"PKG_NAME={name}\n")
+              f.write(f"PKG_SLUG={slug}\n")
+          PY
+
+          echo "This dataset contains wheels for ${PKG_NAME} (${TAG})." > wheelhouse/README.txt
+
+          if [ -z "${KAGGLE_DATASET_ID}" ]; then
+            if [ -z "${KU}" ]; then
+              echo "KAGGLE_USERNAME secret is required." >&2; exit 1
+            fi
+            export KAGGLE_DATASET_ID="${KU}/${PKG_SLUG}-wheelhouse"
+          fi
+
+          cat > wheelhouse/dataset-metadata.json <<JSON
+          {
+            "title": "${PKG_NAME} wheelhouse",
+            "id": "${KAGGLE_DATASET_ID}",
+            "isPrivate": true,
+            "licenses": [{"name": "CC0-1.0"}],
+            "subtitle": "Offline installable wheels for Kaggle submissions",
+            "description": "Built from tag ${TAG}.\\n\\nInstall inside Kaggle with:\\n\\n!pip install --no-index --find-links=/kaggle/input/${PKG_SLUG}-wheelhouse ${PKG_NAME}==${TAG#v}"
+          }
+          JSON
+
+      - name: Publish or update Kaggle Dataset
+        env:
+          KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          set -e
+          cd wheelhouse
+          kaggle datasets create -p . -q || kaggle datasets version -p . -m "${GITHUB_REF_NAME}" -q
+
+      - name: Upload wheelhouse as artifact (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheelhouse-${{ github.ref_name }}
+          path: wheelhouse
