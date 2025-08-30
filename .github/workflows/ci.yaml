@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    paths-ignore: [ "**.md" ]
+  pull_request:
+    paths-ignore: [ "**.md" ]
+
+# Cancel older runs on the same branch/PR
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (with LFS for hooks that read binary files)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files
+
+  tests:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout (with LFS fixtures)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Set up PDM + Python
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Let the action choose a stable PDM. Pin here if you prefer:
+          # pdm-version: "latest"
+          cache: true
+
+      - name: Show tool versions
+        run: |
+          python -V
+          pdm -V
+
+      - name: Install (from lock) + test extras
+        run: pdm install --frozen-lockfile -G test
+
+      - name: Run pytest
+        run: pdm run pytest -q
+        env:
+          PYTHONWARNINGS: default
