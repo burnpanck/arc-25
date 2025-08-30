@@ -24,6 +24,9 @@ async def test_all_solutions():
         chal = ds.challenges[id]
         eval = await evaluate_solution(chal, sol)
         (good if eval.full_match else bad).add(id)
+        if eval.any_error():
+            print(f"Solution to challenge {id} failed with an error:")
+            print("\n".join(eval.summary(with_ansi=True)))
     now_available = good | bad
     still_good = known_good & good
     newly_bad = known_good & bad

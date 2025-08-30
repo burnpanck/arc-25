@@ -56,6 +56,80 @@ class ChallengeEval:
             for io, e in zip(getattr(self.challenge, k), getattr(self, f"{k}_eval")):
                 yield io.compare_output(e.output)
 
+    def any_error(self):
+        return self.exec_info.error or any(
+            e.exec_info.error for e in self.train_eval + self.test_eval
+        )
+
+    def summary(self, with_ansi: bool = True) -> list[str]:
+        ret = []
+
+        def output(s, colour, strong):
+            modifiers = list()
+            if with_ansi:
+                if strong:
+                    modifiers.append(1)
+                #                    modifiers.append(47)
+                if colour:
+                    modifiers.append(
+                        dict(
+                            red=31,
+                            green=32,
+                            yellow=33,
+                            orange=33,
+                            blue=34,
+                            magenta=35,
+                            cyan=36,
+                            white=37,
+                        )[colour]
+                    )
+            csi = "\x1b["
+            pre = (
+                "" if not modifiers else csi + ";".join(str(v) for v in modifiers) + "m"
+            )
+            post = "" if not modifiers else csi + "0m"
+            ret.append(pre + s + post)
+
+        def ifp(s, colour=None, strong: bool = False):
+            if s:
+                output(s, colour, strong)
+
+        ei = self.exec_info
+        if not ei.error:
+            output(
+                f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %,"
+                f" cell fraction {eval.cell_match*100:.0f} %",
+                colour="green" if eval.full_match else "orange",
+                strong=True,
+            )
+        else:
+            output(
+                f"Error: {ei.error}",
+                colour="red",
+                strong=True,
+            )
+        ifp(ei.stdout)
+        ifp(ei.stderr, colour="orange")
+        for k in ["train", "test"]:
+            for i, e in enumerate(getattr(self, f"{k}_eval"), 1):
+                ei = e.exec_info
+                if not ei.error:
+                    output(
+                        f"{k.title()} {i}: Correct? {e.full_match}, cell fraction {e.cell_match*100:.0f} %",
+                        colour="green" if e.full_match else "orange",
+                        strong=True,
+                    )
+                else:
+                    output(
+                        f"{k.title()} {i}: Error: {ei.error}",
+                        colour="red",
+                        strong=True,
+                    )
+                ifp(ei.stdout)
+                ifp(ei.stderr, colour="orange")
+
+        return ret
+
 
 def _mark(id: str, mark: str):
     msg = f"\n<!-- [{id}|{mark}] -->\n"
