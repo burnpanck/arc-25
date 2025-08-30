@@ -43,8 +43,8 @@ class ChallengeEval:
     challenge: Challenge
     solution: Solution
     exec_info: ExecutionInfo
-    train_eval: tuple[ExampleEval, ...]
-    test_eval: tuple[ExampleEval, ...]
+    train_eval: tuple[ExampleEval, ...] | None
+    test_eval: tuple[ExampleEval, ...] | None
     full_match: bool
     example_match: float
     cell_match: float
@@ -53,7 +53,10 @@ class ChallengeEval:
         self, subset: Literal["train", "test", "all"] = "all"
     ) -> Iterable[IAETriple]:
         for k in dict(all=["train", "test"]).get(subset, [subset]):
-            for io, e in zip(getattr(self.challenge, k), getattr(self, f"{k}_eval")):
+            evals = getattr(self, f"{k}_eval")
+            if evals is None:
+                yield from self.challenge.get_empty_eval_triples(k)
+            for io, e in zip(getattr(self.challenge, k), evals):
                 yield io.compare_output(e.output)
 
     def any_error(self):
@@ -97,9 +100,9 @@ class ChallengeEval:
         ei = self.exec_info
         if not ei.error:
             output(
-                f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %,"
-                f" cell fraction {eval.cell_match*100:.0f} %",
-                colour="green" if eval.full_match else "orange",
+                f"Correct? {self.full_match}, example fraction {self.example_match*100:.0f} %,"
+                f" cell fraction {self.cell_match*100:.0f} %",
+                colour="green" if self.full_match else "orange",
                 strong=True,
             )
         else:
@@ -111,7 +114,10 @@ class ChallengeEval:
         ifp(ei.stdout)
         ifp(ei.stderr, colour="orange")
         for k in ["train", "test"]:
-            for i, e in enumerate(getattr(self, f"{k}_eval"), 1):
+            evals = getattr(self, f"{k}_eval")
+            if evals is None:
+                continue
+            for i, e in enumerate(evals, 1):
                 ei = e.exec_info
                 if not ei.error:
                     output(
@@ -149,7 +155,7 @@ def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
         glob = {k: getattr(dsl, k) for k in dsl.__all__}
         glob["IOPair"] = IOPair
         loc = dict()
-        exec(code, globals=glob, locals=loc)
+        exec(code, glob, loc)
         solver = loc.get("solution")
         if solver is None:
             raise ValueError("Rule must contain a function called `solution`")
@@ -320,8 +326,8 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
         return ChallengeEval(
             **meta,
             exec_info=exec_info,
-            train_eval=challenge.get_empty_eval_triples("train"),
-            test_eval=challenge.get_empty_eval_triples("test"),
+            train_eval=None,
+            test_eval=None,
             full_match=False,
             example_match=0,
             cell_match=0,

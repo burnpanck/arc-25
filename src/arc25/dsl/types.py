@@ -326,6 +326,22 @@ class Mask:
     def count(self):
         return self._mask.sum()
 
+    def __eq__(self, other: Self | np.ndarray | bool) -> Self:
+        if isinstance(other, Mask):
+            other = other._mask
+        return Mask(self._mask == other)
+
+    def __req__(self, other: Self | np.ndarray | bool) -> Self:
+        return self.__req__(other)
+
+    def __neq__(self, other: Self | np.ndarray | bool) -> Self:
+        if isinstance(other, Mask):
+            other = other._mask
+        return Mask(self._mask != other)
+
+    def __rneq__(self, other: Self | np.ndarray | bool) -> Self:
+        return self.__rneq__(other)
+
     def __and__(self, other: Self | np.ndarray | bool) -> Self:
         if isinstance(other, Mask):
             other = other._mask
@@ -355,6 +371,12 @@ class Mask:
 
     def __getitem__(self, coord: Coord):
         coord = Coord.coerce(coord)
+
+    def all(self) -> bool:
+        return self._mask.all()
+
+    def any(self) -> bool:
+        return self._mask.any()
 
 
 @dataclass(frozen=True, slots=True)
