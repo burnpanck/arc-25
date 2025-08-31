@@ -1,0 +1,7 @@
+**Hypothesis:**
+- 3x3 tiles of a single color.
+- Random cells are painted-over in gray.
+
+**Rule:**
+- Remove the gray cells, restore the background tiles.
+- Downsample by factor 3 in both directions.

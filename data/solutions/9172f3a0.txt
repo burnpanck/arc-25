@@ -1,0 +1,2 @@
+**Rule:**
+- Upsample the input by a factor 3.

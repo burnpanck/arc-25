@@ -188,6 +188,9 @@ def _shape_from_spec(shape: "ShapeSpec") -> tuple[int, int]:
             )
 
 
+HasShape: TypeAlias = typing.Any
+
+
 @dataclass(frozen=True, slots=True)
 class Rect:
     start: Coord
@@ -202,19 +205,29 @@ class Rect:
     def make(
         cls,
         *,
-        width: int | None = None,
-        height: int | None = None,
-        shape: tuple[int, int] | None = None,
-        left: int | None = None,
-        right: int | None = None,
-        top: int | None = None,
-        bottom: int | None = None,
-        topleft: Coord | None = None,
-        bottomright: Coord | None = None,
+        width: int | Self | HasShape | None = None,
+        height: int | Self | HasShape | None = None,
+        square_size: int | None = None,
+        shape: tuple[int, int] | Self | HasShape | None = None,
+        left: int | Self | HasShape | None = None,
+        right: int | Self | HasShape | None = None,
+        top: int | Self | HasShape | None = None,
+        bottom: int | Self | HasShape | None = None,
+        topleft: Coord | Self | HasShape | None = None,
+        bottomright: Coord | Self | HasShape | None = None,
     ) -> Self:
+        if False:
+            for k, v in list(locals().items()):
+                if isinstance(v, Rect):
+                    locals()[k] = getattr(v, k)
+                elif hasattr(v, "shape"):
+                    locals()[k] = getattr(cls.full_shape(v.shape), k)
         if shape is not None:
             assert width is None and height is None
             width, height = shape
+        if square_size is not None:
+            assert width is None and height is None
+            width = height = square_size
         if topleft is not None:
             assert top is None and left is None
             top, left = topleft.as_tuple()
@@ -430,6 +443,12 @@ class Canvas:
     @property
     def shape(self):
         return self.image.shape
+
+
+@dataclass(frozen=True, slots=True)
+class IOPair:
+    input: Canvas
+    output: Canvas | None = None
 
 
 Paintable: TypeAlias = Canvas | AnyImage

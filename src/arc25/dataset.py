@@ -1,36 +1,38 @@
 import contextlib
+import dataclasses
 import itertools
 import json
 import logging
+import lzma
 import zipfile
 from pathlib import Path
+from types import MappingProxyType
 from typing import Iterable, Literal, Self
 
 import anyio
 import attrs
+import cbor2
 import numpy as np
 
-from .dsl.types import Canvas, Image
+from .dsl.types import Canvas, Image, IOPair
+from .serialisation import deserialise, serialisable, serialise
 
 logger = logging.getLogger(__name__)
 
 
+@serialisable
 @attrs.frozen
 class IAETriple:
     input: Canvas
     actual: Canvas | None = None
     expected: Canvas | None = None
 
-
-@attrs.frozen
-class IOPair:
-    input: Canvas
-    output: Canvas | None = None
-
-    def compare_output(self, actual: Canvas) -> IAETriple:
-        return IAETriple(input=self.input, actual=actual, expected=self.output)
+    @classmethod
+    def compare_output(cls, example: IOPair, actual: Canvas) -> Self:
+        return cls(input=example.input, actual=actual, expected=example.output)
 
 
+@serialisable
 @attrs.frozen
 class Challenge:
     id: str
@@ -42,7 +44,7 @@ class Challenge:
     ) -> Iterable[IAETriple]:
         for k in dict(all=["train", "test"]).get(subset, [subset]):
             for io in getattr(self, k):
-                yield io.compare_output(None)
+                yield IAETriple.compare_output(io, None)
 
 
 def parse_inputs(v, had_list=False, id=None):
@@ -76,16 +78,15 @@ def load_json(root: Path, relative: Path | str, mode="r"):
             raise KeyError(f"Unknown suffix {root.suffix!r}")
 
 
+@serialisable
 @attrs.frozen
 class Dataset:
     id: str
-    title: str = attrs.field(
-        default=attrs.Factory(lambda self: self.id.title(), takes_self=True)
-    )
     challenges: dict[str, Challenge] = attrs.field(factory=dict)
+    subsets: dict[str, frozenset[str]] = attrs.field(factory=dict)
 
     @classmethod
-    async def load(
+    async def load_from_json(
         cls,
         *,
         root: Path,
@@ -122,10 +123,28 @@ class Dataset:
                 )
         else:
             dataset = challenges
-        self.challenges.update(dataset)
-        return self
+        ret = dict(
+            challenges=dataset,
+            subsets={self.id: frozenset(self.challenges)},
+        )
+        return attrs.evolve(self, **{k: MappingProxyType(v) for k, v in ret.items()})
+
+    @classmethod
+    async def from_binary(cls, src: Path) -> Self:
+        encoded = await anyio.Path(src).read_bytes()
+        ret = deserialise(cbor2.loads(encoded))
+        challenges = {}
+        for k, v in ret.challenges.items():
+            challenges[k] = attrs.evolve(v, train=tuple(v.train), test=tuple(v.test))
+        subsets = {k: frozenset(v) for k, v in ret.subsets.items()}
+        return attrs.evolve(
+            ret,
+            challenges=MappingProxyType(challenges),
+            subsets=MappingProxyType(subsets),
+        )
 
 
+@serialisable
 @attrs.frozen
 class Solution:
     id: str
@@ -141,6 +160,7 @@ class Solution:
         return not self.explanation.strip() and not self.rule.strip()
 
 
+@serialisable
 @attrs.frozen
 class SolutionDB:
     root: Path

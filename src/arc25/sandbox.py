@@ -15,13 +15,14 @@ import attrs
 import msgpack
 import numpy as np
 
-from .dataset import Challenge, IAETriple, IOPair, Solution
+from .dataset import Challenge, IAETriple, Solution
 from .dsl import api as dsl
 from .dsl import types
-from .dsl.types import Canvas, Image, MaskedImage
-from .symmetry import SymOp
+from .dsl.types import Canvas, IOPair
+from .serialisation import deserialise, serialisable, serialise
 
 
+@serialisable
 @attrs.frozen(kw_only=True)
 class ExecutionInfo:
     error: str | None = None
@@ -29,6 +30,7 @@ class ExecutionInfo:
     stderr: tuple[str, ...] = ()
 
 
+@serialisable
 @attrs.frozen(kw_only=True)
 class ExampleEval:
     output: Canvas | None = None
@@ -38,6 +40,7 @@ class ExampleEval:
     exec_info: ExecutionInfo | None = None
 
 
+@serialisable
 @attrs.frozen
 class ChallengeEval:
     challenge: Challenge
@@ -56,8 +59,9 @@ class ChallengeEval:
             evals = getattr(self, f"{k}_eval")
             if evals is None:
                 yield from self.challenge.get_empty_eval_triples(k)
+                continue
             for io, e in zip(getattr(self.challenge, k), evals):
-                yield io.compare_output(e.output)
+                yield IAETriple.compare_output(io, e.output)
 
     def any_error(self):
         return self.exec_info.error or any(
@@ -174,7 +178,7 @@ def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
 
         result = dict(train=[], test=[])
         examples = tuple(challenge.train) + tuple(
-            attrs.evolve(v, output=None) for v in challenge.test
+            dataclasses.replace(v, output=None) for v in challenge.test
         )
         for eset in ["train", "test"]:
             for idx, io in enumerate(getattr(challenge, eset)):
@@ -197,70 +201,6 @@ def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
         sys.stderr.write(traceback.format_exc())
         err = repr(ex)
         return dict(error=err)
-
-
-def serialise(obj):
-    match obj:
-        case dict():
-            return {k: serialise(v) for k, v in obj.items()}
-        case tuple() | list():
-            return type(obj)(serialise(v) for v in obj)
-        case np.ndarray():
-            return dict(
-                __type__=type(obj).__qualname__,
-                shape=obj.shape,
-                dtype=str(obj.dtype),
-                data=bytes(obj.ravel()),
-            )
-        case SymOp():
-            return dict(__type__=type(obj).__qualname__, name=obj.name)
-        case _ if attrs.has(type(obj)):
-            dct = attrs.asdict(obj, recurse=False)
-            dct["__type__"] = type(obj).__qualname__
-            return serialise(dct)
-        case _ if dataclasses.is_dataclass(obj):
-            dct = {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
-            dct["__type__"] = type(obj).__qualname__
-            return serialise(dct)
-        case _:
-            return obj
-
-
-_known_types = {
-    t.__qualname__: t
-    for t in [
-        ChallengeEval,
-        Challenge,
-        Solution,
-        Canvas,
-        Image,
-        MaskedImage,
-        IOPair,
-    ]
-}
-
-
-def deserialise(data):
-    match data:
-        case dict():
-            typ = data.pop("__type__", None)
-            if typ is None:
-                return {k: deserialise(v) for k, v in data.items()}
-        case tuple() | list():
-            return type(data)(deserialise(v) for v in data)
-        case _:
-            return data
-    match typ:
-        case np.ndarray.__qualname__:
-            return np.frombuffer(data["data"], dtype=data["dtype"]).reshape(
-                *data["shape"]
-            )
-        case SymOp.__qualname__:
-            return SymOp[data["name"]]
-    cls = _known_types.get(typ)
-    if cls is None:
-        raise TypeError(f"Unsupported type {typ}")
-    return cls(**deserialise(data))
 
 
 async def evaluate_solution(challenge: Challenge, solution: Solution) -> ChallengeEval:

@@ -10,12 +10,12 @@ from arc25.sandbox import evaluate_solution
 @pytest.mark.asyncio
 async def test_all_solutions():
     data_dir = (Path(__file__).parent / "../../../data").resolve()
-    datasets = await load_datasets(data_dir / "arc-prize-2025.zip")
+    datasets = await Dataset.from_binary(data_dir / "all-challenges.cbor.xz")
     solutions = await SolutionDB.load(data_dir / "solutions")
     known_good_path = anyio.Path(data_dir / "known-good-solutions.txt")
     known_good = await known_good_path.read_text()
     known_good = frozenset(known_good.split())
-    ds = datasets["combined"]
+    ds = datasets
     good = set()
     bad = set()
     for id, sol in solutions.solutions.items():

@@ -4,6 +4,7 @@ import importlib.metadata
 import itertools
 import logging
 import random
+import re
 import sys
 import typing
 from pathlib import Path
@@ -27,7 +28,7 @@ logger = logging.getLogger("arc25.explorer")
 
 @attrs.mutable
 class App:
-    datasets: dict[str, Dataset]
+    dataset: Dataset
     solutions_db: SolutionDB
     solutions: dict[str, Solution] = attrs.field(factory=dict)
     _pending_solutions: set[str] = attrs.field(factory=set)
@@ -109,7 +110,7 @@ class App:
                     )
                     continue
                 logger.debug(f"Evaluating solution for challenge {id}")
-                chal = self.datasets["combined"].challenges[id]
+                chal = self.dataset.challenges[id]
                 eval = await evaluate_solution(
                     challenge=chal,
                     solution=sol,
@@ -154,9 +155,8 @@ def main_page(*, request: Request):
     fig = ui.matplotlib().figure
 
     def update_figure(cur_c):
-        chal = cur_ds.challenges[cur_c]
+        chal = app.dataset.challenges[cur_c]
         eval = app.evaluations.get(cur_c)
-        output.clear()
         if eval is None:
             triples = chal.get_empty_eval_triples()
         else:
@@ -173,14 +173,14 @@ def main_page(*, request: Request):
             )
 
     with ui.left_drawer(fixed=True).props("width=600"):
-        initial_value = "training"
+        initial_value = "arc-agi-1"
         ds_select = ui.select(
-            {d.id: d.title for d in app.datasets.values()},
+            {d: d for d in app.dataset.subsets},
             value=initial_value,
         ).bind_value(nicegui_app.storage.user, "dataset")
 
-        cur_ds = app.datasets[initial_value]
-        ckeys = list(cur_ds.challenges)
+        cur_ds = initial_value
+        ckeys = tuple(sorted(app.dataset.subsets[cur_ds]))
         csel = ui.slider(min=0, max=len(ckeys) - 1, value=0).bind_value(
             nicegui_app.storage.user, "challenge"
         )
@@ -188,14 +188,14 @@ def main_page(*, request: Request):
 
         def update_dataset(evt):
             nonlocal cur_ds, ckeys
-            cur_ds = app.datasets[evt.value]
-            ckeys = list(cur_ds.challenges)
+            cur_ds = evt.value
+            ckeys = tuple(sorted(app.dataset.subsets[cur_ds]))
             csel.set_value(0)
             csel.props["max"] = len(ckeys) - 1
             update_challenge(SimpleNamespace(value=0))
 
         ds_select.on_value_change(update_dataset)
-        clabel = ui.label(f"{cur_ds.title}: {1}/{len(ckeys)}")
+        clabel = ui.label(f"{cur_ds}: {1}/{len(ckeys)}")
 
         store_holdoff = anyio.current_time()
 
@@ -203,7 +203,13 @@ def main_page(*, request: Request):
             logger.debug(
                 f"Eval for solution for {sol.id} completed: {eval.full_match=}"
             )
-            update_figure(sol.id)
+            try:
+                update_figure(sol.id)
+            except Exception:
+                import traceback
+
+                traceback.print_exc()
+                raise
 
         def update_challenge(evt):
             nonlocal cur_c, store_holdoff
@@ -211,13 +217,14 @@ def main_page(*, request: Request):
             store_holdoff = anyio.current_time()
             idx = int(evt.value)
             cur_c = ckeys[idx]
-            clabel.set_text(f"{cur_ds.title}: {cur_c} ({idx+1}/{len(ckeys)})")
+            clabel.set_text(f"{cur_ds}: {cur_c} ({idx+1}/{len(ckeys)})")
             sol = app.solutions.get(cur_c, Solution.make(id=cur_c))
             explanation.set_value(sol.explanation)
             r = sol.rule
             if not r.strip():
                 r = rule_placeholder
             rule.set_value(r)
+            output.clear()
             if not sol.is_empty and cur_c not in app.evaluations:
                 app.evaluate_solution(sol, fig, eval_callback)
             update_figure(cur_c)
@@ -245,35 +252,31 @@ def main_page(*, request: Request):
                 output.push(s, **kw)
 
         def show_eval_output(eval: ChallengeEval):
-            ei = eval.exec_info
-            if not ei.error:
-                output.push(
-                    f"Correct? {eval.full_match}, example fraction {eval.example_match*100:.0f} %,"
-                    f" cell fraction {eval.cell_match*100:.0f} %",
-                    classes="text-green" if eval.full_match else "text-yellow",
-                )
-            else:
-                output.push(
-                    f"Error: {ei.error}",
-                    classes="text-red",
-                )
-            ifp(ei.stdout)
-            ifp(ei.stderr, classes="text-orange")
-            for k in ["train", "test"]:
-                for i, e in enumerate(getattr(eval, f"{k}_eval"), 1):
-                    ei = e.exec_info
-                    if not ei.error:
-                        output.push(
-                            f"{k.title()} {i}: Correct? {e.full_match}, cell fraction {e.cell_match*100:.0f} %",
-                            classes="text-green" if e.full_match else "text-yellow",
-                        )
-                    else:
-                        output.push(
-                            f"{k.title()} {i}: Error: {ei.error}",
-                            classes="text-red",
-                        )
-                    ifp(ei.stdout)
-                    ifp(ei.stderr, classes="text-orange")
+            output.clear()
+            if eval is None:
+                return
+            ansi_re = re.compile("\x1b" r"\[([0-9;]+)m(.*)" "\x1b" r"\[0m$", re.DOTALL)
+            ansi_map = {
+                v: f"text-{k}"
+                for k, v in dict(
+                    red=31,
+                    green=32,
+                    # yellow=33,
+                    orange=33,
+                    blue=34,
+                    magenta=35,
+                    cyan=36,
+                    white=37,
+                    bold=1,
+                ).items()
+            }
+            for line in eval.summary():
+                classes = []
+                if m := ansi_re.match(line):
+                    line = m.group(2)
+                    for k in m.group(1).split(";"):
+                        classes.append(ansi_map[int(k)])
+                output.push(line, classes=" ".join(classes))
 
         def remember_solution():
             r = rule.value.strip()
@@ -378,16 +381,16 @@ def run(**kw):
     data_path = proj_root / "data"
     db_root = data_path / "solutions"
     db_root.mkdir(exist_ok=True, parents=True)
-    challenges_root = data_path / "arc-prize-2025.zip"
+    dataset_file = data_path / "all-challenges.cbor.xz"
 
     _orig_lifespan_context = nicegui.app.router.lifespan_context
 
     @contextlib.asynccontextmanager
     async def lifespan(nicegui_app):
         async with _orig_lifespan_context(nicegui_app):
-            datasets = await load_datasets(challenges_root)
+            ds = await Dataset.from_binary(dataset_file)
             async with App.run(
-                datasets=datasets,
+                dataset=ds,
                 solutions_db=db_root,
             ) as app:
                 nicegui_app.app_impl = app
