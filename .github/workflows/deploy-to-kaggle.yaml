@@ -29,7 +29,6 @@ jobs:
         uses: pdm-project/setup-pdm@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # pdm-version: "2.12.3"    # safe with pdm-wheel (avoid 2.13.0/2.13.1)
           cache: true
 
       - name: Show tool versions
@@ -70,10 +69,7 @@ jobs:
           # pdm wheel -w wheelhouse --prod -G inference
           # pdm wheel -w wheelhouse --prod -E "torch,vision"
 
-      - name: Resolve project metadata and prepare dataset files
-        env:
-          TAG: ${{ github.ref_name }}   # e.g. v0.3.2
-          KU: ${{ vars.KAGGLE_USERNAME }}
+      - name: Resolve project metadata
         run: |
           set -e
           python - <<'PY'
@@ -93,13 +89,19 @@ jobs:
               f.write(f"PKG_SLUG={slug}\n")
           PY
 
+      - name: Prepare dataset files
+        env:
+          TAG: ${{ github.ref_name }}   # e.g. v0.3.2
+          KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+        run: |
+          set -e
           echo "This dataset contains wheels for ${PKG_NAME} (${TAG})." > wheelhouse/README.txt
 
           if [ -z "${KAGGLE_DATASET_ID}" ]; then
-            if [ -z "${KU}" ]; then
+            if [ -z "${KAGGLE_USERNAME}" ]; then
               echo "KAGGLE_USERNAME secret is required." >&2; exit 1
             fi
-            export KAGGLE_DATASET_ID="${KU}/${PKG_SLUG}-wheelhouse"
+            export KAGGLE_DATASET_ID="${KAGGLE_USERNAME}/${PKG_SLUG}-wheelhouse"
           fi
 
           cat > wheelhouse/dataset-metadata.json <<JSON
