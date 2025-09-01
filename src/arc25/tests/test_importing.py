@@ -10,6 +10,10 @@ def test_importing():
     """.split()
     )
     skip = set()
+    try:
+        import asyncclick  # noqa
+    except ImportError:
+        skip.add("arc25.kaggle")
     done = set()
     failed = dict()
     while todo:

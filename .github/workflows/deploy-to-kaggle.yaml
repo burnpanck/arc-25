@@ -64,7 +64,7 @@ jobs:
       - name: Build dependency wheels from pdm.lock with pdm-wheel
         run: |
           # Production deps only; add flags below if you need extras/groups
-          pdm wheel -w wheelhouse --prod -G gpt-oss
+          pdm wheel -w wheelhouse --prod -v -G gpt-oss
           # Examples:
           # pdm wheel -w wheelhouse --prod -G inference
           # pdm wheel -w wheelhouse --prod -E "torch,vision"
@@ -109,7 +109,7 @@ jobs:
             "title": "${PKG_NAME} wheelhouse",
             "id": "${KAGGLE_DATASET_ID}",
             "isPrivate": true,
-            "licenses": [{"name": "CC0-1.0"}],
+            "licenses": [{"name": "CC-BY-NC-SA-4.0"}],
             "subtitle": "Offline installable wheels for Kaggle submissions",
             "description": "Built from tag ${TAG}.\\n\\nInstall inside Kaggle with:\\n\\n!pip install --no-index --find-links=/kaggle/input/${KAGGLE_DATASET_ID} ${PKG_NAME}==${TAG#v}"
           }

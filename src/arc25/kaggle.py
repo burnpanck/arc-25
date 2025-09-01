@@ -1,0 +1,84 @@
+import contextlib
+import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+import anyio
+import asyncclick as click
+import attrs
+
+
+@attrs.frozen
+class KaggleDatasetMeta:
+    title: str
+    id: str
+    private: bool = True
+    license: str = "unknown"
+    subtitle: str | None = None
+    description: str | None = None
+
+    def as_json(self):
+        ret = attrs.asdict(self, filter=lambda a, v: v is not None)
+        ret.update(
+            isPrivate=ret.pop("private"),
+            licenses=[dict(name=ret.pop("license"))],
+        )
+        return ret
+
+
+@click.group()
+def dataset():
+    pass
+
+
+@dataset.command()
+@click.option("-m", "--msg", default=None, help="Commit message")
+async def update_training_data(msg: str):
+    cfg = await anyio.Path("~/.kaggle/kaggle.json").expanduser()
+    cfg = await cfg.resolve()
+    cfg = json.loads(await cfg.read_text())
+    username = cfg["username"]
+
+    proj_root = await anyio.Path(__file__).parents[2].resolve()
+    data_root = proj_root / "data"
+    dataset = KaggleDatasetMeta(
+        title="ARC Prize 2025 training data",
+        id=f"{username}/arc25-training-data",
+        subtitle="Hand-written DSL solutions",
+    )
+    lim = anyio.CapacityLimiter(total_tokens=8)
+
+    def make_copy_fn(src, dst):
+        async def copy_fn():
+            async with lim:
+                print(f"Copy {src.relative_to(data_root)} to {dst.relative_to(tdir)}")
+                await anyio.to_thread.run_sync(shutil.copy2, src, dst)
+
+        return copy_fn
+
+    async with contextlib.AsyncExitStack() as stack:
+        tdir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        atdir = anyio.Path(tdir)
+        await (atdir / "dataset-metadata.json").write_text(
+            json.dumps(dataset.as_json())
+        )
+        sdst = atdir / "solutions"
+        await sdst.mkdir()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(make_copy_fn(data_root / "all-challenges.cbor.xz", tdir))
+            ssrc = data_root / "solutions"
+            async for fn in ssrc.glob("*.txt"):
+                tg.start_soon(make_copy_fn(fn, sdst))
+            async for fn in ssrc.glob("*.py"):
+                tg.start_soon(make_copy_fn(fn, sdst))
+        await anyio.run_process(
+            f'kaggle datasets version -p "{tdir}" -r zip -m "{msg}"',
+            stdout=None,
+            stderr=None,
+        )
+
+
+if __name__ == "__main__":
+    dataset()
