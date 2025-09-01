@@ -2,7 +2,7 @@ def solution(input: Canvas) -> Canvas:
     # find the two "fields"
     bg = identify_background(input, mode="edge")
     fg_mask = ~mask_color(input, bg)
-    # collect the subobjets inside the "spec field"
+    # collect the subobjects inside the "spec field"
     # and remember the "target field"
     tgt = None
     src = []
@@ -11,7 +11,7 @@ def solution(input: Canvas) -> Canvas:
         area_bbox = find_bbox(field)
         area_bg = identify_background(extract_image(input,rect=area_bbox), mode="edge")
         subobj_mask = rect_to_mask(input, area_bbox) & ~mask_color(input,area_bg)
-        subobj = find_objects(subobj_mask)
+        subobj = list(find_objects(subobj_mask))
         field_bbox = reduce_rect(area_bbox,amount=1)
         if subobj:
             # there are subobjects, so this is the "spec field"

@@ -1,0 +1,8 @@
+**Hypothesis:**
+- Black background.
+- Two parallel lines of a single color.
+
+**Rule:**
+- Paint the outline of the bounding rectangle of the two lines
+  in the same color as the lines.
+- Then, remove the original lines again.

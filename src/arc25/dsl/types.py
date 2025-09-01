@@ -205,23 +205,17 @@ class Rect:
     def make(
         cls,
         *,
-        width: int | Self | HasShape | None = None,
-        height: int | Self | HasShape | None = None,
+        width: int | None = None,
+        height: int | None = None,
         square_size: int | None = None,
-        shape: tuple[int, int] | Self | HasShape | None = None,
-        left: int | Self | HasShape | None = None,
-        right: int | Self | HasShape | None = None,
-        top: int | Self | HasShape | None = None,
-        bottom: int | Self | HasShape | None = None,
-        topleft: Coord | Self | HasShape | None = None,
-        bottomright: Coord | Self | HasShape | None = None,
+        shape: tuple[int, int] | None = None,
+        left: int | None = None,
+        right: int | None = None,
+        top: int | None = None,
+        bottom: int | None = None,
+        topleft: Coord | None = None,
+        bottomright: Coord | None = None,
     ) -> Self:
-        if False:
-            for k, v in list(locals().items()):
-                if isinstance(v, Rect):
-                    locals()[k] = getattr(v, k)
-                elif hasattr(v, "shape"):
-                    locals()[k] = getattr(cls.full_shape(v.shape), k)
         if shape is not None:
             assert width is None and height is None
             width, height = shape
@@ -329,17 +323,32 @@ class Mask:
     _mask: np.ndarray
 
     @classmethod
-    def coerce(cls, arg: Self | np.ndarray) -> Self:
+    def coerce(
+        cls, arg: Self | np.ndarray, *, shape: "ShapeSpec | None" = None
+    ) -> Self:
+        if shape is not None:
+            shape = _shape_from_spec(shape)
         match arg:
             case Mask():
-                return arg
+                ret = arg
             case np.ndarray():
                 assert arg.ndim == 2 and arg.dtype == bool
-                return cls(arg)
+                ret = cls(arg)
+            case Rect():
+                if shape is None:
+                    raise TypeError(
+                        "`Rect` is only acceptable as mask where the mask shape is known beforehand"
+                    )
+                ret = np.zeros(shape, bool)
+                ret[arg.as_slices()] = True
+                ret = cls(ret)
             case _:
                 raise TypeError(
                     f"Expected an argument that can be converted to a Mask; got {type(arg).__name__}"
                 )
+        if shape is not None and ret.shape != shape:
+            raise ValueError(f"Expected a mask of shape {shape} but got {ret.shape}")
+        return ret
 
     @property
     def shape(self):
@@ -348,7 +357,6 @@ class Mask:
     def as_numpy(self):
         return self._mask.copy()
 
-    @property
     def count(self):
         return self._mask.sum()
 
@@ -395,8 +403,9 @@ class Mask:
     def __invert__(self) -> Self:
         return Mask(~self._mask)
 
-    def __getitem__(self, coord: Coord):
+    def __getitem__(self, coord: Coord) -> bool:
         coord = Coord.coerce(coord)
+        return bool(self._mask[coord.row, coord.col])
 
     def all(self) -> bool:
         return self._mask.all()

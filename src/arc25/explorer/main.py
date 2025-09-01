@@ -173,15 +173,13 @@ def main_page(*, request: Request):
             )
 
     with ui.left_drawer(fixed=True).props("width=600"):
-        initial_value = "arc-agi-1"
         ds_select = ui.select(
             {d: d for d in app.dataset.subsets},
-            value=initial_value,
         ).bind_value(nicegui_app.storage.user, "dataset")
 
-        cur_ds = initial_value
+        cur_ds = ds_select.value
         ckeys = tuple(sorted(app.dataset.subsets[cur_ds]))
-        csel = ui.slider(min=0, max=len(ckeys) - 1, value=0).bind_value(
+        csel = ui.slider(min=0, max=len(ckeys) - 1).bind_value(
             nicegui_app.storage.user, "challenge"
         )
         cur_c = ckeys[csel.value]
@@ -246,10 +244,6 @@ def main_page(*, request: Request):
             theme="githubLight",
         ).classes("w-full h-full")
         output = ui.log().classes("w-full h-full")
-
-        def ifp(s, **kw):
-            if s:
-                output.push(s, **kw)
 
         def show_eval_output(eval: ChallengeEval):
             output.clear()

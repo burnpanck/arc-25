@@ -1,7 +1,7 @@
 **Hypothesis:**
 - Black background.
 - A solid or dotted horizontal separator in one color.
-- Objects above and below the separator, all in one color, can be the same or different.
+- Objects above and below the separator, all in one color, can be the same as the separator or different.
 
 **Rule:**
 - Remove all objects below the separator.

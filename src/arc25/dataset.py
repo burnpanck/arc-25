@@ -132,6 +132,13 @@ class Dataset:
     @classmethod
     async def from_binary(cls, src: Path) -> Self:
         encoded = await anyio.Path(src).read_bytes()
+        match src.suffix:
+            case ".xz":
+                encoded = lzma.decompress(encoded)
+            case ".cbor":
+                pass
+            case _:
+                raise KeyError(f"Unsupported compression format {src.suffix!r}")
         ret = deserialise(cbor2.loads(encoded))
         challenges = {}
         for k, v in ret.challenges.items():

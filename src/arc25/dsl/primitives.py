@@ -41,6 +41,8 @@ def _make_type_error(argument: Any, argument_name: str, type_signature: str):
 
 def _set_of_colors(color: Color | set[Color], *, argname: str = "color") -> set[Color]:
     match color:
+        case None:
+            return set()
         case str() | Color():
             return {Color(color)}
         case set() | list() | tuple():
@@ -264,6 +266,8 @@ def fill(
 ) -> Paintable:
     if isinstance(canvas, Canvas):
         return _evolve(canvas, image=fill(canvas.image, style, dir=dir, clip=clip))
+    if clip is not None:
+        clip = Mask.coerce(clip, shape=canvas)
     match style:
         case str() | Color():
             style = [Color(style)]
@@ -315,15 +319,12 @@ def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:
 
 
 def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
-    if canvas.shape != mask.shape:
-        raise ValueError(
-            f"Mismatched shapes; `canvas` has {canvas.shape}, `mask` has {mask.shape}"
-        )
+    mask = Mask.coerce(mask, shape=canvas.shape)
     match canvas:
         case Canvas():
             return _evolve(canvas, image=apply_mask(canvas.image, mask))
         case Image():
-            return MaskedImage(_data=canvas._data, _mask=mask)
+            return MaskedImage(_data=canvas._data, _mask=mask._mask)
         case MaskedImage():
             return _evolve(canvas, _mask=canvas._mask & mask)
         case _:
@@ -362,6 +363,32 @@ def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
             raise _make_type_error(canvas, "canvas", "Paintable | Mask")
 
 
+def pattern_error(canvas: Paintable, pattern_shape: tuple[int, int]) -> int:
+    """Count the number of cells which do not form a regular pattern.
+
+    The pattern repetition frequency is assumed to as given in `pattern_shape`.
+    If `canvas` is masked, only cells with paint are considered.
+    """
+    match canvas:
+        case Canvas():
+            return pattern_error(canvas.image, pattern_shape=pattern_shape)
+        case Image() | MaskedImage():
+            pass
+        case _:
+            raise _make_type_error(canvas, "canvas", "Paintable")
+    rrep, crep = pattern_shape
+    msk = canvas._mask if isinstance(canvas, MaskedImage) else None
+    err = 0
+    for i in range(rrep):
+        for j in range(crep):
+            slc = np.s_[i::rrep, j::crep]
+            m = msk[slc] if msk is not None else np.s_[...]
+            c = canvas._data[slc][m].ravel()
+            cnt = np.bincount(c, minlength=10)
+            err += int(c.size - cnt.max())
+    return err
+
+
 # ----------------------------------------------------------------------------
 # Counting & stats
 # ----------------------------------------------------------------------------
@@ -374,7 +401,7 @@ def count_colors(canvas: Paintable) -> ColorArray:
         case Image():
             mask = np.s_[:, :]
         case MaskedImage():
-            mask = canvas._mask._mask
+            mask = canvas._mask
         case _:
             raise _make_type_error(canvas, "canvas", "Paintable")
     cells = canvas._data[mask].ravel()
@@ -437,19 +464,46 @@ _structures = MappingProxyType(
 )
 
 
-def find_objects(objects: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, ...]:
+def find_objects(
+    objects: Paintable | Mask,
+    *,
+    connectivity: Literal[4, 8] = 4,
+    exclude: Color | set[Color] | None = None,
+) -> Iterable[Mask]:
     """Returns one full-sized mask for each object found, in unspecified order.
 
-    Objects are defined by their connectivity.
+    If `objects` is a Canvas or an Image (potentially with mask),
+    objects are defined as connected components of a single color, excluding `exclude`.
+    Otherwise, `objects` must be Mask-like, and objects are defined as connected
+    components of `True` values.
     """
-    objects = Mask.coerce(objects)
-    labeled_array, num_features = ndimage.label(
-        objects._mask, _structures[connectivity]
-    )
-    ret = []
-    for label in range(1, num_features + 1):
-        ret.append(Mask(labeled_array == label))
-    return tuple(ret)
+    match objects:
+        case Canvas():
+            yield from find_objects(
+                objects.image, connectivity=connectivity, exclude=exclude
+            )
+            return
+        case MaskedImage():
+            mask = objects._mask
+            colors = np.unique(objects._data[mask])
+        case Image():
+            mask = True
+            colors = np.unique(objects._data)
+        case _:
+            objects = Mask.coerce(objects)
+            if exclude is not None:
+                raise ValueError("`exclude` must be None when operating on a Mask")
+            labeled_array, num_features = ndimage.label(
+                objects._mask, _structures[connectivity]
+            )
+            for label in range(1, num_features + 1):
+                yield Mask(labeled_array == label)
+            return
+    exclude = _set_of_colors(exclude)
+    for c in colors:
+        if _index2color[c] in exclude:
+            continue
+        yield from find_objects((objects._data == c) & mask, connectivity=connectivity)
 
 
 def find_cells(cells: Mask) -> tuple[Coord]:
@@ -457,21 +511,27 @@ def find_cells(cells: Mask) -> tuple[Coord]:
     return tuple(Coord(int(c), int(r)) for c, r in zip(*np.nonzero(cells._mask)))
 
 
-def find_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> tuple[Mask, ...]:
+def find_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> Iterable[Mask]:
     """Returns one full-sized mask for each hole in each of the objects.
 
-    Holes are defined as being completely enclosed by the object (i.e. not touching the edge).
+    Holes are defined as being completely enclosed by the object (i.e. not touching the canvas edge).
     """
     object = Mask.coerce(object)
     complement = ~object
     edge = mask_all(object)
     edge = edge & ~erode(edge, connectivity=connectivity)
-    ret = []
     for obj in find_objects(complement):
-        if (obj & edge).count:
+        if (obj & edge).count():
             continue
-        ret.append(obj)
-    return tuple(ret)
+        yield obj
+
+
+def fill_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> Mask:
+    object = Mask.coerce(object)
+    ret = object
+    for hole in find_holes(object, connectivity=connectivity):
+        ret = ret | hole
+    return ret
 
 
 def find_bbox(mask: Mask) -> Rect:
@@ -559,12 +619,16 @@ def mask_unpainted(canvas: Paintable) -> Mask:
             raise _make_type_error(canvas, "canvas", "Paintable")
 
 
-def mask_row(shape: ShapeSpec, i: int) -> Mask:
-    raise NotImplementedError
+def mask_row(shape: ShapeSpec, row: int) -> Mask:
+    ret = np.zeros(_shape_from_spec(shape), bool)
+    ret[row, :] = True
+    return Mask(ret)
 
 
-def mask_col(shape: ShapeSpec, j: int) -> Mask:
-    raise NotImplementedError
+def mask_col(shape: ShapeSpec, col: int) -> Mask:
+    ret = np.zeros(_shape_from_spec(shape), bool)
+    ret[:, col] = True
+    return Mask(ret)
 
 
 def correlate_masks(

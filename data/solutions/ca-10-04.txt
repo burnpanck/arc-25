@@ -1,0 +1,10 @@
+**Hypothesis:**
+- Black background.
+- Two closed lines (connectivity 8) of arbitrary single color (each one different),
+  not crossing each other;
+  one completely encloses the other
+- A single cell colored in magenta.
+
+**Rule:**
+- Paint the pink cell black only if it is not enclosed by the inner closed line;
+  otherwise, reproduce the input verbatim.

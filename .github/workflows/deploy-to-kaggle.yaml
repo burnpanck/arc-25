@@ -64,7 +64,7 @@ jobs:
       - name: Build dependency wheels from pdm.lock with pdm-wheel
         run: |
           # Production deps only; add flags below if you need extras/groups
-          pdm wheel -w wheelhouse --prod
+          pdm wheel -w wheelhouse --prod -G gpt-oss
           # Examples:
           # pdm wheel -w wheelhouse --prod -G inference
           # pdm wheel -w wheelhouse --prod -E "torch,vision"

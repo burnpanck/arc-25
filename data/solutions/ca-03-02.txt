@@ -1,0 +1,12 @@
+**Hypothesis:**
+- Black background.
+- One horizontal and one vertical colored dotted line.
+- Impossible to say which of the two is painted over the other.
+
+**Rule:**
+- Start either from the input, or a fully black canvas of the same shape.
+- First, paint a solid vertical line at the position and in the color of the dotted vertical line in the input.
+- Second, paint a solid horizontal line at the position and in the color of the dotted horizontal line in the input.
+
+**Plan:**
+- There are no distractions, so we can determine the line positions simply from the count of foreground cells.
