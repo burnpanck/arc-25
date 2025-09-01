@@ -127,7 +127,7 @@ jobs:
         run: |
           set -e
           cd wheelhouse
-          kaggle datasets create -p . -q || kaggle datasets version -p . -m "${GITHUB_REF_NAME}" -q
+          kaggle datasets version -p . -m "${GITHUB_REF_NAME}"
 
       - name: Upload wheelhouse as artifact (optional)
         uses: actions/upload-artifact@v4
