@@ -2,7 +2,7 @@ name: build-wheelhouse-and-publish-to-kaggle
 
 on:
   push:
-    tags: ["v*"]     # e.g. v0.3.2
+#    tags: ["v*"]     # e.g. v0.3.2
   workflow_dispatch:
     inputs:
       python-version:
@@ -63,11 +63,8 @@ jobs:
 
       - name: Build dependency wheels from pdm.lock with pdm-wheel
         run: |
-          # Production deps only; add flags below if you need extras/groups
-          pdm wheel -w wheelhouse --prod -v -G gpt-oss
-          # Examples:
-          # pdm wheel -w wheelhouse --prod -G inference
-          # pdm wheel -w wheelhouse --prod -E "torch,vision"
+          # Production deps only:
+          pdm wheel -w wheelhouse --prod -v -G huggingface
 
       - name: Resolve project metadata
         run: |
@@ -128,9 +125,3 @@ jobs:
           set -e
           cd wheelhouse
           kaggle datasets version -p . -m "${GITHUB_REF_NAME}"
-
-      - name: Upload wheelhouse as artifact (optional)
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheelhouse-${{ github.ref_name }}
-          path: wheelhouse

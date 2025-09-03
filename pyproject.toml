@@ -13,24 +13,24 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "nicegui",
     "attrs",
     "anyio",
     "matplotlib",
-    "platformdirs>=4.3.8",
     "pyyaml>=6.0.2",
-    "watchfiles>=1.1.0",
     "scipy>=1.16.1",
     "msgpack>=1.1.1",
     "cbor2>=5.7.0",
 ]
 
 [project.optional-dependencies]
-native = ["pywebview"]
-gpt-oss = [
-    "trl",
+explorer = [
+    "nicegui",
+    "watchfiles>=1.1.0",
+    "platformdirs>=4.3.8",
+]
+huggingface = [
     "peft",
-    "trackio",
+    "bitsandbytes",
     "transformers>=4.55.0",
 ]
 

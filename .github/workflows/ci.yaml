@@ -48,8 +48,6 @@ jobs:
         uses: pdm-project/setup-pdm@v4
         with:
           python-version: ${{ matrix.python-version }}
-          # Let the action choose a stable PDM. Pin here if you prefer:
-          # pdm-version: "latest"
           cache: true
 
       - name: Show tool versions
@@ -58,9 +56,39 @@ jobs:
           pdm -V
 
       - name: Install (from lock) + test extras
-        run: pdm install --frozen-lockfile -G test
+        run: pdm install --frozen-lockfile -G test,kaggle
 
       - name: Run pytest
-        run: pdm run pytest -q
+        run: pdm run pytest
         env:
           PYTHONWARNINGS: default
+
+  upload-training-data:
+    runs-on: ubuntu-latest
+    needs: ["tests"]
+    steps:
+      - name: Checkout (with LFS fixtures)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Set up PDM + Python
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: 3.13
+          cache: true
+
+      - name: Show tool versions
+        run: |
+          python -V
+          pdm -V
+
+      - name: Install (from lock) + extras
+        run: pdm install --frozen-lockfile -G kaggle
+
+      - name: Upload dataset
+        env:
+          KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: pdm run python -m arc25.kaggle update-training-data -m "${GITHUB_REF_NAME}"

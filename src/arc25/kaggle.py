@@ -1,5 +1,6 @@
 import contextlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -36,10 +37,14 @@ def dataset():
 @dataset.command()
 @click.option("-m", "--msg", default=None, help="Commit message")
 async def update_training_data(msg: str):
-    cfg = await anyio.Path("~/.kaggle/kaggle.json").expanduser()
-    cfg = await cfg.resolve()
-    cfg = json.loads(await cfg.read_text())
-    username = cfg["username"]
+    cfg = anyio.Path("~/.kaggle/kaggle.json")
+    if await cfg.exists():
+        cfg = await cfg.expanduser()
+        cfg = await cfg.resolve()
+        cfg = json.loads(await cfg.read_text())
+        username = cfg["username"]
+    else:
+        username = os.environ["KAGGLE_USERNAME"]
 
     proj_root = await anyio.Path(__file__).parents[2].resolve()
     data_root = proj_root / "data"
