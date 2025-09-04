@@ -73,6 +73,8 @@ async def update_training_data(msg: str):
         await sdst.mkdir()
         async with anyio.create_task_group() as tg:
             tg.start_soon(make_copy_fn(data_root / "all-challenges.cbor.xz", tdir))
+            tg.start_soon(make_copy_fn(data_root / "harc-rule-descr.cbor.xz", tdir))
+            tg.start_soon(make_copy_fn(data_root / "larc-human.cbor.xz", tdir))
             ssrc = data_root / "solutions"
             async for fn in ssrc.glob("*.txt"):
                 tg.start_soon(make_copy_fn(fn, sdst))

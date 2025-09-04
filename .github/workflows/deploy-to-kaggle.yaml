@@ -2,7 +2,7 @@ name: build-wheelhouse-and-publish-to-kaggle
 
 on:
   push:
-#    tags: ["v*"]     # e.g. v0.3.2
+    tags: ["v*"]     # e.g. v0.3.2
   workflow_dispatch:
     inputs:
       python-version:
