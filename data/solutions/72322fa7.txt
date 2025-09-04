@@ -1,0 +1,18 @@
+**Output:**
+- Black background
+- A couple of randomly placed, small objects:
+  * One or more types of objects, each present multiple times
+  * All objects consist of exactly two random, non-black colors
+  * Different types within one example do not share any colors
+  * Objects may connect via corners (connectivity 8)
+  * Objects are at most 3×3
+  * Objects are point-symmetric
+  * Instances are not overlapping or touching
+
+**Inputs:**
+- Based on output
+- Most instances of objects have one color removed (turned to black/background)
+- One instance of each object type remains intact
+
+**Rule:**
+- Restore objects from partial instances, taking the one intact copy as reference.

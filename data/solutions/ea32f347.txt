@@ -1,0 +1,7 @@
+**Inputs:**
+- Three gray bars on black background of various sizes
+
+**Rule:**
+- Color the smallest bar in red
+- Color the middle bar in yellow
+- Color the largest bar in blue

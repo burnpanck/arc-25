@@ -8,5 +8,5 @@ def solution(input: Canvas) -> Canvas:
         if tile_row == 1:
             tile = transform(tile, FLIP_LR)
         for tile_col in range(3):
-            output = paste(output, tile, at=(m*tile_row, n*tile_col))
+            output = paste(output, tile, topleft=(m*tile_row, n*tile_col))
     return output

@@ -469,6 +469,20 @@ ShapeSpec: TypeAlias = Paintable | tuple[int, int]
 class ColorArray:
     data: np.ndarray
 
+    def as_set(self) -> set[Color]:
+        ret = set()
+        for c, v in zip(Color, self.data):
+            if v:
+                ret.add(c)
+        return ret
+
+    def as_dict(self) -> dict[Color, int]:
+        ret = dict()
+        for c, v in zip(Color, self.data):
+            if v:
+                ret[c] = v
+        return ret
+
 
 # -------------
 

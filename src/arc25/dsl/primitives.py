@@ -211,34 +211,63 @@ def stroke(
     )
 
 
-def paste(canvas: Paintable, image: Paintable, *, at: Coord | None = None) -> Paintable:
-    """Paste `image` into canvas, with the upper left corner positioned at `at`.
+def paste(
+    canvas: Paintable,
+    image: Paintable,
+    *,
+    topleft: Coord | None = None,
+    bottomright: Coord | None = None,
+    center: Coord | None = None,
+) -> Paintable:
+    """Paste `image` into canvas.
 
     If `image` has a mask, only pixels that are `True` will be painted.
-    `at` can be outside of the canvas, and any image pixels outside of the canvas will be ignored.
+
+    Unless `image` has the same shape as `canvas`, the position
+    needs to be specified using one of `topleft`, `bottomright`, `center`,
+    specifying the position of the corresponding corner of `image` within `canvas`.
     """
     if isinstance(canvas, Canvas):
-        return _evolve(canvas, image=paste(canvas.image, image, at=at))
+        return _evolve(
+            canvas,
+            image=paste(
+                canvas.image,
+                image,
+                topleft=topleft,
+                center=center,
+                bottomright=bottomright,
+            ),
+        )
     if isinstance(image, Canvas):
         image = image.image
     assert isinstance(canvas, (Image, MaskedImage))
     assert isinstance(image, (Image, MaskedImage))
-    if at is not None:
-        at = Coord.to_array(at)
+    if bottomright is not None:
+        assert topleft is None
+        topleft = Coord.to_array(bottomright) - image.shape + 1
+    if center is not None:
+        assert topleft is None
+        topleft = Coord.to_array(center) - np.array(image.shape) // 2
+    if topleft is None:
+        if image.shape != canvas.shape:
+            raise ValueError(
+                "When `image` has a different shape than `canvas`, the position needs to be specified"
+            )
+        topleft = np.array([0, 0])
     else:
-        at = np.array([0, 0])
+        topleft = Coord.to_array(topleft)
     dslc = tuple(
         slice(*v)
         for v in zip(
-            np.maximum(0, at),
-            np.minimum(canvas.shape, at + image.shape),
+            np.maximum(0, topleft),
+            np.minimum(canvas.shape, topleft + image.shape),
         )
     )
     sslc = tuple(
         slice(*v)
         for v in zip(
-            np.maximum(0, -at),
-            np.minimum(image.shape, canvas.shape - at),
+            np.maximum(0, -topleft),
+            np.minimum(image.shape, canvas.shape - topleft),
         )
     )
     nimg = canvas._data.copy()
@@ -599,7 +628,7 @@ def mask_color(canvas: Paintable, color: Color | set[Color]) -> Mask:
         case Image():
             mask = mask_all(canvas)
         case MaskedImage():
-            mask = canvas._mask._mask
+            mask = canvas._mask
     ret = mask_none(canvas)
     for c in color:
         m = canvas._data == _color2index[c]
@@ -637,6 +666,8 @@ def correlate_masks(
     """
     Essentially performs `scipy.ndimage.correlate(input,pattern,mode="constant",cval=0)>=threshold`
     """
+    input = Mask.coerce(input)
+    pattern = Mask.coerce(pattern)
     if threshold is None:
         threshold = pattern._mask.sum()
     return Mask(
