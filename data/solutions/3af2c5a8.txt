@@ -1,0 +1,9 @@
+**Inputs:**
+- Black background
+- Random cells colored in a single, random color
+
+**Outputs:**
+- A random shape with both a horizontal and a vertical mirror symmetry
+
+**Rule:**
+- The input represents the top-left corner out of four symmetrically equivalent corners of the output:

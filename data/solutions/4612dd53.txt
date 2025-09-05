@@ -1,0 +1,10 @@
+**Outputs:**
+- Black background
+- A single rectangular shape made from red and blue cells
+- The interior of the shape is either completely black or contains a single horizontal or vertical line, also made from random-appearing red and black cells
+
+**Inputs:**
+- The same as the outputs, with red cells replaced with black (background) cells
+
+**Rule:**
+- Fill in the missing red cells

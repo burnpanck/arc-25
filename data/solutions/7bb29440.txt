@@ -1,0 +1,7 @@
+**Inputs:**
+- Multiple mostly solid blue rectangles on black background
+- Each blue rectangle contains one or more single "marked" cells painted in yellow or magenta
+
+**Rule:**
+- Select the rectangle with the fewest total number of "marked" cells
+- Crop the input to that rectangle to obtain the output

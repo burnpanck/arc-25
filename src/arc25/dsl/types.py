@@ -132,6 +132,10 @@ class Vector(_VectorBase):
         return self.__floordiv__(other)
 
 
+for d in Dir8:
+    setattr(Vector, d.name.upper(), Vector.elementary_vector(d))
+
+
 def _to_vec(vec: _VectorBase | tuple[int, int]):
     if isinstance(vec, Vector):
         return vec
@@ -317,6 +321,10 @@ class Image:
     def shape(self) -> tuple[int, int]:
         return self._data.shape
 
+    def __getitem__(self, coord: Coord) -> Color:
+        coord = Coord.coerce(coord)
+        return _index2color[self._data[coord.row, coord.col]]
+
 
 @dataclass(frozen=True, slots=True)
 class Mask:
@@ -424,6 +432,12 @@ class MaskedImage:
         assert self._data.shape == self._mask.shape
         return self._data.shape
 
+    def __getitem__(self, coord: Coord) -> Color | None:
+        coord = Coord.coerce(coord)
+        if not self._mask[coord.row, coord.col]:
+            return None
+        return _index2color[self._data[coord.row, coord.col]]
+
 
 AnyImage: TypeAlias = Image | MaskedImage
 
@@ -452,6 +466,9 @@ class Canvas:
     @property
     def shape(self):
         return self.image.shape
+
+    def __getitem__(self, coord: Coord) -> Color | None:
+        return self.image[coord]
 
 
 @dataclass(frozen=True, slots=True)
