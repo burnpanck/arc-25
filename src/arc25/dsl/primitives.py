@@ -292,14 +292,24 @@ def fill(
     *,
     dir: Dir8 | None = None,
     clip: Mask | None = None,
+    pattern_origin: Coord | None = None,
 ) -> Paintable:
     if isinstance(canvas, Canvas):
-        return _evolve(canvas, image=fill(canvas.image, style, dir=dir, clip=clip))
+        return _evolve(
+            canvas,
+            image=fill(
+                canvas.image, style, dir=dir, clip=clip, pattern_origin=pattern_origin
+            ),
+        )
     if clip is not None:
         clip = Mask.coerce(clip, shape=canvas)
+    if pattern_origin is not None:
+        pattern_origin = Coord.coerce(pattern_origin)
     match style:
         case str() | Color():
             style = [Color(style)]
+        case Pattern():
+            style = style.sequence
         case list():
             pass
         case _:
@@ -311,7 +321,23 @@ def fill(
     if len(style) > 1:
         if dir is None:
             raise ValueError("When filling with a pattern, `dir` cannot be `None`")
-        raise NotImplementedError("Pattern-fill is not implemented")
+        if pattern_origin is None:
+            raise ValueError(
+                "When filling with a pattern, `pattern_origin` cannot be `None`"
+            )
+        h, w = canvas.shape
+        phase = sum(
+            (coord - ref) * unit
+            for coord, ref, unit in zip(
+                np.ogrid[:h, :w],
+                pattern_origin.as_tuple(),
+                Vector.elementary_vector(dir).as_tuple(),
+            )
+        )
+        seq = np.array([_color2index[c] if c is not None else -1 for c in style])
+        fill_value = seq[phase % seq.size]
+        if None in style:
+            mask = mask & (fill_value != -1)
     else:
         assert len(style) == 1
         (c,) = style

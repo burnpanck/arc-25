@@ -182,7 +182,7 @@ def main_page(*, request: Request):
         csel = ui.slider(min=0, max=len(ckeys) - 1).bind_value(
             nicegui_app.storage.user, "challenge"
         )
-        cur_c = ckeys[csel.value]
+        cur_c = ckeys[min(csel.value, len(ckeys) - 1)]
 
         def update_dataset(evt):
             nonlocal cur_ds, ckeys
@@ -213,7 +213,7 @@ def main_page(*, request: Request):
             nonlocal cur_c, store_holdoff
             remember_solution()
             store_holdoff = anyio.current_time()
-            idx = int(evt.value)
+            idx = min(int(evt.value), len(ckeys) - 1)
             cur_c = ckeys[idx]
             clabel.set_text(f"{cur_ds}: {cur_c} ({idx+1}/{len(ckeys)})")
             sol = app.solutions.get(cur_c, Solution.make(id=cur_c))
