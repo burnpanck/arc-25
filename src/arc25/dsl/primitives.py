@@ -480,7 +480,7 @@ def most_common_colors(
             assert color_count.shape == (10,)
         case _:
             raise _make_type_error(color_count, "color_count", "ColorArray")
-    for c in _set_of_colors(exclude, "exclude") if exclude is not None else []:
+    for c in _set_of_colors(exclude, argname="exclude") if exclude is not None else []:
         color_count[_color2index[c]] = -1
     max_count = color_count.max()
     if max_count < 0:

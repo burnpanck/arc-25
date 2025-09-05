@@ -1,0 +1,6 @@
+**Inputs:**
+- Various objects (connectivity 8) of different sizes and colors (one color per object)
+- All but one of the objects are filled
+
+**Rule:**
+- A single-cell output grid filled with the color of the only open (i.e. non filled) object

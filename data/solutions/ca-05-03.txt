@@ -1,0 +1,9 @@
+**Inputs:**
+- A number of lines of same or different colors, on black background
+
+**Outputs:**
+- Completely filled in green
+- Always 1 row, varying number of columns
+
+**Rule:**
+- Output is 1×N, where N is the number of lines

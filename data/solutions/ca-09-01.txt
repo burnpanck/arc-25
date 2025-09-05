@@ -1,0 +1,8 @@
+**Inputs:**
+- Black background
+- A couple of stroked rectangles of various colors
+
+**Rule:**
+- Fill the interior of all rectangles, color depending on the aspect ratio:
+  * Wide rectangles are filled orange
+  * Tall rectangles are filled green

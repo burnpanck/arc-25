@@ -1,0 +1,10 @@
+**Inputs:**
+- A number of lines on black background, all of the same color
+
+**Rule:**
+- Output matches input size
+- Record the length of the lines
+- Order the values of increasing length
+- From the bottom left corner, stack bars horizontally, directly touching each other,
+  each bar as many cells tall as the length of the corresponding input line,
+  in order of increasing length.
