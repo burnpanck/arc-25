@@ -269,25 +269,25 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
     )
     exec_info = dict(stdout=[], stderr=[])
     split_info = {}
-    for k, v in dict(
+    for stream, stream_contents in dict(
         stdout=result.stdout.decode(),
         stderr=result.stderr.decode(),
     ).items():
         cur = "preload"
         split = {cur: []}
-        for line in v.split("\n"):
+        for line in stream_contents.split("\n"):
             m = rex.match(line)
             if m:
                 # remove last line if it is empty
-                for v in [split[cur], exec_info[k]]:
+                for v in [split[cur], exec_info[stream]]:
                     if v and not v[-1]:
                         del v[-1]
                 cur = m.group(1)
                 split[cur] = []
                 continue
             split.setdefault(cur, []).append(line)
-            exec_info[k].append(line)
-        split_info[k] = split
+            exec_info[stream].append(line)
+        split_info[stream] = split
     out = msgpack.unpackb(out)
     output = deserialise(out)
     meta = dict(
@@ -326,7 +326,7 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
     for split, outputs in results.items():
         for idx, (io, res) in enumerate(zip(getattr(challenge, split), outputs)):
             err = res.pop("error", None)
-            exec_info = ExecutionInfo(
+            ex_exec_info = ExecutionInfo(
                 **{
                     k: "\n".join(v.get(f"{split}|{idx}", []))
                     for k, v in split_info.items()
@@ -340,7 +340,7 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
                         output=None,
                         full_match=False,
                         cell_match=0,
-                        exec_info=exec_info,
+                        exec_info=ex_exec_info,
                     )
                 )
                 continue
@@ -350,7 +350,7 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
                 mask = actual.image._mask
             else:
                 mask = True
-            kw = dict(output=actual, exec_info=exec_info)
+            kw = dict(output=actual, exec_info=ex_exec_info)
             if io.output is not None:
                 if actual.shape != io.output.shape:
                     kw.update(full_match=False, cell_match=0)

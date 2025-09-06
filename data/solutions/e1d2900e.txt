@@ -1,0 +1,9 @@
+**Inputs:**
+- A number of red 2×2 squares on black background
+- Additionally a number of blue cells
+- Blue cells may touch on corners, but not on sides
+
+**Rule:**
+- Blue cells are attracted towards the nearest red square
+- If they are horizontally or vertically aligned with the square, they move until they touch
+- Otherwise, they remain as is

@@ -1,0 +1,6 @@
+**Inputs:**
+- A number of open 3×3 square in different colors on gray background
+- A broken orange divider enclosing a rectangular area containing a single square
+
+**Rule:**
+- Extract the single colored rectangle within the orange divider

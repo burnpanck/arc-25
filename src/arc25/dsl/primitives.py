@@ -546,6 +546,7 @@ def find_objects(
     objects: Paintable | Mask,
     *,
     connectivity: Literal[4, 8] = 4,
+    gap: int = 0,
     exclude: Color | set[Color] | None = None,
 ) -> Iterable[Mask]:
     """Returns one full-sized mask for each object found, in unspecified order.
@@ -558,7 +559,10 @@ def find_objects(
     match objects:
         case Canvas():
             yield from find_objects(
-                objects.image, connectivity=connectivity, exclude=exclude
+                objects.image,
+                connectivity=connectivity,
+                exclude=exclude,
+                gap=gap,
             )
             return
         case MaskedImage():
@@ -571,6 +575,11 @@ def find_objects(
             objects = Mask.coerce(objects)
             if exclude is not None:
                 raise ValueError("`exclude` must be None when operating on a Mask")
+            if gap > 0:
+                # gapped object search:
+                fused_objects = fill_gaps(objects, connectivity=connectivity)
+                for obj in find_objects(fused_objects, connectivity=connectivity):
+                    yield obj & objects
             labeled_array, num_features = ndimage.label(
                 objects._mask, _structures[connectivity]
             )
@@ -610,6 +619,44 @@ def fill_holes(object: Mask, *, connectivity: Literal[4, 8] = 4) -> Mask:
     for hole in find_holes(object, connectivity=connectivity):
         ret = ret | hole
     return ret
+
+
+def fill_gaps(
+    objects: Mask,
+    gap_size: int = 1,
+    *,
+    connectivity: Literal[4, 8] | None = None,
+    object_connectivity: Literal[4, 8] | None = None,
+    gap_connectivity: Literal[4, 8] | None = None,
+) -> Mask:
+    objects = Mask.coerce(objects)
+    if connectivity is not None:
+        if object_connectivity is not None:
+            raise ValueError(
+                "Either provide `connectivity` or `object_connectivity` but not both"
+            )
+        if gap_connectivity is not None:
+            raise ValueError(
+                "Either provide `connectivity` or `object_connectivity` but not both"
+            )
+        object_connectivity = connectivity
+        gap_connectivity = connectivity
+    if object_connectivity is None or gap_connectivity is None:
+        raise ValueError(
+            "Either provide `connectivity` or both a `object_connectivity` and a `gap_connectivity`"
+        )
+    labeled_array, num_features = ndimage.label(
+        objects._mask, _structures[object_connectivity]
+    )
+    s = _structures[gap_connectivity]
+    if gap_size > 1:
+        s = ndimage.iterate_structure(s, gap_size)
+    minlbl = ndimage.minimum_filter(
+        np.where(objects._mask, labeled_array, num_features + 1), footprint=s
+    )
+    maxlbl = ndimage.maximum_filter(labeled_array, footprint=s)
+    bridges = maxlbl > minlbl
+    return objects | Mask(bridges)
 
 
 def find_bbox(mask: Mask) -> Rect:
@@ -798,12 +845,31 @@ def center_of_mass(obj: Mask | Rect) -> Coord:
             raise _make_type_error(obj, "obj", "Mask | Rect")
 
 
+def vec2dir4(vec: Vector) -> Dir4:
+    vec = np.array(Vector.as_tuple(vec))
+    d = np.argmax(abs(vec))
+    d = np.sign(vec) * (np.r_[:2] == d)
+    elementary = tuple(int(v) for v in d)
+    return Vector._vec2dir[elementary]
+
+
 def vec2dir8(vec: Vector) -> Dir8:
-    lim = vec.length() * math.sin(math.pi / 8)
+    vec = Vector.coerce(vec)
+    lim = vec.length("euclidean") * math.sin(math.pi / 8)
     elementary = tuple(
-        0 if abs(v) < lim else -1 if v < 0 else 1 for v in [vec.row, vec.col]
+        0 if abs(v) < lim else -1 if v < 0 else 1 for v in vec.as_tuple()
     )
     return Vector._vec2dir[elementary]
+
+
+def vec2dir(vec: Vector, *, directions: Literal[4, 8] = 8) -> Dir4 | Dir8:
+    match directions:
+        case 4:
+            return vec2dir4(vec)
+        case 8:
+            return vec2dir8(vec)
+        case _:
+            raise ValueError("`directions` must be 4 or 8")
 
 
 def round2grid(coord: Coord) -> Coord:

@@ -1,0 +1,8 @@
+**Inputs:**
+- A couple of blue objects on black background
+- Some objects are closed lines, some are open lines
+
+**Rule:**
+- Only on the closed objects:
+  * Add a green internal border
+  * Add a red external border

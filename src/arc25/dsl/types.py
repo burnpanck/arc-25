@@ -104,8 +104,30 @@ class Vector(_VectorBase):
     def elementary_vector(cls, dir: Dir8) -> Self:
         return Vector(*cls._dir2vec[Dir8(dir)])
 
-    def length(self):
+    def length(
+        self,
+        metric: typing.Literal["euclidean", "manhattan", "chebyshev"] = "euclidean",
+    ):
+        match metric:
+            case "euclidean":
+                return self.euclidean()
+            case "manhattan":
+                return self.manhattan()
+            case "chebyshev":
+                return self.chebyshev()
+            case _:
+                raise ValueError(
+                    '`metric` must be one of {"euclidean","manhattan","chebyshev"}'
+                )
+
+    def euclidean(self):
         return math.sqrt(self.row**2 + self.col**2)
+
+    def manhattan(self):
+        return abs(self.row) + abs(self.col)
+
+    def chebyshev(self):
+        return max(abs(self.row), abs(self.col))
 
     def __add__(self, other: Self) -> Self:
         return Vector(self.row + other.row, self.col + other.col)

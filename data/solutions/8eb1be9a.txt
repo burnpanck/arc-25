@@ -1,0 +1,8 @@
+**Inputs:**
+- A horizontally repeating pattern on black background
+
+**Outputs:**
+- A two-dimensionally repeating pattern
+
+**Rule:**
+- Replicate the pattern of the input vertically, with touching bounding box
