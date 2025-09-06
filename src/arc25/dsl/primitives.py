@@ -352,10 +352,20 @@ def fill(
             raise _make_type_error(canvas, "canvas", "Paintable")
 
 
+_fill_primitive = fill
+
+
 def make_canvas(
-    nrow: int, ncol: int, orientation: symmetry.SymOp = symmetry.SymOp.e
+    nrow: int,
+    ncol: int,
+    *,
+    orientation: symmetry.SymOp = symmetry.SymOp.e,
+    fill: Color | None = None,
 ) -> Canvas:
-    return Canvas.make((nrow, ncol), orientation=orientation)
+    ret = Canvas.make((nrow, ncol), orientation=orientation)
+    if fill is not None:
+        ret = _fill_primitive(ret, fill)
+    return ret
 
 
 def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:

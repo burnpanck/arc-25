@@ -1,0 +1,5 @@
+**Inputs:**
+- A single line of any color on black background, spanning the whole canvas
+
+**Rule:**
+- Fill-in the lower side of the line in the same color as the line
