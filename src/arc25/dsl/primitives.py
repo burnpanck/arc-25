@@ -103,28 +103,41 @@ def path_segment(start: Coord, end: Coord) -> list[Coord]:
 def path_ray(
     start: Coord,
     dir: Dir4 | Dir8,
-    stop: Mask,
     *,
+    stop_mask: Mask | None = None,
+    limit: int | None = None,
+    shape: ShapeSpec | None = None,
     endpoint: Literal["exclude", "include"] = "exclude",
 ) -> list[Coord]:
     """
-    Walk from start in a direction until a cell is hit where `stop` is True
+    Walk from start in a direction until a cell is hit where `stop_mask` is True
     include that cell if `endpoint="include"`.
     If no such cell is hit, stop at the edge.
     """
-    rng = Rect.full_shape(stop)
     step = Vector.elementary_vector(dir)
+    if stop_mask is None:
+        if shape is None:
+            raise TypeError("When `stop` is missing, `shape` must be given")
+        rng = Rect.full_shape(shape)
+    else:
+        stop_mask = Mask.coerce(stop_mask)
+        rng = Rect.full_shape(stop_mask)
+        if shape is not None and Rect.full_shape(shape) != rng:
+            raise ValueError("`shape` and `stop_mask` disagree on shape")
+
     ret = []
     cur = start
     while True:
         if not rng.contains(cur):
             break
-        if stop[cur]:
+        if stop_mask is not None and stop_mask[cur]:
             if endpoint == "include":
                 ret.append(cur)
             break
         ret.append(cur)
         cur += step
+        if limit is not None and len(ret) >= limit:
+            break
     return ret
 
 
@@ -356,13 +369,13 @@ _fill_primitive = fill
 
 
 def make_canvas(
-    nrow: int,
-    ncol: int,
+    shape: ShapeSpec,
     *,
     orientation: symmetry.SymOp = symmetry.SymOp.e,
     fill: Color | None = None,
 ) -> Canvas:
-    ret = Canvas.make((nrow, ncol), orientation=orientation)
+    shape = _shape_from_spec(shape)
+    ret = Canvas.make(shape, orientation=orientation)
     if fill is not None:
         ret = _fill_primitive(ret, fill)
     return ret

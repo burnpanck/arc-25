@@ -5,9 +5,9 @@ def solution(input: Canvas) -> Canvas:
     )
     c, = most_common_colors(input, exclude=BLACK)
     h,w = input.shape
-    output = make_canvas(h,w)
+    output = make_canvas((h,w))
     output = fill(output, BLACK)
     for col, length in enumerate(lengths):
-        path = path_ray(Coord(h-1,col),UP,stop=mask_none(input))
+        path = path_ray(Coord(h-1,col),UP,shape=output.shape)
         output = stroke(output, path[:length], c)
     return output

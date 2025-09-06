@@ -7,7 +7,7 @@ def solution(input: Canvas) -> Canvas:
     # fill any holes
     lowest = fill_holes(lowest)
     # prepare black output
-    output = make_canvas(*input.shape)
+    output = make_canvas(input.shape)
     output = fill(output, BLACK)
     # paste lowest object into output
     output = paste(output, apply_mask(input, lowest))

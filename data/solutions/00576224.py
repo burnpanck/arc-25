@@ -1,7 +1,7 @@
 def solution(input: Canvas) -> Canvas:
     # prepare output
     m,n = input.shape
-    output = make_canvas(3*m,3*n)
+    output = make_canvas((3*m,3*n))
     for tile_row in range(3):
         tile = input
         # flip tile for middle row (row 1)

@@ -148,6 +148,43 @@ def _mark(id: str, mark: str):
         stream.flush()
 
 
+def format_traceback_up_to(
+    exc: BaseException, limit_filename: str | None = None, *, header: bool = True
+) -> str:
+    """
+    Extract the traceback from `exc`, drop frames before the first frame
+    whose filename matches `is_snippet_file`, and format the result.
+
+    - `is_snippet_file` receives an absolute filename for each frame and
+      should return True for frames that belong to the snippet.
+    - If no frame matches, the full traceback is formatted.
+    """
+    tb: types.TracebackType | None = exc.__traceback__
+    if tb is None:
+        # No traceback available, fall back to exception only
+        return "".join(traceback.format_exception_only(type(exc), exc))
+
+    # Step 1: extract (oldest -> newest)
+    frames = traceback.extract_tb(tb)
+
+    # Step 2: crop everything *above* (older than) the first snippet frame
+    start_idx = None
+    for i, fr in enumerate(frames):
+        if fr.filename == limit_filename:
+            start_idx = i
+            break
+
+    cropped = frames if start_idx is None else frames[start_idx:]
+
+    # Step 3: format
+    parts = []
+    if header:
+        parts.append("Traceback (most recent call last):\n")
+    parts.extend(traceback.format_list(cropped))
+    parts.extend(traceback.format_exception_only(type(exc), exc))
+    return "".join(parts)
+
+
 def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
     id = f"{challenge.id}"
     _mark(id, "load")
@@ -190,7 +227,7 @@ def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
                             f"`solution` must return a `Canvas`, got `{type(actual).__name__}`"
                         )
                 except Exception as ex:
-                    sys.stderr.write(traceback.format_exc())
+                    sys.stderr.write(format_traceback_up_to(ex, "<rule-code>"))
                     eval = dict(error=repr(ex))
                 else:
                     eval = dict(output=actual)

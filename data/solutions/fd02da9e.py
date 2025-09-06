@@ -1,5 +1,5 @@
 def solution(input: Canvas, examples: list[IOPair]) -> Canvas:
-    output = make_canvas(*input.shape)
+    output = make_canvas(input.shape)
     output = fill(output, ORANGE)
     keys = ~mask_color(input, ORANGE)
     for idx,io in enumerate(examples):

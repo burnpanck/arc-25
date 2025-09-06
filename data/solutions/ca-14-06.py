@@ -5,6 +5,6 @@ def solution(input: Canvas) -> Canvas:
     )
     bbox = find_bbox(lowest)
     masked = apply_mask(input, lowest)
-    output = make_canvas(*bbox.shape, fill=BLACK)
+    output = make_canvas(bbox.shape, fill=BLACK)
     output = paste(output, masked, topleft=(-bbox.top,-bbox.left))
     return output

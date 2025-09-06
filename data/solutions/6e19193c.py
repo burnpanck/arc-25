@@ -8,6 +8,6 @@ def solution(input: Canvas) -> Canvas:
         vec = center - center_of_mass(obj)
         dir = vec2dir8(vec)
         start = round2grid(center+1.5*Vector.elementary_vector(dir))
-        path = path_ray(start, dir, mask_none(output))
+        path = path_ray(start, dir, shape=output.shape)
         output = stroke(output, path, c)
     return output
