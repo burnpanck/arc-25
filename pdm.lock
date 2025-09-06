@@ -5,7 +5,7 @@
 groups = ["default", "build-explorer", "explorer", "huggingface", "kaggle", "test"]
 strategy = ["inherit_metadata", "static_urls"]
 lock_version = "4.5.0"
-content_hash = "sha256:3448fdf7e82d0d9237ef414711e4737dcc64b16f12b3af9f106a28ece769de57"
+content_hash = "sha256:0ac70883c13bfc0cdf558d7373256f5693326dcf61339ab2aafbb55a77af289f"
 
 [[metadata.targets]]
 requires_python = ">=3.11,<3.13"
@@ -235,7 +235,7 @@ version = "0.47.0"
 requires_python = ">=3.9"
 summary = "k-bit optimizers and matrix multiplication routines."
 groups = ["huggingface"]
-marker = "python_version >= \"3.11\" and python_version < \"3.14\""
+marker = "python_version >= \"3.11\" and python_version < \"3.14\" and sys_platform == \"linux\""
 dependencies = [
     "numpy>=1.17",
     "torch<3,>=2.2",
@@ -1183,7 +1183,7 @@ files = [
 
 [[package]]
 name = "nicegui"
-version = "2.23.3"
+version = "2.24.0"
 requires_python = "<4.0,>=3.8"
 summary = "Create web-based user interfaces with Python. The nice way."
 groups = ["explorer"]
@@ -1213,8 +1213,8 @@ dependencies = [
     "watchfiles>=0.18.1",
 ]
 files = [
-    {url = "https://files.pythonhosted.org/packages/64/e6/fdb162e441866201abaff04ef9f59040d96dfe6c8cee63650103abe90f07/nicegui-2.23.3-py3-none-any.whl", hash = "sha256:5273d6a98f5797d2196946052592fab0648a6426ac2ebc3762c1a5d587deea59"},
-    {url = "https://files.pythonhosted.org/packages/f7/70/fa79ea115ccabbaa2ed21358b007ecf31f08f08707732e787e33feb83a53/nicegui-2.23.3.tar.gz", hash = "sha256:7fc99bc40d1682b37c54eda6275f77db863b9c7bcc7ad15006c507b69a30d22c"},
+    {url = "https://files.pythonhosted.org/packages/0d/40/189cc8ac422f44eddd8b0c46314f95a81e6f39e334902cd89e7830efbc76/nicegui-2.24.0-py3-none-any.whl", hash = "sha256:76cd72f87b2775537fbc96d97925a8b41a09c166bf67ba9f1999c16f73e0698e"},
+    {url = "https://files.pythonhosted.org/packages/21/bf/25553371d0cfeef03bb4ef43ea07db0c8f6e7f3b812aea40f11ad3ba7722/nicegui-2.24.0.tar.gz", hash = "sha256:139314d786344965ec2b24691f74055292f5dc458b575d12c4607b7c3ebda8cf"},
 ]
 
 [[package]]
@@ -1948,7 +1948,7 @@ files = [
 
 [[package]]
 name = "pytest"
-version = "8.4.1"
+version = "8.4.2"
 requires_python = ">=3.9"
 summary = "pytest: simple powerful testing with Python"
 groups = ["test"]
@@ -1963,8 +1963,8 @@ dependencies = [
     "tomli>=1; python_version < \"3.11\"",
 ]
 files = [
-    {url = "https://files.pythonhosted.org/packages/08/ba/45911d754e8eba3d5a841a5ce61a65a685ff1798421ac054f85aa8747dfb/pytest-8.4.1.tar.gz", hash = "sha256:7c67fd69174877359ed9371ec3af8a3d2b04741818c51e5e99cc1742251fa93c"},
-    {url = "https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl", hash = "sha256:539c70ba6fcead8e78eebbf1115e8b589e7565830d7d006a8723f19ac8a0afb7"},
+    {url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01"},
+    {url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79"},
 ]
 
 [[package]]
@@ -2470,7 +2470,7 @@ files = [
 
 [[package]]
 name = "transformers"
-version = "4.56.0"
+version = "4.56.1"
 requires_python = ">=3.9.0"
 summary = "State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow"
 groups = ["huggingface"]
@@ -2488,8 +2488,8 @@ dependencies = [
     "tqdm>=4.27",
 ]
 files = [
-    {url = "https://files.pythonhosted.org/packages/98/41/6ba7c2eafa839069f1f949c30cd22e791b14b90c7af8cb0c65cc47702dca/transformers-4.56.0-py3-none-any.whl", hash = "sha256:bacf539c38dd850690856881c4974321af93a22f2ee96bcc994741a2121d8e71"},
-    {url = "https://files.pythonhosted.org/packages/e9/40/2898c1a5f8b2fff2f94dffd856d6793320e590e1cfdc3a1453c31c364094/transformers-4.56.0.tar.gz", hash = "sha256:6ca9c3f38aa4da93ebf877db7156368c1c188c7465f09dbe70951e7622e987fa"},
+    {url = "https://files.pythonhosted.org/packages/71/7c/283c3dd35e00e22a7803a0b2a65251347b745474a82399be058bde1c9f15/transformers-4.56.1-py3-none-any.whl", hash = "sha256:1697af6addfb6ddbce9618b763f4b52d5a756f6da4899ffd1b4febf58b779248"},
+    {url = "https://files.pythonhosted.org/packages/89/21/dc88ef3da1e49af07ed69386a11047a31dcf1aaf4ded3bc4b173fbf94116/transformers-4.56.1.tar.gz", hash = "sha256:0d88b1089a563996fc5f2c34502f10516cad3ea1aa89f179f522b54c8311fe74"},
 ]
 
 [[package]]

@@ -18,3 +18,11 @@ We'll try to teach the agent to think in the following steps:
 - Implement: Output an `<implementation>` in our DSL which implements the rule according to the plan.
 
 In the first version, we'll let the model generate all of that in a single step.
+
+
+## Next steps
+- **Telemetry**: log compile_rate, diffs, and final pass on training I/O.
+- **Runner skeleton**: prompt → code → sandbox run → simple repair (1 pass).
+- **RAG hookup**: index DSL docs + your 30 solutions; add 3–5 helpful chunks to the prompt.
+  (ask ChatGPT for a tiny **FAISS/Chroma** indexer snippet for RAG.)
+- **Top-k candidates** (k=2–3) + temp ladder on repairs.

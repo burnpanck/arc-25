@@ -14,6 +14,12 @@ def test_importing():
         import asyncclick  # noqa
     except ImportError:
         skip.add("arc25.kaggle")
+
+    try:
+        import transformers  # noqa
+    except ImportError:
+        skip.add("arc25.hf")
+
     done = set()
     failed = dict()
     while todo:
@@ -27,6 +33,7 @@ def test_importing():
                 if module_info.name in done:
                     continue
                 todo.add(f"{name}.{module_info.name}")
+        print(name)
         try:
             importlib.import_module(name)
         except Exception as ex:

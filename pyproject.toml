@@ -30,7 +30,7 @@ explorer = [
 ]
 huggingface = [
     "peft",
-    "bitsandbytes",
+    "bitsandbytes; sys_platform == 'linux'",
     "transformers>=4.55.0",
 ]
 

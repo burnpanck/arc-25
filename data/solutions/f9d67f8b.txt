@@ -1,0 +1,11 @@
+**Outputs:**
+- A pattern of many colors with a horizontal and a vertical symmetry axis
+- The symmetry axes offset from the canvas center one cell to the right and bottom
+- Parts of the pattern furthermore exhibit a 90° rotational symmetry
+
+**Inputs:**
+- Same as outputs, but with one or more parts overwritten by brown patches
+
+**Rule:**
+- Repair the areas indicated by the brown patches to restore symmetry
+- Assume 90° symmetry for those areas that cannot be deduced using mirror symmetries only

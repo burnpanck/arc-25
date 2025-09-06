@@ -249,17 +249,33 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
         await input_file.write_bytes(
             msgpack.packb(serialise(dict(challenge=challenge, solution=solution)))
         )
-        with anyio.fail_after(1):
+        with anyio.fail_after(2):
             result = await anyio.run_process(
                 [
                     sys.executable,
+                    # "-I", # isolated (ignores user env + site dirs)
+                    # "-S", # don’t import site (fewer side effects)
+                    "-B",  # no .pyc writes
                     "-m",
                     __name__,
                     "-i",
                     str(input_file),
                     "-o",
                     str(output_file),
-                ]
+                ],
+                cwd=tdir,
+                env={
+                    k: str(v)
+                    for k, v in dict(
+                        PATH="",
+                        PYTHONHASHSEED=42,
+                        OMP_NUM_THREADS=1,
+                        OPENBLAS_NUM_THREADS=1,
+                        MKL_NUM_THREADS=1,
+                        NUMEXPR_NUM_THREADS=1,
+                        TOKENIZERS_PARALLELISM="false",
+                    ).items()
+                },
             )
         out = await output_file.read_bytes()
     rex = re.compile(
