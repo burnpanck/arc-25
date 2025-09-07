@@ -1,5 +1,6 @@
 import contextlib
 import json
+import re
 import typing
 import zipfile
 from pathlib import Path
@@ -10,7 +11,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .dataset import IAETriple, IOPair
+from .augment import all_colors_rex
+from .dataset import IAETriple, IOPair, ReasonedSolution
 from .dsl.types import AnyImage, Color, Image, MaskedImage
 
 # ARC color map - colors for values 0-9
@@ -91,3 +93,35 @@ def show_test_case(
             show_image(v, ax=ax)
             for spine in ax.spines.values():
                 spine.set_edgecolor(c)
+
+
+def solution_to_markdown(resp: ReasonedSolution):
+    descr = "\n".join(f"### {k.title()}\n{v}\n" for k, v in resp.descr.items())
+    body = "".join(
+        f"## {k}\n{v}\n"
+        for k, v in {
+            "Description": descr,
+            "Rule": resp.rule_descr,
+            "Plan": resp.impl_plan_descr,
+        }.items()
+        if v
+    )
+
+    def extract_rgb(c: str):
+        c = Color[c.upper()]
+        v = int(c.value[1:], 16)
+        return ",".join(str((v >> (k * 8)) % 255) for k in [2, 1, 0])
+
+    body = all_colors_rex.sub(
+        lambda m: f'<span style="background-color:rgba({extract_rgb(m.group(1))},0.15)">{m.group(1)}</span>',
+        body,
+    )
+
+    ret = f"""
+{body}
+```python
+{resp.rule_impl}
+```
+""".strip()
+
+    return ret

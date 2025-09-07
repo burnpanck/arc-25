@@ -66,13 +66,13 @@ def solution(input: Image) -> AnyImage:
         """Sample `k` challenges without replacement."""
         s = self.spec
         slim = min(5, s.max_side_length)
-        hlim = min(slim, self.spec.max_cells // 2)
         n_samples = k
         for _ in range(n_samples):
             pairs = []
             for _ in range(4):
-                w = rgen.randint(2, hlim)
-                h = rgen.randint(2, min(slim, self.spec.max_cells // w))
+                max_cells = rgen.randint(4, self.spec.max_cells)
+                w = rgen.randint(2, min(slim, max_cells // 2))
+                h = rgen.randint(2, min(slim, max_cells // w))
                 if rgen.randint(0, 1):
                     w, h = h, w
                 n = h * w

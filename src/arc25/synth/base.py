@@ -1,5 +1,6 @@
 import abc
 import hashlib
+import itertools
 import random
 import typing
 from types import MappingProxyType
@@ -48,6 +49,7 @@ class SynthSpec:
                     ret = []
                     for o in obj:
                         ret += flatten(o)
+                    return ret
             raise TypeError(type(obj).__name__)
 
         shapes = [i.shape for i in flatten([chal.train, chal.test])]
@@ -122,7 +124,10 @@ class ChallengeSynth(abc.ABC):
         Otherwise, sample `k` samples without replacement.
         """
         if k is not None:
-            return self._sample_challenges(rgen, k=k)
+            return itertools.filterfalse(
+                lambda s: not self.spec.allows(s.challenge),
+                self._sample_challenges(rgen, k=k),
+            )
         (ret,) = self._sample_challenges(rgen, k=1)
         return ret
 
