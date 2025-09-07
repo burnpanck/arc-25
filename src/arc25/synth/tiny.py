@@ -181,9 +181,10 @@ class DrawBBox(ChallengeSynth):
         if not filled:
             body.append("rect_mask = rect_mask & ~erode(rect_mask)")
         body.append(f"output = fill(input, {color.name.upper()}, clip=rect_mask)")
+        body = "\n    ".join(body)
         impl = f"""
 def solution(input: Image) -> AnyImage:
-    {"\n    ".join(body)}
+    {body}
     return output
 """.strip()
         return cls(

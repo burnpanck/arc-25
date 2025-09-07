@@ -43,6 +43,8 @@ async def update_training_data(msg: str):
     api.authenticate()
 
     cfg = anyio.Path("~/.kaggle/kaggle.json")
+    cfg = await cfg.expanduser()
+    cfg = await cfg.resolve()
     if await cfg.exists():
         cfg = await cfg.expanduser()
         cfg = await cfg.resolve()
@@ -87,7 +89,9 @@ async def update_training_data(msg: str):
             async for fn in ssrc.glob("*.py"):
                 tg.start_soon(make_copy_fn(fn, sdst))
         await anyio.to_thread.run_sync(
-            api.dataset_create_version, str(tdir), version_notes=msg, dir_mode="zip"
+            lambda: api.dataset_create_version(
+                str(tdir), version_notes=msg, dir_mode="zip"
+            )
         )
 
 
