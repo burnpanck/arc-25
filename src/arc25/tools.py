@@ -110,10 +110,11 @@ def solution_to_markdown(resp: ReasonedSolution):
     def extract_rgb(c: str):
         c = Color[c.upper()]
         v = int(c.value[1:], 16)
-        return ",".join(str((v >> (k * 8)) % 255) for k in [2, 1, 0])
+        ret = ",".join(str((v >> (k * 8)) % 256) for k in [2, 1, 0])
+        return ret
 
     body = all_colors_rex.sub(
-        lambda m: f'<span style="background-color:rgba({extract_rgb(m.group(1))},0.15)">{m.group(1)}</span>',
+        lambda m: f'<span style="background-color:rgba({extract_rgb(m.group(1))},0.25)">{m.group(1)}</span>',
         body,
     )
 

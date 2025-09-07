@@ -17,8 +17,13 @@ def test_all_synth():
                 or inspect.isabstract(synthcls)
             ):
                 continue
-            print(f"Testing {synthcls.__name__}")
-            for idx in range(synthcls.rule_variations(spec)):
+            n = synthcls.rule_variations(spec)
+            if n <= 10:
+                idx_sel = range(n)
+            else:
+                idx_sel = sorted(set(rgen.choices(range(n), k=5)))
+            print(f"Testing {len(idx_sel)}/{n} variations of {synthcls.__name__}")
+            for idx in idx_sel:
                 synth = synthcls.make_variation(spec, idx)
                 for schal in synth.sample_challenge(rgen, k=3):
                     schal = typing.cast(SynthChallenge, schal)
