@@ -17,7 +17,7 @@ dependencies = [
     "anyio",
     "matplotlib",
     "pyyaml>=6.0.2",
-    "scipy>=1.16.1",
+    "scipy>=1.15.3",
     "msgpack>=1.1.1",
     "cbor2>=5.7.0",
 ]

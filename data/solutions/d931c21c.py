@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     output = input
     # iterate overa all objects
     for obj in find_objects(input, exclude=BLACK):

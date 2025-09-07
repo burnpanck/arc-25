@@ -1,24 +1,23 @@
 import dataclasses
 import math
 from types import MappingProxyType
-from typing import Any, Iterable, Literal, TypeAlias
+from typing import Any, Iterable, Literal
 
 import numpy as np
 from scipy import ndimage
 
 from .. import symmetry
-from .types import *
 from .types import (
+    AnyImage,
     Axis8,
-    Canvas,
     Color,
+    ColorArray,
     Coord,
     Dir4,
     Dir8,
     Image,
     Mask,
     MaskedImage,
-    Paintable,
     Pattern,
     Rect,
     ShapeSpec,
@@ -176,27 +175,25 @@ class _BlackHole:
 
 
 def stroke(
-    canvas: Paintable,
+    canvas: AnyImage,
     path: Iterable[Coord],
     style: Color | Pattern,
     *,
     clip: Mask | None = None,
-) -> Paintable:
+) -> AnyImage:
     """
     Paint along `path` with a solid Color or a repeating Pattern.
     - If `clip` is provided, only cells with clip[r,c]==True are painted.
     - Path determines order; Pattern advances per visited cell (including gaps).
-    - Returns a NEW Canvas (immutability by design).
+    - Returns a NEW Image (immutability by design).
     """
     match canvas:
-        case Canvas():
-            return _evolve(canvas, image=stroke(canvas.image, path, style, clip=clip))
         case MaskedImage():
             mask = canvas._mask.copy()
         case Image():
             mask = _BlackHole()
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable")
+            raise _make_type_error(canvas, "canvas", "AnyImage")
     match style:
         case Color():
             pattern = Pattern((style,))
@@ -209,7 +206,7 @@ def stroke(
     assert n > 0
     ret = canvas._data.copy()
     for i, p in enumerate(path):
-        if clip is not None and not clip[c]:
+        if clip is not None and not clip[p]:
             continue
         c = seq[i % n]
         if c < 0:
@@ -225,13 +222,13 @@ def stroke(
 
 
 def paste(
-    canvas: Paintable,
-    image: Paintable,
+    canvas: AnyImage,
+    image: AnyImage,
     *,
     topleft: Coord | None = None,
     bottomright: Coord | None = None,
     center: Coord | None = None,
-) -> Paintable:
+) -> AnyImage:
     """Paste `image` into canvas.
 
     If `image` has a mask, only pixels that are `True` will be painted.
@@ -240,19 +237,6 @@ def paste(
     needs to be specified using one of `topleft`, `bottomright`, `center`,
     specifying the position of the corresponding corner of `image` within `canvas`.
     """
-    if isinstance(canvas, Canvas):
-        return _evolve(
-            canvas,
-            image=paste(
-                canvas.image,
-                image,
-                topleft=topleft,
-                center=center,
-                bottomright=bottomright,
-            ),
-        )
-    if isinstance(image, Canvas):
-        image = image.image
     assert isinstance(canvas, (Image, MaskedImage))
     assert isinstance(image, (Image, MaskedImage))
     if bottomright is not None:
@@ -300,20 +284,13 @@ def paste(
 
 
 def fill(
-    canvas: Paintable,
+    canvas: AnyImage,
     style: Color | Pattern,
     *,
     dir: Dir8 | None = None,
     clip: Mask | None = None,
     pattern_origin: Coord | None = None,
-) -> Paintable:
-    if isinstance(canvas, Canvas):
-        return _evolve(
-            canvas,
-            image=fill(
-                canvas.image, style, dir=dir, clip=clip, pattern_origin=pattern_origin
-            ),
-        )
+) -> AnyImage:
     if clip is not None:
         clip = Mask.coerce(clip, shape=canvas)
     if pattern_origin is not None:
@@ -362,7 +339,7 @@ def fill(
         case MaskedImage():
             return _evolve(canvas, _data=new_img, _mask=canvas._mask | mask)
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable")
+            raise _make_type_error(canvas, "canvas", "AnyImage")
 
 
 _fill_primitive = fill
@@ -371,21 +348,20 @@ _fill_primitive = fill
 def make_canvas(
     shape: ShapeSpec,
     *,
-    orientation: symmetry.SymOp = symmetry.SymOp.e,
     fill: Color | None = None,
-) -> Canvas:
+) -> AnyImage:
     shape = _shape_from_spec(shape)
-    ret = Canvas.make(shape, orientation=orientation)
     if fill is not None:
-        ret = _fill_primitive(ret, fill)
-    return ret
+        return Image(_data=np.tile(_color2index[fill], shape).astype("i1"))
+    return MaskedImage(
+        _data=np.zeros(shape, "i1"),
+        _mask=np.zeros(shape, bool),
+    )
 
 
-def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:
+def extract_image(canvas: AnyImage | Mask, *, rect: Rect) -> AnyImage | Mask:
     slc = rect.as_slices()
     match canvas:
-        case Canvas():
-            return _evolve(canvas, image=extract_image(canvas.image, rect=rect))
         case Image():
             return _evolve(canvas, _data=canvas._data[slc])
         case MaskedImage():
@@ -393,23 +369,21 @@ def extract_image(canvas: Paintable | Mask, *, rect: Rect) -> Paintable | Mask:
         case Mask():
             return _evolve(canvas, _mask=canvas._mask[slc])
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable | Mask")
+            raise _make_type_error(canvas, "canvas", "AnyImage | Mask")
 
 
-def apply_mask(canvas: Paintable, mask: Mask) -> Paintable:
+def apply_mask(canvas: AnyImage, mask: Mask) -> AnyImage:
     mask = Mask.coerce(mask, shape=canvas.shape)
     match canvas:
-        case Canvas():
-            return _evolve(canvas, image=apply_mask(canvas.image, mask))
         case Image():
             return MaskedImage(_data=canvas._data, _mask=mask._mask)
         case MaskedImage():
             return _evolve(canvas, _mask=canvas._mask & mask)
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable")
+            raise _make_type_error(canvas, "canvas", "AnyImage")
 
 
-def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
+def transform(canvas: AnyImage | Mask, op: Transform) -> AnyImage | Mask:
     match op:
         case Transform():
             sop = op.value
@@ -418,12 +392,6 @@ def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
         case _:
             raise _make_type_error(op, "op", "Transform")
     match canvas:
-        case Canvas():
-            return _evolve(
-                canvas,
-                image=transform(canvas.image, op),
-                orientation=sop.combine(canvas.orientation),
-            )
         case Image():
             return _evolve(canvas, _data=symmetry.transform_image(sop, canvas._data))
         case MaskedImage():
@@ -438,22 +406,20 @@ def transform(canvas: Paintable | Mask, op: Transform) -> Paintable | Mask:
                 _mask=symmetry.transform_image(sop, canvas._mask),
             )
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable | Mask")
+            raise _make_type_error(canvas, "canvas", "AnyImage | Mask")
 
 
-def pattern_error(canvas: Paintable, pattern_shape: tuple[int, int]) -> int:
+def pattern_error(canvas: AnyImage, pattern_shape: tuple[int, int]) -> int:
     """Count the number of cells which do not form a regular pattern.
 
     The pattern repetition frequency is assumed to as given in `pattern_shape`.
     If `canvas` is masked, only cells with paint are considered.
     """
     match canvas:
-        case Canvas():
-            return pattern_error(canvas.image, pattern_shape=pattern_shape)
         case Image() | MaskedImage():
             pass
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable")
+            raise _make_type_error(canvas, "canvas", "AnyImage")
     rrep, crep = pattern_shape
     msk = canvas._mask if isinstance(canvas, MaskedImage) else None
     err = 0
@@ -472,30 +438,28 @@ def pattern_error(canvas: Paintable, pattern_shape: tuple[int, int]) -> int:
 # ----------------------------------------------------------------------------
 
 
-def count_colors(canvas: Paintable) -> ColorArray:
+def count_colors(canvas: AnyImage) -> ColorArray:
     match canvas:
-        case Canvas():
-            return count_colors(canvas.image)
         case Image():
             mask = np.s_[:, :]
         case MaskedImage():
             mask = canvas._mask
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable")
+            raise _make_type_error(canvas, "canvas", "AnyImage")
     cells = canvas._data[mask].ravel()
     return ColorArray(np.bincount(cells, minlength=10))
 
 
 def most_common_colors(
-    input: ColorArray | Paintable, *, exclude: Color | set[Color] | None = None
+    input: ColorArray | AnyImage, *, exclude: Color | set[Color] | None = None
 ) -> set[Color]:
     match input:
         case ColorArray():
             color_count = input
-        case Canvas() | Image() | MaskedImage():
+        case Image() | MaskedImage():
             color_count = count_colors(input)
         case _:
-            raise _make_type_error(input, "input", "ColorArray | Paintable")
+            raise _make_type_error(input, "input", "ColorArray | AnyImage")
     match color_count:
         case ColorArray():
             color_count = color_count.data
@@ -512,7 +476,7 @@ def most_common_colors(
 
 
 def identify_background(
-    canvas: Paintable, *, mode: Literal["frequency", "edge"] = "frequency"
+    canvas: AnyImage, *, mode: Literal["frequency", "edge"] = "frequency"
 ) -> Color:
     match mode:
         case "frequency":
@@ -543,7 +507,7 @@ _structures = MappingProxyType(
 
 
 def find_objects(
-    objects: Paintable | Mask,
+    objects: AnyImage | Mask,
     *,
     connectivity: Literal[4, 8] = 4,
     gap: int = 0,
@@ -551,20 +515,12 @@ def find_objects(
 ) -> Iterable[Mask]:
     """Returns one full-sized mask for each object found, in unspecified order.
 
-    If `objects` is a Canvas or an Image (potentially with mask),
+    If `objects` is an Image (potentially with mask),
     objects are defined as connected components of a single color, excluding `exclude`.
     Otherwise, `objects` must be Mask-like, and objects are defined as connected
     components of `True` values.
     """
     match objects:
-        case Canvas():
-            yield from find_objects(
-                objects.image,
-                connectivity=connectivity,
-                exclude=exclude,
-                gap=gap,
-            )
-            return
         case MaskedImage():
             mask = objects._mask
             colors = np.unique(objects._data[mask])
@@ -715,12 +671,10 @@ def mask_none(shape: ShapeSpec) -> Mask:
     return Mask(np.zeros(_shape_from_spec(shape), bool))
 
 
-def mask_color(canvas: Paintable, color: Color | set[Color]) -> Mask:
+def mask_color(canvas: AnyImage, color: Color | set[Color]) -> Mask:
     """Build a Mask from Color | set[Color]."""
     color = _set_of_colors(color)
     match canvas:
-        case Canvas():
-            return mask_color(canvas.image, color)
         case Image():
             mask = mask_all(canvas)
         case MaskedImage():
@@ -732,16 +686,14 @@ def mask_color(canvas: Paintable, color: Color | set[Color]) -> Mask:
     return ret & mask
 
 
-def mask_unpainted(canvas: Paintable) -> Mask:
+def mask_unpainted(canvas: AnyImage) -> Mask:
     match canvas:
-        case Canvas():
-            return mask_unpainted(canvas.image)
         case MaskedImage():
             return Mask(~canvas._mask)
         case Image():
             return mask_none(canvas)
         case _:
-            raise _make_type_error(canvas, "canvas", "Paintable")
+            raise _make_type_error(canvas, "canvas", "AnyImage")
 
 
 def mask_row(shape: ShapeSpec, row: int) -> Mask:

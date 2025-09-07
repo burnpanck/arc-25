@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     objects = mask_color(input, RED)
     output = input
     for obj in find_objects(objects, connectivity=8, gap=1):

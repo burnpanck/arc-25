@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from arc25.dataset import Dataset, SolutionDB
-from arc25.prompts import PromptEncoder, parse_explanation
+from ..dataset import Dataset, SolutionDB
+from ..prompts import PromptEncoder, parse_explanation
 
 
 @pytest.mark.asyncio

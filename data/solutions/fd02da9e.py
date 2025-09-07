@@ -1,4 +1,4 @@
-def solution(input: Canvas, examples: list[IOPair]) -> Canvas:
+def solution(input: Image, examples: list[IOPair]) -> Image:
     output = make_canvas(input.shape)
     output = fill(output, ORANGE)
     keys = ~mask_color(input, ORANGE)

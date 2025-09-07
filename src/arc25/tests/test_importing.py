@@ -1,6 +1,5 @@
 import importlib.util
 import pkgutil
-import platform
 
 
 def test_importing():

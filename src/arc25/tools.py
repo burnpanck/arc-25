@@ -11,19 +11,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .dataset import IAETriple, IOPair
-from .dsl.types import Canvas, Color, Image, MaskedImage, Paintable
+from .dsl.types import AnyImage, Color, Image, MaskedImage
 
 # ARC color map - colors for values 0-9
 _cmap = mpl.colors.ListedColormap([c.value for c in Color])
 _norm = mpl.colors.Normalize(vmin=0, vmax=9)
 
 
-def show_image(img: Paintable, *, ax=None):
+def show_image(img: AnyImage, *, ax=None):
     if ax is None:
         ax = plt.gca()
-    if isinstance(img, Canvas):
-        # TODO: mark physical axes in plot
-        img = img.image
     match img:
         case Image():
             img = img._data

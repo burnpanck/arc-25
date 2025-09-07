@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # find the lines (anything non-black)
     lines = ~mask_color(input,BLACK)
     # determine their color

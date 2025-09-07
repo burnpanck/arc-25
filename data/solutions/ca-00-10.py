@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # find lower half by considering the black parts
     # as objects
     lower = max(

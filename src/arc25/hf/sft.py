@@ -9,7 +9,7 @@ from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer, Trainer
 
 from ..dataset import Challenge
-from ..dsl.types import Canvas, Color, IOPair
+from ..dsl.types import Color, IOPair
 from ..prompts import PromptEncoder, ReasonedSolution
 
 
@@ -62,11 +62,7 @@ class SFTEncoder:
         else:
             assert encoder_args is None
         tok = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        additional_special_tokens = tuple(
-            list(encoder.colour_tokens)
-            + list(vars(encoder.open_tokens).values())
-            + list(vars(encoder.close_tokens).values())
-        )
+        additional_special_tokens = tuple(encoder.all_special_tokens)
         tok.add_special_tokens(
             dict(additional_special_tokens=additional_special_tokens)
         )

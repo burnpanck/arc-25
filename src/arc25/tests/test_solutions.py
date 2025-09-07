@@ -4,8 +4,8 @@ from pathlib import Path
 import anyio
 import pytest
 
-from arc25.dataset import Dataset, SolutionDB
-from arc25.sandbox import evaluate_solution
+from ..dataset import Dataset, SolutionDB
+from ..sandbox import evaluate_solution
 
 
 def available_cpus():

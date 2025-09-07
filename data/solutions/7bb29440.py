@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # prepare object mask (anything not black)
     fg_mask = ~mask_color(input, BLACK)
     # prepare "marker" mask: object, but not black

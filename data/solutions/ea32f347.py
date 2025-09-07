@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # find gray objects and sort them by their cell count
     objs = sorted(
         find_objects(mask_color(input, GRAY)),

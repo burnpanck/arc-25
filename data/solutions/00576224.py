@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # prepare output
     m,n = input.shape
     output = make_canvas((3*m,3*n))

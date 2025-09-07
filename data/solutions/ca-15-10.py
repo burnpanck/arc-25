@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     bg_mask = mask_color(input, BLACK)
     # find the "ladder"; the object with the largest bounding box
     ladder = max(

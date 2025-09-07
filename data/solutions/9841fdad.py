@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # find the two "fields"
     bg = identify_background(input, mode="edge")
     fg_mask = ~mask_color(input, bg)

@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     import itertools
     markers = ~mask_color(input, {BLACK, BLUE})
     output = input

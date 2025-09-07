@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     cells = []
     for i in [0,1,5,6]:
         cells.append(Coord(3,i))

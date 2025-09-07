@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # extract input pattern (tight bbox around non-black cells)
     fg_mask = ~mask_color(input, BLACK)
     bbox = find_bbox(fg_mask)

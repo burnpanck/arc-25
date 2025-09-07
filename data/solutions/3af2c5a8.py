@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     h,w = input.shape
     # create canvas twice the size in both dimensions
     output = make_canvas((2*h,2*w))

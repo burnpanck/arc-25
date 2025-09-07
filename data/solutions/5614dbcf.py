@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # prepare output canvas of size 3x3
     output = make_canvas((3,3))
     # iterate over each 3x3 tile

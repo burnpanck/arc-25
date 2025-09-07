@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     bg = BLACK
     # find closed lines and the single magenta cell
     closed_lines = []

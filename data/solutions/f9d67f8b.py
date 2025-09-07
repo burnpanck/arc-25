@@ -1,4 +1,4 @@
-def attempt1(input: Canvas) -> Canvas:
+def attempt1(input: Image) -> AnyImage:
     mask = ~mask_color(input, BROWN)
     masked = apply_mask(input, mask)
     output = make_canvas(input.shape)
@@ -16,7 +16,7 @@ def attempt1(input: Canvas) -> Canvas:
 # we realise that some cells remain indeterminate;
 # -> new rule: assume 90° symmetry as needed
 
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     mask = ~mask_color(input, BROWN)
     masked = apply_mask(input, mask)
     output = make_canvas(input.shape)

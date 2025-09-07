@@ -37,6 +37,11 @@ def dataset():
 @dataset.command()
 @click.option("-m", "--msg", default=None, help="Commit message")
 async def update_training_data(msg: str):
+    from kaggle.api.kaggle_api_extended import KaggleApi
+
+    api = KaggleApi()
+    api.authenticate()
+
     cfg = anyio.Path("~/.kaggle/kaggle.json")
     if await cfg.exists():
         cfg = await cfg.expanduser()
@@ -81,10 +86,8 @@ async def update_training_data(msg: str):
                 tg.start_soon(make_copy_fn(fn, sdst))
             async for fn in ssrc.glob("*.py"):
                 tg.start_soon(make_copy_fn(fn, sdst))
-        await anyio.run_process(
-            f'kaggle datasets version -p "{tdir}" -r zip -m "{msg}"',
-            stdout=None,
-            stderr=None,
+        await anyio.to_thread.run_sync(
+            api.dataset_create_version, str(tdir), version_notes=msg, dir_mode="zip"
         )
 
 

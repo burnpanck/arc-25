@@ -5,7 +5,7 @@
 groups = ["default", "build-explorer", "explorer", "huggingface", "kaggle", "test"]
 strategy = ["inherit_metadata", "static_urls"]
 lock_version = "4.5.0"
-content_hash = "sha256:0ac70883c13bfc0cdf558d7373256f5693326dcf61339ab2aafbb55a77af289f"
+content_hash = "sha256:a505c3e8b45de6f8ae3d3d213cd84e128ba13dc78a85318a96a255bff0b15abc"
 
 [[metadata.targets]]
 requires_python = ">=3.11,<3.13"

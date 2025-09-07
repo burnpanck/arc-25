@@ -141,7 +141,7 @@ class App:
 
 
 rule_placeholder = """
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> Image:
     # determine output from input
     return output
 """.lstrip()

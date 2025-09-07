@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     h,w = input.shape
     ref = mask_from_string("[xxx|xox]")
     print(ref.shape)

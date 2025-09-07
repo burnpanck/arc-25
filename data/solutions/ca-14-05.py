@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # find the lowest object (connectivity: 8)
     lowest = max(
         find_objects(input, exclude=BLACK, connectivity=8),

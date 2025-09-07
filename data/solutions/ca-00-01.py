@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     h,w = input.shape
     fg_mask = ~mask_color(input, BLACK)
     # search horizontal separator by finding the row

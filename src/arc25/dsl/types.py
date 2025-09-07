@@ -1,3 +1,4 @@
+import abc
 import math
 import typing
 from dataclasses import dataclass
@@ -206,7 +207,7 @@ def _shape_from_spec(shape: "ShapeSpec") -> tuple[int, int]:
         case tuple():
             assert len(shape) == 2
             return shape
-        case Image() | MaskedImage() | Mask() | Canvas():
+        case Image() | MaskedImage() | Mask():
             return shape.shape
         case _:
             raise TypeError(
@@ -214,11 +215,15 @@ def _shape_from_spec(shape: "ShapeSpec") -> tuple[int, int]:
             )
 
 
-HasShape: TypeAlias = typing.Any
+class HasShape(abc.ABC):
+    @property
+    @abc.abstractmethod
+    def shape(self) -> tuple[int, int]:
+        pass
 
 
 @dataclass(frozen=True, slots=True)
-class Rect:
+class Rect(HasShape):
     start: Coord
     stop: Coord
 
@@ -335,9 +340,22 @@ class Rect:
         )
 
 
+class AnyImage(HasShape):
+    @abc.abstractmethod
+    def __getitem__(self, coord: Coord) -> Color | None:
+        pass
+
+
 @dataclass(frozen=True, slots=True)
-class Image:
+class Image(AnyImage):
     _data: np.ndarray
+
+    @classmethod
+    def from_array(cls, inp: np.ndarray) -> Self:
+        ret = np.asarray(inp, dtype="i1")
+        assert ret.ndim == 2
+        assert 0 <= ret.min() and ret.max() < 10
+        return Image(ret)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -445,7 +463,7 @@ class Mask:
 
 
 @dataclass(frozen=True, slots=True)
-class MaskedImage:
+class MaskedImage(AnyImage):
     _data: np.ndarray
     _mask: np.ndarray
 
@@ -461,47 +479,13 @@ class MaskedImage:
         return _index2color[self._data[coord.row, coord.col]]
 
 
-AnyImage: TypeAlias = Image | MaskedImage
-
-
-@dataclass(frozen=True, slots=True)
-class Canvas:
-    image: Image | MaskedImage
-    # describes how physical/original coordinates have been mapped to the current orientation
-    orientation: SymOp = SymOp.e
-
-    @classmethod
-    def make(
-        cls,
-        shape: tuple[int, int],
-        *,
-        orientation: SymOp = SymOp.e,
-        fill: Color | None = None,
-    ) -> Self:
-        idata = np.tile(Color(fill).index if fill is not None else 0, shape)
-        if fill is None:
-            image = MaskedImage(_data=idata, _mask=np.zeros(shape, bool))
-        else:
-            image = Image(_data=idata)
-        return cls(image=image, orientation=orientation)
-
-    @property
-    def shape(self):
-        return self.image.shape
-
-    def __getitem__(self, coord: Coord) -> Color | None:
-        return self.image[coord]
+ShapeSpec: TypeAlias = HasShape | tuple[int, int]
 
 
 @dataclass(frozen=True, slots=True)
 class IOPair:
-    input: Canvas
-    output: Canvas | None = None
-
-
-Paintable: TypeAlias = Canvas | AnyImage
-
-ShapeSpec: TypeAlias = Paintable | tuple[int, int]
+    input: Image
+    output: Image | None = None
 
 
 @dataclass(frozen=True, slots=True)

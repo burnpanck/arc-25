@@ -1,5 +1,7 @@
 import contextlib
 import dataclasses
+import enum
+import functools
 import itertools
 import json
 import logging
@@ -14,8 +16,9 @@ import attrs
 import cbor2
 import numpy as np
 
-from .dsl.types import Canvas, Image, IOPair
+from .dsl.types import Axis8, Color, Dir8, Image, IOPair
 from .serialisation import deserialise, serialisable, serialise
+from .symmetry import SymOp
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +26,22 @@ logger = logging.getLogger(__name__)
 @serialisable
 @attrs.frozen
 class IAETriple:
-    input: Canvas
-    actual: Canvas | None = None
-    expected: Canvas | None = None
+    input: Image
+    actual: Image | None = None
+    expected: Image | None = None
 
     @classmethod
-    def compare_output(cls, example: IOPair, actual: Canvas) -> Self:
+    def compare_output(cls, example: IOPair, actual: Image) -> Self:
         return cls(input=example.input, actual=actual, expected=example.output)
 
 
 @serialisable
-@attrs.frozen
+@attrs.frozen(kw_only=True)
+@functools.total_ordering
 class Challenge:
     id: str
     train: tuple[IOPair, ...]
-    test: tuple[IOPair | Canvas, ...]
+    test: tuple[IOPair | Image, ...]
 
     def get_empty_eval_triples(
         self, subset: Literal["train", "test", "all"] = "all"
@@ -45,6 +49,80 @@ class Challenge:
         for k in dict(all=["train", "test"]).get(subset, [subset]):
             for io in getattr(self, k):
                 yield IAETriple.compare_output(io, None)
+
+    def canonicalise(self) -> Self:
+        return attrs.evolve(
+            self,
+            train=tuple(sorted(self.train, key=self._key_fn)),
+            test=tuple(
+                sorted(
+                    self.test,
+                    key=lambda v: self._key_fn(v.input if isinstance(v, IOPair) else v),
+                )
+            ),
+        )
+
+    def remove_test_output(self) -> Self:
+        return attrs.evolve(
+            self,
+            test=tuple(
+                sorted(
+                    (v.input if isinstance(v, IOPair) else v for v in self.test),
+                    key=self.key_fn,
+                )
+            ),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if self.__class__ is other.__class__:
+            return self._key() == other._key()
+        return NotImplemented
+
+    def __lt__(self, other: object) -> bool:
+        if self.__class__ is other.__class__:
+            return self._key() < other._key()
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self._key())
+
+    def _key(self):
+        return self._key_fn(self)
+
+    @classmethod
+    def _key_fn(cls, obj):
+        doit = cls._key_fn
+        match obj:
+            case Challenge():
+                test = []
+                for v in obj.test:
+                    if isinstance(v, IOPair):
+                        i = doit(v.input)
+                        o = doit(v.output)
+                        k = i
+                        v = (i, o)
+                    else:
+                        k = v = doit(v)
+                    test.append((k, v))
+                return (
+                    tuple(sorted(doit(obj.train))),
+                    tuple(v for _, v in sorted(test, key=lambda kv: kv[0])),
+                )
+            case _ if dataclasses.is_dataclass(obj):
+                return tuple(
+                    doit(getattr(obj, f.name)) for f in dataclasses.fields(obj)
+                )
+            case np.ndarray():
+                return (
+                    obj.shape,
+                    str(obj.dtype),
+                    bytes(obj.ravel()),
+                )
+            case list() | tuple():
+                return tuple(doit(v) for v in obj)
+            case None | int() | str():
+                return obj
+        raise TypeError(type(obj).__name__)
 
 
 def parse_inputs(v, had_list=False, id=None):
@@ -60,7 +138,7 @@ def parse_inputs(v, had_list=False, id=None):
             if not had_list:
                 return tuple(parse_inputs(vv, True) for vv in v)
             else:
-                return Canvas(Image(np.array(v, dtype="i1")))
+                return Image(np.array(v, dtype="i1"))
         case _:
             raise TypeError(f"Unsupported type {type(v).__name__}")
 
@@ -149,6 +227,62 @@ class Dataset:
             challenges=MappingProxyType(challenges),
             subsets=MappingProxyType(subsets),
         )
+
+
+class Explicitness(enum.StrEnum):
+    # this property is completely absent from the example
+    absent = "absent"
+    # this property is implicity implied by the examples,
+    # but not explicitly referenced by the rule
+    implicit = "implicit"
+    # there are some rules among the shortest reasonable rules
+    # which include that property explicitly, but others don't.
+    # this may often apply to a background property,
+    # which is easily enough inferred,
+    # but it is about equally reasonable to specify property explictly
+    # in the rule
+    mixed = "mixed"
+    # all known shortes reasonable rules require explicit mention
+    # of the property
+    explicit = "explicit"
+
+
+@serialisable
+@attrs.frozen(kw_only=True)
+class RuleProps:
+    """Describes properties of rules that are objective, but nontrivial to infer."""
+
+    # these colors explicitly carry meaning; only `mixed` and `explicit`
+    # appear in rule properties that are not tied to an example.
+    explicit_colors: dict[Color, Explicitness] = attrs.field(
+        factory=lambda: MappingProxyType({})
+    )
+    # Symmetries, and their effect on the rule. For symmetries that are not mentioned
+    # in this attribute, the lowest explicitness of all atomic decompositions is
+    # taken to be correct, or `explicit` if there aren't any.
+    symmetries: dict[SymOp, Explicitness] = attrs.field(
+        factory=lambda: MappingProxyType({})
+    )
+
+
+@serialisable
+@attrs.frozen(kw_only=True)
+class ReasonedSolution:
+    descr: dict[str, str] = attrs.field(factory=lambda: MappingProxyType({}))
+    rule_descr: str | None = None
+    impl_plan_descr: str | None = None
+    rule_impl: str | None = None
+    # if none, we must assume anything that cannot be programmatically inferred as explicit
+    props: RuleProps | None = None
+
+
+@serialisable
+@attrs.frozen(kw_only=True)
+class WrongSolution:
+    """Explains why a specific solution attempt is wrong."""
+
+    attempt: ReasonedSolution
+    error: str
 
 
 @serialisable

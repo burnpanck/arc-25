@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     lily_mask = mask_color(input, YELLOW)
     leaf_mask = dilate(lily_mask) & ~lily_mask
     leafs = apply_mask(input, leaf_mask)

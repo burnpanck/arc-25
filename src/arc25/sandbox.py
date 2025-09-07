@@ -18,7 +18,7 @@ import numpy as np
 from .dataset import Challenge, IAETriple, Solution
 from .dsl import api as dsl
 from .dsl import types
-from .dsl.types import Canvas, IOPair
+from .dsl.types import AnyImage, IOPair
 from .serialisation import deserialise, serialisable, serialise
 
 
@@ -33,7 +33,7 @@ class ExecutionInfo:
 @serialisable
 @attrs.frozen(kw_only=True)
 class ExampleEval:
-    output: Canvas | None = None
+    output: AnyImage | None = None
     # *_match is None if we don't know the correct output
     full_match: bool | None = None
     cell_match: float | None = None
@@ -141,13 +141,6 @@ class ChallengeEval:
         return ret
 
 
-def _mark(id: str, mark: str):
-    msg = f"\n<!-- [{id}|{mark}] -->\n"
-    for stream in [sys.stdout, sys.stderr]:
-        stream.write(msg)
-        stream.flush()
-
-
 def format_traceback_up_to(
     exc: BaseException, limit_filename: str | None = None, *, header: bool = True
 ) -> str:
@@ -185,16 +178,26 @@ def format_traceback_up_to(
     return "".join(parts)
 
 
-def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
+def _evaluate_solution(
+    challenge: Challenge, rule_src: str, *, capture_output: bool = False
+) -> dict:
+    def _mark(id: str, mark: str):
+        if not capture_output:
+            return
+        msg = f"\n<!-- [{id}|{mark}] -->\n"
+        for stream in [sys.stdout, sys.stderr]:
+            stream.write(msg)
+            stream.flush()
+
     id = f"{challenge.id}"
     _mark(id, "load")
     try:
         filename = "<rule-code>"
-        src = solution.rule
+        src = rule_src
         code = compile(src, filename, "exec")
         linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)
         glob = {k: getattr(dsl, k) for k in dsl.__all__}
-        glob["IOPair"] = IOPair
+        # glob["IOPair"] = IOPair
         loc = dict()
         exec(code, glob, loc)
         solver = loc.get("solution")
@@ -209,24 +212,27 @@ def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
                 pass
             case _:
                 raise ValueError(
-                    "`solution` must either take one argument `(input: Canvas)`,"
-                    " or two arguments `(input: Canvas, examples:list[IOPair])`"
+                    "`solution` must either take one argument `(input: Image)`,"
+                    " or two arguments `(input: Image, examples:list[IOPair])`"
                 )
 
         result = dict(train=[], test=[])
         examples = tuple(challenge.train) + tuple(
-            dataclasses.replace(v, output=None) for v in challenge.test
+            dataclasses.replace(v, output=None) if isinstance(v, IOPair) else v
+            for v in challenge.test
         )
         for eset in ["train", "test"]:
             for idx, io in enumerate(getattr(challenge, eset)):
                 _mark(id, f"{eset}|{idx}")
                 try:
                     actual = solver(io.input, examples)
-                    if not isinstance(actual, types.Canvas):
+                    if not isinstance(actual, types.AnyImage):
                         raise TypeError(
-                            f"`solution` must return a `Canvas`, got `{type(actual).__name__}`"
+                            f"`solution` must return an `AnyImage`, got `{type(actual).__name__}`"
                         )
                 except Exception as ex:
+                    if not capture_output:
+                        raise
                     sys.stderr.write(format_traceback_up_to(ex, "<rule-code>"))
                     eval = dict(error=repr(ex))
                 else:
@@ -235,9 +241,40 @@ def _evaluate_solution(challenge: Challenge, solution: Solution) -> dict:
         _mark(id, "unload")
         return dict(results=result)
     except Exception as ex:
+        if not capture_output:
+            raise
         sys.stderr.write(traceback.format_exc())
         err = repr(ex)
         return dict(error=err)
+
+
+def assert_rule_ok(challenge: Challenge, rule_src: str):
+    result = _evaluate_solution(
+        challenge=challenge, rule_src=rule_src, capture_output=False
+    )
+    expected = challenge.train + challenge.test
+    actual = result["results"]
+    actual = actual["train"] + actual["test"]
+    assert len(actual) == len(
+        expected
+    ), f"{len(actual)=} != {len(expected)=} = {len(challenge.train)=} + {len(challenge.test)=}"
+    for idx, (io, r) in enumerate(zip(expected, actual)):
+        actual = r["output"]
+        if isinstance(actual, types.MaskedImage):
+            mask = actual._mask
+            if not np.all(mask):
+                raise ValueError("{idx}: Some cells are not painted")
+        if isinstance(io, AnyImage) or io.output is None:
+            continue
+        if actual.shape != io.output.shape:
+            raise ValueError(
+                f"{idx}: Output shape mismatch ({actual.shape=}, {io.output.shape=})"
+            )
+        err = actual._data != io.output._data
+        if err.any():
+            raise ValueError(
+                f"{idx}: Output mismatch on {np.sum(err)}/{err.size} cells"
+            )
 
 
 async def evaluate_solution(challenge: Challenge, solution: Solution) -> ChallengeEval:
@@ -247,7 +284,7 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
         input_file = tdir / "input.bson"
         output_file = tdir / "output.bson"
         await input_file.write_bytes(
-            msgpack.packb(serialise(dict(challenge=challenge, solution=solution)))
+            msgpack.packb(serialise(dict(challenge=challenge, rule_src=solution.rule)))
         )
         with anyio.fail_after(2):
             result = await anyio.run_process(
@@ -362,8 +399,8 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
                 continue
             actual = res.pop("output")
             assert not res
-            if isinstance(actual.image, types.MaskedImage):
-                mask = actual.image._mask
+            if isinstance(actual, types.MaskedImage):
+                mask = actual._mask
             else:
                 mask = True
             kw = dict(output=actual, exec_info=ex_exec_info)
@@ -371,7 +408,7 @@ async def evaluate_solution(challenge: Challenge, solution: Solution) -> Challen
                 if actual.shape != io.output.shape:
                     kw.update(full_match=False, cell_match=0)
                 else:
-                    match = (actual.image._data == io.output.image._data) & mask
+                    match = (actual._data == io.output._data) & mask
                     kw.update(
                         full_match=bool(np.all(match)), cell_match=float(np.mean(match))
                     )
@@ -404,7 +441,9 @@ if __name__ == "__main__":
         params = msgpack.unpack(fh)
     params = deserialise(params)
 
-    result = _evaluate_solution(params["challenge"], params["solution"])
+    result = _evaluate_solution(
+        params["challenge"], params["rule_src"], capture_output=True
+    )
 
     result = serialise(result)
 

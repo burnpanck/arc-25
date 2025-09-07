@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     h,w = input.shape
     output = make_canvas((2*h,2*w))
     tile = paste(output, input, topleft=(0,0))

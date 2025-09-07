@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     open_obj = max(
         find_objects(input, exclude=BLACK, connectivity=8),
         key = lambda obj:fill_holes(obj).count() - obj.count()

@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     fg_mask = ~mask_color(input, BLACK)
     output = input
     for obj in find_objects(fg_mask):

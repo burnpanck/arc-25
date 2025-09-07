@@ -4,18 +4,11 @@ import typing
 from types import SimpleNamespace
 
 import attrs
+import numpy as np
 
-from .dataset import Challenge
-from .dsl.types import Canvas, Color, IOPair
-
-
-@attrs.frozen
-class ReasonedSolution:
-    descr: dict[str, str] = attrs.field(factory=dict)
-    rule_descr: str | None = None
-    impl_plan_descr: str | None = None
-    rule_impl: str | None = None
-
+from .dataset import Challenge, ReasonedSolution
+from .dsl.types import AnyImage, Color, Image, IOPair
+from .facts import FactDefinition, default_facts
 
 default_system_msg = (
     "You are a careful, code-generating ARC challenge solver assistant."
@@ -56,98 +49,33 @@ single_char_color_codes = {
 del C
 
 
-class FactDefinition:
-    pass
-
-
-@attrs.frozen
-class PredicateFact(FactDefinition):
-    descr: str
-    predicate: typing.Callable
-
-    def __call__(self, chal: Challenge) -> str | None:
-        p = self.predicate(chal)
-        if p:
-            return self.descr.format(pred=p)
-
-
-def single_element_or_none(arg: list | tuple | set):
-    if len(arg) == 1:
-        (ret,) = arg
-        return ret
-
-
-default_facts = (
-    PredicateFact(
-        "Inputs of equal shape: {pred}",
-        lambda chal: single_element_or_none(
-            set(e.input.shape for e in chal.train + chal.test)
-        ),
-    ),
-    PredicateFact(
-        "Outputs of equal shape: {pred}",
-        lambda chal: single_element_or_none(set(e.output.shape for e in chal.train)),
-    ),
-    PredicateFact(
-        "Output shapes match input shapes",
-        lambda chal: all(e.output.shape == e.input.shape for e in chal.train),
-    ),
-    PredicateFact(
-        "Consistent uniform size increase by factor {pred}",
-        lambda chal: single_element_or_none(
-            set(
-                d
-                for d, m in (
-                    divmod(e.output.shape[i], e.input.shape[i])
-                    for i in range(2)
-                    for e in chal.train
-                )
-                if not m and d > 1
-            )
-        ),
-    ),
-    PredicateFact(
-        "Consistent uniform size decrease by factor {pred}",
-        lambda chal: single_element_or_none(
-            set(
-                d
-                for d, m in (
-                    divmod(e.input.shape[i], e.output.shape[i])
-                    for i in range(2)
-                    for e in chal.train
-                )
-                if not m and d > 1
-            )
-        ),
-    ),
-    # TODO: facts about colours
-)
-
-
 @attrs.frozen(kw_only=True)
 class PromptEncoder:
     system_msg: str = default_system_msg
     task_descr: str = default_task_descr
     replace_all_colours: bool = False
     with_transpose: bool = False
+    add_code_fence: bool = True
 
     # interesting parentheses: «»‹›〔〕【】〖〗❪❫❲❳❬❭❨❩⟨⟩
     colour_tokens: tuple[str, ...] = tuple(
         f"❲{single_char_color_codes[c]}❳" for c in Color
     )
+    missing_colour_token: str = "❲ ❳"
     open_tokens: SimpleNamespace = SimpleNamespace(
         **{
             k: f"<{k}>"
             for k in [
-                "input",
-                "example",
-                "grid",
-                "facts",
-                "descr",
-                "descr",
-                "rule",
-                "plan",
-                "impl",
+                "demo",  # few-shot example wrapper
+                "query",  # actual query in contrast to few-shot
+                "input",  # challenge input (I/O pairs)
+                "example",  # I/O pair (or just I)
+                "grid",  # direct-encoded grid
+                "facts",  # programmatically derived facts
+                "descr",  # CoT of various aspects
+                "rule",  # CoT of the actual rule
+                "plan",  # CoT of the implementation plan
+                "impl",  # python implementation
             ]
         }
     )
@@ -155,16 +83,33 @@ class PromptEncoder:
         **{k: f"</{k}>" for k in vars(open_tokens)}
     )
 
-    fact_definitions: tuple[FactDefinition] = default_facts
+    @property
+    def all_special_tokens(self) -> typing.Iterable[str]:
+        yield from self.colour_tokens
+        yield self.missing_colour_token
+        yield from vars(self.open_tokens).values()
+        yield from vars(self.close_tokens).values()
 
-    def encode_grid(self, grid: Canvas) -> str:
-        if isinstance(grid, Canvas):
-            grid = grid.image
+    fact_definitions: tuple[FactDefinition, ...] = default_facts
+
+    def encode_grid(self, grid: AnyImage) -> str:
         h, w = grid.shape
+        data = grid._data
+        if isinstance(grid, Image):
+            mask = np.ones(data.shape, bool)
+        else:
+            mask = data._mask
         egrids = {
-            k: "\n".join("".join(self.colour_tokens[v] for v in row) for row in d)
-            for k, d in dict(rows=grid._data, cols=grid._data.T).items()
-            if k != "cols" or self.with_transpose
+            k: "\n".join(
+                "".join(
+                    self.colour_tokens[dv] if mv else self.missing_colour_token
+                    for dv, mv in zip(dr, mr)
+                )
+                for (dr, mr) in zip(*[d.T if do_T else d for d in [data, mask]])
+            )
+            for k, do_T in (
+                dict(rows=False, cols=True) if self.with_transpose else dict(rows=False)
+            ).items()
         }
         o = self.open_tokens
         c = self.close_tokens
@@ -246,15 +191,22 @@ class PromptEncoder:
         ):
             if content is None or not content.strip():
                 continue
+            content = content.strip()
+            if tok == "impl":
+                if self.add_code_fence:
+                    assert not cat
+                    cat = "```python"
+                    content += "\n```"
+            else:
+                content += "\n"
 
             ret.append(
                 f"""
 {vars(o)[tok]}{cat}
-{content}
-{vars(c)[tok]}
+{content}{vars(c)[tok]}
             """.strip()
             )
-        return "\n\n".join(ret)
+        return "\n".join(ret)
 
     def prepare_chat_messages(
         self, chal: Challenge, resp: ReasonedSolution | None = None
@@ -313,7 +265,7 @@ def parse_explanation(sol):
 
 
 def parse_larc_annotations(
-    larc: dict[str, typing.Any]
+    larc: dict[str, typing.Any],
 ) -> typing.Iterable[ReasonedSolution]:
     """Parses the LARC data for a single challenge,
     yielding reasoning for each describer who succeeded in solving the task,

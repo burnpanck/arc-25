@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     fg_cells = ~mask_color(input, BLUE)
     bbox = determine_bbox(fg_cells)
     output = extract_image(input, bbox, mask=fg_cells)

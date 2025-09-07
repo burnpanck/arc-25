@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # find the center of all red squares and store those
     attractors = [
         center_of_mass(obj)

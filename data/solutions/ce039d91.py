@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     fg_cells = ~mask_color(input, BLACK)
     symmetric = fg_cells & transform(fg_cells, FLIP_LR)
     output = fill(input, BLUE, clip=symmetric)

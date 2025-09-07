@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     fg_mask = ~mask_color(input, BLACK)
     output = input
     for pos in find_cells(fg_mask):

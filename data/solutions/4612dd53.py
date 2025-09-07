@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     # repeat the analysis for both transposed and original
     # orientation, so we only have to look for vertical lines
     for op in [IDENTITY, FLIP_DIAG_MAIN]:

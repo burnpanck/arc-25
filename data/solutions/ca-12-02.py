@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     lengths = sorted(
         obj.count() for obj in
         find_objects(input, exclude=BLACK)

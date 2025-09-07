@@ -1,4 +1,4 @@
-def solution(input: Canvas) -> Canvas:
+def solution(input: Image) -> AnyImage:
     lowest = max(
         find_objects(input, exclude=BLACK),
         key = lambda obj: find_bbox(obj).bottom,
