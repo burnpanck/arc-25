@@ -77,6 +77,14 @@ class _VectorBase:
         ret[:] = obj
         return ret
 
+    def __getitem__(self, idx: int) -> int:
+        match idx:
+            case -2 | 0:
+                return self.row
+            case -1 | 1:
+                return self.col
+        raise KeyError(idx)
+
 
 @dataclass(frozen=True, slots=True)
 class Vector(_VectorBase):
@@ -289,6 +297,12 @@ class Rect(HasShape):
     @property
     def bottomright(self) -> Coord:
         return self.stop - Vector(1, 1)
+
+    @property
+    def center(self) -> Coord:
+        tl = self.topleft
+        br = self.bottomright
+        return tl + 0.5 * (br - tl)
 
     @property
     def top(self):

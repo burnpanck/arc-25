@@ -157,10 +157,19 @@ class MultiAugmentationBase(AugmentationBase):
     @classmethod
     def random(cls, rgen: random.Random) -> typing.Self:
         for _retry in range(100):
-            seq = [k.random(rgen) for k, v in cls._choices if v <= rgen.random()]
+            seq = [
+                k.random(rgen) for k, v in cls._choices.items() if v <= rgen.random()
+            ]
             if seq:
                 return cls(sequence=tuple(seq))
         raise ValueError()
+
+    def __call__(
+        self, obj: dataset.Challenge | dataset.Solution
+    ) -> dataset.Challenge | dataset.Solution:
+        for aug in self.sequence:
+            obj = aug(obj)
+        return obj
 
 
 class MultiAugmentation(MultiAugmentationBase):
