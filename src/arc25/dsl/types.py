@@ -69,6 +69,9 @@ class _VectorBase:
     def as_tuple(self):
         return (self.row, self.col)
 
+    def as_array(self):
+        return np.array([self.row, self.col])
+
     @classmethod
     def to_array(cls, obj: Self | tuple[int, int]) -> np.ndarray:
         if isinstance(obj, _VectorBase):

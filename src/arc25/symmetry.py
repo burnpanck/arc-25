@@ -32,7 +32,7 @@ class SymOp(enum.Enum):
         """Apply `rhs` first, then `self`"""
         v = rhs.value
         s = self.value
-        if s & 0b100 and bool(v & 0b001) != bool(v & 0b010):
+        if v & 0b100 and bool(v & 0b001) != bool(v & 0b010):
             # we need to swap flip_x and flip_y
             v ^= 0b011
         v ^= s
@@ -54,6 +54,20 @@ def transform_image(s: SymOp, image: np.ndarray) -> np.ndarray:
     return img
 
 
+def transform_vector(s: SymOp, vec: np.ndarray) -> np.ndarray:
+    """
+
+    `vec` has shape `(..., 2)`, with the last dimension representing `[row, col] = [y, x]`.
+    """
+    transpose = bool(s.value & 0b100)
+    flip_y = bool(s.value & 0b010)
+    flip_x = bool(s.value & 0b001)
+    vec = np.where([flip_y, flip_x], -vec, vec)
+    if transpose:
+        vec = vec[..., ::-1]
+    return vec
+
+
 def transform_coordinate(s: SymOp, co: np.ndarray, shape: np.ndarray) -> np.ndarray:
     """
 
@@ -63,7 +77,7 @@ def transform_coordinate(s: SymOp, co: np.ndarray, shape: np.ndarray) -> np.ndar
     flip_y = bool(s.value & 0b010)
     flip_x = bool(s.value & 0b001)
     s = shape - 1
-    co = np.where([flip_y, flip_x], co, shape - 1 - co)
+    co = np.where([flip_y, flip_x], shape - 1 - co, co)
     if transpose:
         co = co[..., ::-1]
     return co

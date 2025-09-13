@@ -1,0 +1,7 @@
+**Inputs:**
+- Two colored rectangles on black background
+
+**Rule:**
+- Connect the two rectangles using a cyan rectangle,
+  making it as wide as possible without touching the
+  outermost cell of either colored rectangle.

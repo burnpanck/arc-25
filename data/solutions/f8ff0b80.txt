@@ -1,0 +1,9 @@
+**Inputs:**
+- Three colored shapes (connectivity=8) on black background
+
+**Outputs:**
+- A 3×1 canvas containing three arbitrary colored cells
+
+**Rule:**
+- Stack a single cell in the color of each input shape vertically,
+  sorted by decreasing number of cells of the input shape
