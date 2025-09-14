@@ -7,28 +7,30 @@ import jaxtyping as jt
 import numpy as np
 from flax import nnx
 from flax.nnx import rnglib
+from flax.nnx.nn import dtypes
 from flax.nnx.nn.linear import default_bias_init, default_kernel_init, initializers
 from flax.typing import (
+    DotGeneralT,
     Dtype,
     Initializer,
     PrecisionLike,
+    PromoteDtypeFn,
 )
+from jax import lax
 
-from ..dsl.types import Dir4, Vector
+from ..dsl.types import Vector
 from ..symmetry import transform_vector
 from .linear import SymmetricLinear
-from .rope import QKV, attention_RoPE_with_global
+from .rope import QKV, attention_RoPE_with_global, show_dims
 from .symrep import Embedding, EmbeddingDims, SymRep
 
 
 @attrs.frozen
 class Features:
-    globl: Embedding  # dimensions (... R? C); full representation
-    rows: Embedding  # dimensions (... Y R? C); representation (t,l,r,d)
-    cols: Embedding  # dimensions (... X R? C); representation (e,x,y,i)
-    cells: Embedding  # dimensions (... Y X R? C); full representation
-    fcells: jt.Float[jt.Array, "... Y X F C"]
-    flavours: jt.Float[jt.Array, "... F C"]
+    globl: Embedding  # dimensions (... F R? C); full representation
+    rows: Embedding  # dimensions (... Y F R? C); representation (t,l,r,d)
+    cols: Embedding  # dimensions (... X F R? C); representation (e,x,y,i)
+    cells: Embedding  # dimensions (... Y X F R? C); full representation
     ypos: jt.Float[jt.Array, "... Y 2"]  # (absolute positions, relative positions)
     xpos: jt.Float[jt.Array, "... X 2"]  # (absolute positions, relative positions)
     rmsk: jt.Bool[jt.Array, "... Y"]
@@ -51,10 +53,8 @@ class FeatureDim:
     rows: EmbeddingDims
     cols: EmbeddingDims
     cells: EmbeddingDims
-    fcells: int
-    flavours: int
     # these are in fact optional, as we don't need them for any weight calculation
-    n_flavours: int | None = None
+    flavours: int | None = None
     shape: tuple[int, int] | None = None
 
     def validity_problem(self):
@@ -73,6 +73,9 @@ class FeatureDim:
             return "rep mismatch"
         if set(self.rows.rep.opseq) & set(self.cols.rep.opseq):
             return "rep overlap"
+        for k in ["iso", "full"]:
+            if getattr(self.rows, k) != getattr(self.cols, k):
+                return f"row/col mismatch on {k}"
 
     def is_valid(self):
         return not self.validity_problem()
@@ -89,42 +92,41 @@ class FeatureDim:
             return f"cols {self.cols.dims} != {f.cols.shapes}"
         if not self.cells.validate(f.cells):
             return f"cells {self.cells.dims} != {f.cells.shapes}"
-        if self.n_flavours is None:
-            F = f.flavours.shape[-2]
+        if self.flavours is None:
+            F = f.globls.iso.shape[-2]
         else:
-            F = self.n_flavours
+            F = self.flavours
         if self.shape is None:
             Y, X = f.cells.full.shape[-4:-2]
         else:
             Y, X = self.shape
-        if f.rows.full.shape[-3] != Y:
-            return f"rows [{Y},{X}] <> {f.rows.shapes}"
-        if f.cols.full.shape[-3] != X:
-            return f"cols [{Y},{X}] <> {f.cols.shapes}"
-        if f.cells.full.shape[-4:-2] != (Y, X):
-            return f"cols [{Y},{X}] <> {f.cells.shapes}"
-        if f.fcells.shape[-4:] != (Y, X, F, self.fcells):
-            return f"fcells [{Y},{X},{F},{self.fcells}] <> {f.fcells.shape}"
-        if f.flavours.shape[-2:] != (F, self.flavours):
-            return f"flavours [{F},{self.flavours}] <> {f.flavours.shape}"
+        shi = f"[{Y},{X},{F}]"
+        if f.rows.full.shape[-4:-2] != (Y, F):
+            return f"rows {shi} <> {f.rows.shapes}"
+        if f.cols.full.shape[-4:-2] != (X, F):
+            return f"cols {shi} <> {f.cols.shapes}"
+        if f.cells.full.shape[-5:-2] != (Y, X, F):
+            return f"cols {shi} <> {f.cells.shapes}"
         if f.ypos.shape[-2:] != (Y, 2):
-            return f"ypos [{Y},{X}] <> {f.ypos.shape}"
+            return f"ypos {shi} <> {f.ypos.shape}"
         if f.xpos.shape[-2:] != (X, 2):
-            return f"xpos [{Y},{X}] <> {f.xpos.shape}"
+            return f"xpos {shi} <> {f.xpos.shape}"
         if f.rmsk.shape[-1] != Y:
-            return f"rmsk [{Y},{X}] <> {f.rmsk.shape}"
+            return f"rmsk {shi} <> {f.rmsk.shape}"
         if f.cmsk.shape[-1] != X:
-            return f"cmsk [{Y},{X}] <> {f.cmsk.shape}"
+            return f"cmsk {shi} <> {f.cmsk.shape}"
         if f.mask.shape[-2:] != (Y, X):
-            return f"mask [{Y},{X}] <> {f.mask.shape}"
+            return f"mask {shi} <> {f.mask.shape}"
         try:
             np.broadcast_shapes(
-                f.globl.full.shape[:-2],
-                f.rows.full.shape[:-3],
-                f.cols.full.shape[:-3],
-                f.cells.full.shape[:-4],
-                f.fcells.shape[:-4],
-                f.flavours.shape[:-2],
+                f.globl.iso.shape[:-2],
+                f.rows.iso.shape[:-3],
+                f.cols.iso.shape[:-3],
+                f.cells.iso.shape[:-4],
+                f.globl.full.shape[:-3],
+                f.rows.full.shape[:-4],
+                f.cols.full.shape[:-4],
+                f.cells.full.shape[:-5],
                 f.ypos.shape[:-2],
                 f.xpos.shape[:-2],
                 f.rmsk.shape[:-1],
@@ -143,27 +145,25 @@ class FeatureDim:
         batch: tuple[int, ...] = (),
         *,
         shape: tuple[int, int] | None = None,
-        n_flavours: int | None = None,
+        flavours: int | None = None,
     ) -> Features:
         if shape is None:
             shape = self.shape
             assert shape is not None
         else:
             assert self.shape is None or shape == self.shape
-        if n_flavours is None:
-            n_flavours = self.n_flavours
-            assert n_flavours is not None
+        if flavours is None:
+            flavours = self.flavours
+            assert flavours is not None
         else:
-            assert self.n_flavours is None or n_flavours == self.n_flavours
+            assert self.n_flavours is None or flavours == self.flavours
         Y, X = shape
-        F = n_flavours
+        F = flavours
         ret = Features(
-            globl=self.globl.make_empty(batch),
-            rows=self.rows.make_empty(batch + (Y,)),
-            cols=self.cols.make_empty(batch + (X,)),
-            cells=self.cells.make_empty(batch + shape),
-            fcells=np.empty(batch + (Y, X, F, self.fcells)),
-            flavours=np.empty(batch + (F, self.flavours)),
+            globl=self.globl.make_empty(batch + (F,)),
+            rows=self.rows.make_empty(batch + (Y, F)),
+            cols=self.cols.make_empty(batch + (X, F)),
+            cells=self.cells.make_empty(batch + shape + (F,)),
             ypos=np.empty(batch + (Y, 2)),
             xpos=np.empty(batch + (X, 2)),
             rmsk=np.empty(batch + (Y,), bool),
@@ -195,6 +195,7 @@ class SymAttention(nnx.Module):
         qkv_features: int,
         out_features: FeatureDim | None = None,
         *,
+        global_mix_reduction: int = 4,
         num_groups: int | None = None,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
@@ -207,6 +208,7 @@ class SymAttention(nnx.Module):
         bias_init: Initializer = default_bias_init,
         # out_bias_init: Initializer | None = None,
         use_bias: bool = True,
+        hdrs_attend: bool = False,
         # attention_fn: Callable[..., Array] = dot_product_attention,
         normalize_qk: bool = False,
         rngs: rnglib.Rngs,
@@ -219,9 +221,11 @@ class SymAttention(nnx.Module):
         assert not qkv_features % (2 * num_heads)
         assert not num_heads % num_groups
         self.n_features = n_features = qkv_features // (2 * num_heads)
+        self.global_mix_reduction = global_mix_reduction
         self.in_features = in_features
         self.qkv_features = qkv_features
         self.out_features = out_features
+        self.hdrs_attend = hdrs_attend
         self.num_heads = num_heads
         self.num_groups = num_groups
         self.dtype = dtype
@@ -235,7 +239,7 @@ class SymAttention(nnx.Module):
         )
 
         def make_linear(inf, outf, *, cls=SymmetricLinear):
-            # TODO dtypes, biases, etc...
+            # TODO: do we have them all?
             return cls(
                 inf,
                 outf,
@@ -250,41 +254,46 @@ class SymAttention(nnx.Module):
 
         nqkv = (num_heads + 2 * num_groups) * n_features * 2
 
+        self.cell_global_mix = make_linear(
+            in_features.globl.iso,
+            in_features.cells.iso // global_mix_reduction,
+            cls=nnx.Linear,
+        )
+        mixmap = dict(
+            cells=self.cell_global_mix.out_features,
+        )
+
+        if hdrs_attend:
+            (hdr_iso,) = {in_features.rows.iso, in_features.cols.iso}
+            hdr_mix = hdr_iso // global_mix_reduction
+            self.hdr_global_mix = make_linear(
+                in_features.globl.iso,
+                hdr_mix,
+                cls=nnx.Linear,
+            )
+            mixmap.update(rows=hdr_mix, cols=hdr_mix)
+            skip_iso = []
+        else:
+            self.hdr_global_mix = nnx.data(None)
+            skip_iso = ["rows", "cols"]
         self.qkv = {
             k: make_linear(
-                v,
-                attrs.evolve(
-                    v, iso=nqkv if k not in {"rows", "cols"} else 0, full=nqkv
-                ),
+                attrs.evolve(v, iso=v.iso + mixmap.get(k, 0)),
+                attrs.evolve(v, iso=nqkv if k not in skip_iso else 0, full=nqkv),
             )
             for k, v in {
                 k: getattr(in_features, k) for k in ["globl", "rows", "cols", "cells"]
             }.items()
         }
-        self.qkv["fcells"] = make_linear(
-            in_features.fcells + in_features.flavours,
-            nqkv,
-            cls=nnx.Linear,
-        )
-        self.qkv["flavours"] = make_linear(
-            in_features.flavours,
-            nqkv,
-            cls=nnx.Linear,
-        )
         nv = num_heads * n_features * 2
         self.out = {
             k: make_linear(
-                (
-                    attrs.evolve(
-                        v.out_features,
-                        iso=dict(globl=2 * nv, cells=nv).get(k, 0),
-                        full=nv,
-                    )
-                    if isinstance(v, SymmetricLinear)
-                    else dict(flavours=2 * nv, fcells=nv)[k]
+                attrs.evolve(
+                    v.out_features,
+                    iso=dict(globl=2 * nv, cells=nv).get(k, nv if hdrs_attend else 0),
+                    full=nv,
                 ),
                 getattr(out_features, k),
-                cls=type(v),
             )
             for k, v in self.qkv.items()
         }
@@ -296,10 +305,9 @@ class SymAttention(nnx.Module):
         assert features.globl.rep == features.cells.rep
 
         R = features.cells.rep.dim
-        batch = features.cells.full.shape[:-4]
+        batch = features.cells.full.shape[:-5]
         B = int(np.prod(batch))
-        Y, X = features.cells.full.shape[-4:-2]
-        F = features.flavours.shape[-2]
+        Y, X, F = features.cells.full.shape[-5:-2]
         H = self.n_features
         D = 2 * H
         K = self.num_groups
@@ -307,7 +315,7 @@ class SymAttention(nnx.Module):
 
         print(f"{batch=} {B=} {Y=} {X=} {F=} {R=} {N=} {K=} {H=} {D=}")
 
-        # `o` dimension: broadcast "other" spacial axis
+        # `o` dimension: singular dimension to add as broadcast for "other" spatial axis
         xphi = jnp.einsum(
             "...oxa,kha -> ...oxkh", features.xpos[..., None, :, :], self.freqs
         )
@@ -317,51 +325,44 @@ class SymAttention(nnx.Module):
         phi = [yphi, xphi]
 
         # first; linear projection into QKV for each of the features separtely
+        cell_mix = self.cell_global_mix(features.globl.iso)[..., None, None, :, :]
+        mixmap = dict(
+            cells=jnp.tile(cell_mix, (Y, X, 1, 1)),
+        )
+        if self.hdrs_attend:
+            hdr_mix = self.hdr_global_mix(features.globl.iso)[..., None, :, :]
+            mixmap.update(
+                rows=jnp.tile(hdr_mix, (Y, 1, 1)),
+                cols=jnp.tile(hdr_mix, (X, 1, 1)),
+            )
         qkv = {}
         qkvi = {}
         for k, v in self.qkv.items():
             inp = getattr(features, k)
-            print(
-                f"{k}: {inp.shape if not isinstance(inp, Embedding) else inp.shapes} {v.in_features=} {v.out_features=}"
-            )
-            if k == "fcells":
-                inp = jnp.concatenate(
-                    [
-                        jnp.tile(
-                            features.flavours[..., None, None, :, :], (Y, X, 1, 1)
-                        ),
-                        inp,
-                    ],
-                    axis=-1,
-                )
+            print(f"{k}: {inp.shapes} {v.in_features=} {v.out_features=}")
+            mix = mixmap.get(k)
+            if mix is not None:
+                inp = attrs.evolve(inp, iso=jnp.concatenate([mix, inp.iso], axis=-1))
             out = v(inp)
+            rep = out.rep
+            full = out.full
+            iso = out.iso
+
             di = {}
-            if isinstance(v, SymmetricLinear):
-                rep = out.rep
-                full = out.full
-                iso = out.iso
-                d = {}
-            else:
-                iso = out
-                full = None
-                rep = None
-                d = None
+            d = {}
             for kk, n in dict(Q=N * H * 2, K=K * H * 2, V=K * D).items():
-                if full is not None:
-                    d[kk] = dd = full[..., :n]
-                    print(f"full {k}.{kk}.shape = {dd.shape}")
-                    full = full[..., n:]
-                if kk in {"rows", "cols"}:
+                d[kk] = dd = full[..., :n]
+                print(f"full {k}.{kk}.shape = {dd.shape}")
+                full = full[..., n:]
+                if not self.hdrs_attend and k in {"rows", "cols"}:
                     continue
                 di[kk] = dd = iso[..., :n]
                 print(f"iso {k}.{kk}.shape = {dd.shape}")
                 iso = iso[..., n:]
-            assert not iso.size
-            if full is not None:
-                assert not full.size
+            assert not iso.size, f"{k}: {iso.shape=}"
+            assert not full.size
             qkvi[k] = SimpleNamespace(**di)
-            if full is not None:
-                qkv[k] = SimpleNamespace(**d, rep=rep)
+            qkv[k] = SimpleNamespace(**d, rep=rep)
         qkv = SimpleNamespace(**qkv)
         qkvi = SimpleNamespace(**qkvi)
 
@@ -370,24 +371,16 @@ class SymAttention(nnx.Module):
         ares = []
         orep = []
         for axis in range(2):
-            match axis:
-                case 0:
-                    maybe_swap = lambda a, i, j: jnp.swapaxes(a, i, j)
-                case 1:
-                    maybe_swap = lambda a, i, j: a
-                case _:
-                    raise RuntimeError
             # careful: performing attention along axis 0, column headers are global, row index acts as position
             # so in this case X is a batch dimension, and Y acts as source/target
-            # globl shape: ... R hd
-            # hdr shape: ... oS R hd
-            # axial shape
-            #  - before `maybe_swap`: .... Y X R hd
-            #  - after  `maybe_swap`: .... oS L R hd
+            # globl shape: ... F R hd
+            # hdr shape: ... Y/X F R hd
+            # axial shape .... Y X F R hd
             hdr = [qkv.cols, qkv.rows][axis]
-            hmsk = [features.cmsk, features.rmsk][axis]
-            oS = hdr.Q.shape[-3]
+            hmsk, ohmsk = [features.cmsk, features.rmsk][:: (1, -1)[axis]]
+            oS = hdr.Q.shape[-4]
             Pi = np.array([qkv.cells.rep.op2idx[o] for o in hdr.rep.opseq])
+            P = Pi.size
             orep.extend(hdr.rep.opseq)
             polarisation = np.array(
                 [
@@ -397,159 +390,166 @@ class SymAttention(nnx.Module):
             )
             assert np.all(abs(polarisation) == 1)
             polarisation = (polarisation + 1) // 2
-            # we concatenate global and axis headers for the KVs
-            # but there will only be axis headers in the Qs
-            # concatenation is along S/T, output shape is ... oS S/T P hd,
-            gQ = hdr.Q[..., :, None, :, :]
-            gK = jnp.concatenate(
-                [
-                    jnp.tile(qkv.globl.K[..., None, None, Pi, :], (oS, 1, 1, 1)),
-                    hdr.K[..., :, None, :, :],
-                ],
-                axis=-3,
-            )
-            gV = jnp.concatenate(
-                [
-                    jnp.tile(qkv.globl.V[..., None, None, Pi, :], (oS, 1, 1, 1)),
-                    hdr.V[..., :, None, :, :],
-                ],
-                axis=-3,
-            )
-            mask = jnp.tile(hmsk[..., :, None], (1, gK.shape[-3]))
-
-            def make_qkv(q, k, v, mask):
-                raise NotImplementedError(
-                    "attention_RoPE_with_global now expects an additional dimension F, not respected here"
+            # first, reshape stuff into "... tB S/T tF P hd" style; this way we have fixed axis positions
+            tB, tF = [(1, oS * F), (oS, F)][axis]
+            gK = qkv.globl.K[..., Pi, :].reshape(*batch, 1, 1, F, P, K * H * 2)
+            gV = qkv.globl.V[..., Pi, :].reshape(*batch, 1, 1, F, P, K * D)
+            gK, gV = [
+                jnp.tile(
+                    v,
+                    [
+                        (1, 1, oS, 1, 1),
+                        (oS, 1, 1, 1, 1),
+                    ][axis],
                 )
+                for v in (gK, gV)
+            ]
+            hQ = hdr.Q.reshape(*batch, tB, 1, tF, P, N * H * 2)
+            hK = hdr.K.reshape(*batch, tB, 1, tF, P, K * H * 2)
+            hV = hdr.V.reshape(*batch, tB, 1, tF, P, K * D)
+            # now, we can concatenate along axis 2
+            ghK = jnp.concatenate([gK, hK], axis=-4)
+            ghV = jnp.concatenate([gV, hV], axis=-4)
+
+            def make_qkv(q, k, v, *, mask, S, T):
                 # unravel hd -> (N H 2) / (K H 2) / (K D)
-                print(f"v: {v.reshape(*v.shape[:-1], K, D).shape} {v.shape=} {K=} {D=}")
                 return QKV(
-                    query=q.reshape(*q.shape[:-1], N, H, 2),
-                    key=k.reshape(*k.shape[:-1], K, H, 2),
-                    value=v.reshape(*v.shape[:-1], K, D),
+                    query=q.reshape(*batch, tB, T, tF, P, N, H, 2),  # noqa: B023
+                    key=k.reshape(*batch, tB, S, tF, P, K, H, 2),  # noqa: B023
+                    value=v.reshape(*batch, tB, S, tF, P, K, D),  # noqa: B023
                     mask=mask,
                 )
 
+            S = T = ohmsk.shape[-1]
             res = attention_RoPE_with_global(
                 globl=make_qkv(
-                    gQ,
-                    gK,
-                    gV,
-                    mask=mask,
+                    hQ,
+                    ghK,
+                    ghV,
+                    mask=None,  # np.ones(2,bool),
+                    T=1,
+                    S=2,
                 ),
                 axial=make_qkv(
                     **{
-                        k.lower(): maybe_swap(v[..., :, :, Pi, :], -4, -3)
+                        k.lower(): v[..., Pi, :]
                         for k, v in vars(qkv.cells).items()
                         if k != "rep"
                     },
-                    mask=maybe_swap(features.mask, -2, -1),
+                    T=T,
+                    S=S,
+                    mask=ohmsk[..., None, :],
                 ),
                 pQ=phi[axis],
                 polarisation=polarisation,
             )
             ohdr, oax = (v.reshape(*v.shape[:-2], N * D) for v in res)
-            # ohdr now has dimensions ... B 1 P F
-            # oax now has dimensions ... B S P F
+            # ohdr now has dimensions tB 1 tF P C
+            assert ohdr.shape[-4] == 1
+            # oax now has dimensions tB S tF P C
 
-            # TODO: global attention to axis headers
+            # TODO: global attention to axis headers?
+            gres.append(ohdr[..., :, 0, :, :, :].reshape(*batch, oS, F, P, N * D))
+            ares.append(oax.reshape(*batch, Y, X, F, P, N * D))
 
-            assert ohdr.shape[-3] == 1
-            gres.append(ohdr[..., :, 0, :, :])
-            ares.append(maybe_swap(oax, -4, -3))
         cells = jnp.concatenate(ares, axis=-2)
         orep = SymRep.from_seq(orep)
 
         efc = {}
         for k in "QKV":
-            g = getattr(qkvi.globl, k)[..., None, None, :]  # ... C
-            f = getattr(qkvi.flavours, k)[..., None, :, :]  # ... F C
-            c = getattr(qkvi.cells, k).reshape(*batch, Y * X, 1, -1)  # ... Y X C
-            fc = getattr(qkvi.fcells, k).reshape(*batch, Y * X, F, -1)  # ... Y X F C
-            v = jnp.concatenate(
-                [jnp.concatenate(p, axis=-2) for p in [(g, f), (c, fc)]], axis=-3
-            )
+            g = getattr(qkvi.globl, k)[..., None, :, :]  # ... F C
+            c = getattr(qkvi.cells, k).reshape(*batch, Y * X, F, -1)  # ... Y X F C
+            print(f"g: {show_dims("sfc", g)}")
+            print(f"c: {show_dims("sfc", c)}")
+            v = jnp.concatenate([g, c], axis=-3)
             v = v.reshape(
-                *batch, Y * X + 1, F + 1, *dict(Q=(N, 2 * H), K=(K, 2 * H), V=(K, D))[k]
+                *batch, Y * X + 1, F, *dict(Q=(N, 2 * H), K=(K, 2 * H), V=(K, D))[k]
             )
             efc[k] = v
         efc = SimpleNamespace(**efc)
 
-        # third; pointwise flavour attention
+        # third; pointwise self-attention across flavours
         pwatt = jax.nn.dot_product_attention(
-            query=efc.Q.reshape(B * (Y * X + 1), F + 1, N, 2 * H),
-            key=efc.K.reshape(B * (Y * X + 1), F + 1, K, 2 * H),
-            value=efc.V.reshape(B * (Y * X + 1), F + 1, K, D),
+            query=efc.Q.reshape(B * (Y * X + 1), F, N, 2 * H),
+            key=efc.K.reshape(B * (Y * X + 1), F, K, 2 * H),
+            value=efc.V.reshape(B * (Y * X + 1), F, K, D),
             # mask = features.mask[...,None],
         )
-        pwatt = pwatt.reshape(*batch, Y * X + 1, F + 1, N * D)
-        globl2flavour = pwatt[..., 0, 0, :]
-        flavours_self = pwatt[..., 0, 1:, :]
-        cells_iso = pwatt[..., 1:, 0, :].reshape(*batch, Y, X, -1)
-        fcells = pwatt[..., 1:, 1:, :].reshape(*batch, Y, X, F, -1)
+        pwatt = pwatt.reshape(*batch, Y * X + 1, F, N * D)
+        globl_self = pwatt[..., 0, :, :]
+        cells_iso = pwatt[..., 1:, :, :].reshape(*batch, Y, X, F, -1)
 
-        # fourth; global iso attention
+        if self.hdrs_attend:
+            raise NotImplementedError(
+                "We'd need to implement cross-flavour attention for headers here"
+            )
+
+        # fourth; global attention
         glatt = jax.nn.dot_product_attention(
             query=jnp.swapaxes(efc.Q[:, :1, :, :, :], -3, -4).reshape(
-                B * (F + 1), 1, N, 2 * H
+                B * F, 1, N, 2 * H
             ),
-            key=jnp.swapaxes(efc.K, -3, -4).reshape(B * (F + 1), Y * X + 1, K, 2 * H),
-            value=jnp.swapaxes(efc.V, -3, -4).reshape(B * (F + 1), Y * X + 1, K, D),
+            key=jnp.swapaxes(efc.K, -3, -4).reshape(B * F, Y * X + 1, K, 2 * H),
+            value=jnp.swapaxes(efc.V, -3, -4).reshape(B * F, Y * X + 1, K, D),
             mask=jnp.concatenate(
                 [
                     # TODO: should we self-attend here?
-                    jnp.zeros((B * (F + 1), 1, 1, 1), bool),
-                    jnp.tile(features.mask, (F + 1, 1)).reshape(-1, 1, 1, Y * X),
+                    jnp.zeros((B * F, 1, 1, 1), bool),
+                    jnp.tile(features.mask, (F, 1)).reshape(-1, 1, 1, Y * X),
                 ],
                 axis=-1,
             ),
         )
         assert glatt.shape[-3] == 1
-        glatt = glatt.reshape(*batch, F + 1, N * D)
-        globl2celliso = glatt[..., 0, :]
-        flavours = glatt[..., 1:, :]
+        glatt = glatt.reshape(*batch, F, N * D)
+        globl2celliso = glatt
 
         # fifth; global dihedral attention
         # attention to cells
         assert qkv.globl.rep == qkv.cells.rep
         globl2cell = jax.nn.dot_product_attention(
-            # merge R directly into batch dimensions left of it
+            # merge F & R directly into batch dimensions left of it
             query=qkv.globl.Q.reshape(-1, 1, N, 2 * H),
-            # we first need to move R across X and Y before we can merge
-            key=jnp.moveaxis(qkv.cells.K, -2, -4).reshape(-1, Y * X, K, 2 * H),
-            # we first need to move R across X and Y before we can merge
-            value=jnp.moveaxis(qkv.cells.V, -2, -4).reshape(-1, Y * X, K, D),
-            mask=jnp.tile(features.mask, (R, 1)).reshape(-1, 1, 1, Y * X),
+            # we first need to move F&R across X and Y before we can merge
+            key=jnp.moveaxis(qkv.cells.K, (-3, -2), (-5, -4)).reshape(
+                -1, Y * X, K, 2 * H
+            ),
+            # we first need to move F&R across X and Y before we can merge
+            value=jnp.moveaxis(qkv.cells.V, (-3, -2), (-5, -4)).reshape(
+                -1, Y * X, K, D
+            ),
+            mask=jnp.tile(features.mask, (F * R, 1)).reshape(-1, 1, 1, Y * X),
         )
         assert globl2cell.shape[-3] == 1
-        globl2cell = globl2cell.reshape(*batch, R, N * D)
+        globl2cell = globl2cell.reshape(*batch, F, R, N * D)
 
-        print(f"{globl2flavour.shape=} {globl2celliso.shape=}")
+        print(f"{globl2celliso.shape=}")
         print(f"{cells_iso.shape=}")
-        print(f"{flavours_self.shape=} {flavours.shape=}")
+        print(f"{globl_self.shape=}")
         tmp = dict(
             globl=attrs.evolve(
                 features.globl,
-                iso=jnp.concatenate([globl2flavour, globl2celliso], -1),
+                iso=jnp.concatenate([globl_self, globl2celliso], -1),
                 full=globl2cell,
                 rep=qkv.globl.rep,
             ),
             cols=attrs.evolve(
                 features.cols,
-                iso=jnp.empty((X, 0), self.dtype),
+                iso=jnp.empty(batch + (X, F, 0), self.dtype),
                 full=gres[0],
                 rep=qkv.cols.rep,
             ),
             rows=attrs.evolve(
                 features.rows,
-                iso=jnp.empty((Y, 0), self.dtype),
+                iso=jnp.empty(batch + (Y, F, 0), self.dtype),
                 full=gres[1],
                 rep=qkv.rows.rep,
             ),
             cells=attrs.evolve(features.cells, iso=cells_iso, full=cells, rep=orep),
-            flavours=jnp.concatenate([flavours_self, flavours], -1),
-            fcells=fcells,
         )
+
+        for k, v in tmp.items():
+            print(f"{k}: {v.iso.shape=} {v.full.shape=}")
 
         # finally; output projection
         output = attrs.evolve(features, **{k: self.out[k](v) for k, v in tmp.items()})

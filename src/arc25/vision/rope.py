@@ -9,47 +9,54 @@ import numpy as np
 
 @attrs.frozen
 class QKV:
-    query: jt.Float[jt.Array, "... T P N H 2"]
-    key: jt.Float[jt.Array, "... S P K H 2"]
-    value: jt.Float[jt.Array, "... S P K D"]
+    query: jt.Float[jt.Array, "... T F P N H 2"]
+    key: jt.Float[jt.Array, "... S F P K H 2"]
+    value: jt.Float[jt.Array, "... S F P K D"]
     mask: jt.Bool[jt.Array, "... S"] | None = None
 
     @property
     def shape(self):
-        T, P, N, H, two = self.query.shape[-5:]
-        S = self.key.shape[-5]
+        T, F, P, N, H, two = self.query.shape[-6:]
+        S = self.key.shape[-6]
         K = self.key.shape[-3]
         D = self.value.shape[-1]
         return SimpleNamespace(
             T=T,
+            F=F,
             P=P,
             N=N,
             H=H,
             S=S,
             K=K,
             D=D,
-            batch=self.query.shape[:-5],
+            batch=self.query.shape[:-6],
         )
 
     def validation_problems(self):
-        T, P, N, H, two = self.query.shape[-5:]
-        S = self.key.shape[-5]
+        T, F, P, N, H, two = self.query.shape[-6:]
+        S = self.key.shape[-6]
         K = self.key.shape[-3]
         D = self.value.shape[-1]
         if two != 2:
             return "query 2"
-        if self.key.shape[-5:] != (S, P, K, H, 2):
+        if self.key.shape[-6:] != (S, F, P, K, H, 2):
             return "key"
-        if self.value.shape[-4:] != (S, P, K, D):
+        if self.value.shape[-5:] != (S, F, P, K, D):
             return "value"
-        if self.mask.shape[-1] != S:
+        if self.mask is not None and self.mask.shape[-1] != S:
             return "mask"
         try:
             np.broadcast_shapes(
-                self.query.shape[:-5],
-                self.key.shape[:-5],
-                self.value.shape[:-4],
-                self.mask.shape[:-1],
+                *[
+                    a.shape[:-n]
+                    for a, n in [
+                        (self.query, 6),
+                        (self.key, 6),
+                        (self.value, 5),
+                        (self.mask, 1),
+                    ]
+                    if a is not None
+                ]
             )
         except ValueError:
             return "batch"
@@ -91,7 +98,7 @@ def attention_RoPE_with_global(
     for k, v in vars(sa).items():
         if k in {"S", "T"}:
             continue
-        assert getattr(sg, k) == v, f"{k}: {getattr(globl, k)} <> {v}"
+        assert getattr(sg, k) == v, f"{k}: {getattr(sg, k)} <> {v}"
     assert pQ.shape[-3:] == (sa.T, sa.K, sa.H), f"{pQ.shape=} {sa}"
     mpK = pK if pK is not None else pQ
     assert mpK.shape[-3:] == (sa.S, sa.K, sa.H), f"{pK.shape=} {sa}"
@@ -102,7 +109,7 @@ def attention_RoPE_with_global(
             f"pQ and pK need to be broadcastable to the batch shape: {sa.batch=} {pQ.shape=} {mpK.shape=}"
         )
 
-    # calculate rotation matrices; these have shape [... S/T P K H 2 2]: (length, polarisation, head, feature, u, v)
+    # calculate rotation matrices; these have shape [... S/T F P K H 2 2]: (length, flavour, polarisation, head, feature, u, v)
     phi = []
     for p in [pQ, pK]:
         if p is None:
@@ -118,44 +125,54 @@ def attention_RoPE_with_global(
         r = jnp.moveaxis(rd[..., idx], -3, -5)
         print(f"{p.shape=} {rd.shape=} {r.shape=}")
         # r now will have the final target shape
-        r = r[..., polarisation, :, :, :, :]
+        r = r[..., None, polarisation, :, :, :, :]
         print(f"{polarisation.shape=} {r.shape=}")
         phi.append(r)
     rQ, rK = phi
 
-    Sa, P, K, H = axial.key.shape[-5:-1]
-    Sg, _, D = globl.value.shape[-3:]
-    Ta, _, Na = axial.query.shape[-5:-2]
-    Tg, _, Ng = globl.query.shape[-5:-2]
+    Sa, F, P, K, H = axial.key.shape[-6:-1]
+    Sg, _, _, D = globl.value.shape[-4:]
+    Ta, _, _, Na = axial.query.shape[-6:-2]
+    Tg, _, _, Ng = globl.query.shape[-6:-2]
     assert not Na % K
     assert not Ng % K
     Ma = Na // K
     Mg = Ng // K
 
+    print(
+        "axial.query:",
+        show_dims(
+            "tfpmkhu",
+            axial.query.reshape(*axial.query.shape[:-6], Ta, F, P, Ma, K, H, 2),
+        ),
+    )
+    print("rQ:", show_dims("tfpkhuv", rQ))
     aQ = jnp.einsum(
-        "...tpmkhu, ...tpkhuv -> ...tpmkhv",
-        axial.query.reshape(*axial.query.shape[:-5], Ta, P, Ma, K, H, 2),
+        "...tfpmkhu, ...tfpkhuv -> ...tfpmkhv",
+        axial.query.reshape(*axial.query.shape[:-6], Ta, F, P, Ma, K, H, 2),
         rQ,
     )
-    aK = jnp.einsum("...spkhu, ...spkhuv -> ...spkhv", axial.key, rK)
+    print("aQ:", show_dims("tfpmkhv", aQ))
+
+    aK = jnp.einsum("...sfpkhu, ...sfpkhuv -> ...sfpkhv", axial.key, rK)
     aV = axial.value
 
-    gQ = globl.query.reshape(*globl.query.shape[:-5], Tg, P, Mg, K, H, 2)
+    gQ = globl.query.reshape(*globl.query.shape[:-6], Tg, F, P, Mg, K, H, 2)
     gK = globl.key
     gV = globl.value
 
-    print("aQ:", show_dims("tpmkhv", aQ))
-    print("gQ:", show_dims("tpmkhv", gQ))
-    print("aK:", show_dims("spkhv", aK))
-    print("gK:", show_dims("spkhv", gK))
+    print("aQ:", show_dims("tfpmkhv", aQ))
+    print("gQ:", show_dims("tfpmkhv", gQ))
+    print("aK:", show_dims("sfpkhv", aK))
+    print("gK:", show_dims("sfpkhv", gK))
 
-    log_aa = jnp.einsum("...tpmkhv,...spkhv -> ...pmkts", aQ, aK)
-    log_gg = jnp.einsum("...tpmkhv,...spkhv -> ...pmkts", gQ, gK)
-    log_ga = jnp.einsum("...tpmkhv,...spkhv -> ...pmkts", gQ, aK)
-    log_ag = jnp.einsum("...tpmkhv,...spkhv -> ...pmkts", aQ, gK)
+    log_aa = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", aQ, aK)
+    log_gg = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, gK)
+    log_ga = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, aK)
+    log_ag = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", aQ, gK)
 
     scale = 1 / np.sqrt(H)
-    value = jnp.concatenate([gV, aV], axis=-4)
+    value = jnp.concatenate([gV, aV], axis=-5)
     msh = np.broadcast_shapes(
         *[arg.mask.shape[:-1] for arg in [globl, axial] if arg.mask is not None]
     )
@@ -165,11 +182,11 @@ def attention_RoPE_with_global(
     msk = (
         jnp.concatenate(
             [
-                jnp.ones(msh + arg.value.shape[-4:-3]) if arg.mask is None else arg.mask
+                jnp.ones(msh + arg.value.shape[-5:-4]) if arg.mask is None else arg.mask
                 for arg in [globl, axial]
             ],
             axis=-1,
-        )[..., None, None, None, None, :]
+        )[..., None, None, None, None, None, :]
         if msh
         else None
     )
@@ -178,23 +195,23 @@ def attention_RoPE_with_global(
         assert K * Ma == Na == Ng == K * Mg
         N = Na
         logits = jnp.block([[log_gg, log_ga], [log_ag, log_aa]])
-        # print(f"{logits.shape=} ({show_dims("pmkts",logits)}) {msk.shape=}")
+        print(f"{logits.shape=} ({show_dims("fpmkts", logits)}) {msk.shape=}")
         prob = jax.nn.softmax(logits * scale, axis=-1, where=msk)
         # print("P:",show_dims("pmkts",prob))
         # print("V:",show_dims("spkd",value))
-        result = jnp.einsum("...pmkts,...spkd -> ...tpmkd", prob, value)
+        result = jnp.einsum("...fpmkts,...sfpkd -> ...tfpmkd", prob, value)
         # print("result:",show_dims("tpmkd",result))
         result = result.reshape(*result.shape[:-3], -1, D)
         # print(f"rrs: {show_dims("tpnd",result)}, {Tg+Ta=} {P=} {N=} {D=}")
-        assert result.shape[-4:] == (Tg + Ta, P, N, D)
-        globl = result[..., :Tg, :, :, :]
-        axial = result[..., Tg:, :, :, :]
+        assert result.shape[-5:] == (Tg + Ta, F, P, N, D)
+        globl = result[..., :Tg, :, :, :, :]
+        axial = result[..., Tg:, :, :, :, :]
     else:
         res = []
         for logits in [[log_gg, log_ga], [log_ag, log_aa]]:
             logits = jnp.concatenate(logits, axis=-1)
             prob = jax.nn.softmax(logits * scale, axis=-1, where=msk)
-            result = jnp.einsum("...pmkts,...spkd -> ...tpmkd", prob, value)
+            result = jnp.einsum("...fpmkts,...sfpkd -> ...tfpmkd", prob, value)
             result = result.reshape(*result.shape[:-3], -1, D)
             res.append(result)
         globl, axial = res

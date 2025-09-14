@@ -176,7 +176,9 @@ class SymmetricLinear(nnx.Module):
         Returns:
           The transformed input.
         """
-        assert self.in_features.validate(inputs)
+        assert self.in_features.validate(inputs), self.in_features.validation_problems(
+            inputs
+        )
 
         kernel_base = self.full2full.value
 
@@ -215,5 +217,7 @@ class SymmetricLinear(nnx.Module):
             yfa = self.iso2full(xi)
             yf = yf + yfa[..., None, :]
         ret = Embedding(yi, yf, rep=of.rep)
-        assert self.out_features.validate(ret)
+        assert self.out_features.validate(ret), self.out_features.validation_problems(
+            ret
+        )
         return ret
