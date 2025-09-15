@@ -12,7 +12,7 @@ class QKV:
     query: jt.Float[jt.Array, "... T F P N H 2"]
     key: jt.Float[jt.Array, "... S F P K H 2"]
     value: jt.Float[jt.Array, "... S F P K D"]
-    mask: jt.Bool[jt.Array, "... S"] | None = None
+    mask: jt.Bool[jt.Array, "... S F"] | None = None
 
     @property
     def shape(self):
@@ -43,23 +43,24 @@ class QKV:
             return "key"
         if self.value.shape[-5:] != (S, F, P, K, D):
             return "value"
-        if self.mask is not None and self.mask.shape[-1] != S:
-            return "mask"
+        if self.mask is not None and self.mask.shape[-2:] != (S, F):
+            return f"mask {self.mask.shape=}, expected {(S, F)} last"
         try:
+            non_batch_dims = dict(
+                query=6,
+                key=6,
+                value=5,
+                mask=2,
+            )
             np.broadcast_shapes(
                 *[
                     a.shape[:-n]
-                    for a, n in [
-                        (self.query, 6),
-                        (self.key, 6),
-                        (self.value, 5),
-                        (self.mask, 1),
-                    ]
-                    if a is not None
+                    for k, n in non_batch_dims.items()
+                    if (a := getattr(self, k)) is not None
                 ]
             )
         except ValueError:
-            return "batch"
+            return f"batch: {' '.join(f"{k}:{getattr(self, k).shape[:-n]}" for k, n in non_batch_dims.items())}"
 
     def is_valid(self):
         return not self.validation_problems()
@@ -86,10 +87,8 @@ def attention_RoPE_with_global(
     # this one is usually static; values are 0: normal, 1: reverse
     polarisation: jt.Int[jt.Array, " P"],
 ):
-    print(f"{globl.shape=} {axial.shape=} {pQ.shape=}")
-    assert (
-        globl.is_valid()
-    ), f"{globl.validation_problems()}: q={globl.query.shape} k={globl.key.shape} v={globl.value.shape}"
+    # print(f"{globl.shape=} {axial.shape=} {pQ.shape=}")
+    assert globl.is_valid(), globl.validation_problems()
     assert axial.is_valid(), axial.validation_problems()
 
     # global and axial need to be mostly consistent
@@ -123,10 +122,10 @@ def attention_RoPE_with_global(
         idx = np.r_[0, 2, 1, 0, 0, 1, 2, 0].reshape(2, 2, 2)
         # r will have shape ... S/T 2 K H 2 2
         r = jnp.moveaxis(rd[..., idx], -3, -5)
-        print(f"{p.shape=} {rd.shape=} {r.shape=}")
+        # print(f"{p.shape=} {rd.shape=} {r.shape=}")
         # r now will have the final target shape
         r = r[..., None, polarisation, :, :, :, :]
-        print(f"{polarisation.shape=} {r.shape=}")
+        # print(f"{polarisation.shape=} {r.shape=}")
         phi.append(r)
     rQ, rK = phi
 
@@ -139,20 +138,11 @@ def attention_RoPE_with_global(
     Ma = Na // K
     Mg = Ng // K
 
-    print(
-        "axial.query:",
-        show_dims(
-            "tfpmkhu",
-            axial.query.reshape(*axial.query.shape[:-6], Ta, F, P, Ma, K, H, 2),
-        ),
-    )
-    print("rQ:", show_dims("tfpkhuv", rQ))
     aQ = jnp.einsum(
         "...tfpmkhu, ...tfpkhuv -> ...tfpmkhv",
         axial.query.reshape(*axial.query.shape[:-6], Ta, F, P, Ma, K, H, 2),
         rQ,
     )
-    print("aQ:", show_dims("tfpmkhv", aQ))
 
     aK = jnp.einsum("...sfpkhu, ...sfpkhuv -> ...sfpkhv", axial.key, rK)
     aV = axial.value
@@ -161,10 +151,11 @@ def attention_RoPE_with_global(
     gK = globl.key
     gV = globl.value
 
-    print("aQ:", show_dims("tfpmkhv", aQ))
-    print("gQ:", show_dims("tfpmkhv", gQ))
-    print("aK:", show_dims("sfpkhv", aK))
-    print("gK:", show_dims("sfpkhv", gK))
+    if False:
+        print("aQ:", show_dims("tfpmkhv", aQ))
+        print("gQ:", show_dims("tfpmkhv", gQ))
+        print("aK:", show_dims("sfpkhv", aK))
+        print("gK:", show_dims("sfpkhv", gK))
 
     log_aa = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", aQ, aK)
     log_gg = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, gK)
@@ -174,19 +165,33 @@ def attention_RoPE_with_global(
     scale = 1 / np.sqrt(H)
     value = jnp.concatenate([gV, aV], axis=-5)
     msh = np.broadcast_shapes(
-        *[arg.mask.shape[:-1] for arg in [globl, axial] if arg.mask is not None]
+        *[arg.mask.shape[:-2] for arg in [globl, axial] if arg.mask is not None]
     )
-    # print(f"{msh=}")
-    # print("globl.mask:",show_dims("s",globl.mask))
-    # print("axial.mask:",show_dims("s",axial.mask))
+    if False:
+        print(f"{msh=}")
+        if globl.mask is not None:
+            print("globl.mask:", show_dims("sf", globl.mask))
+        else:
+            print(
+                "globl.mask:", show_dims("sf", jnp.ones(msh + globl.value.shape[-5:-3]))
+            )
+        print("axial.mask:", show_dims("sf", axial.mask))
     msk = (
         jnp.concatenate(
             [
-                jnp.ones(msh + arg.value.shape[-5:-4]) if arg.mask is None else arg.mask
+                jnp.swapaxes(
+                    (
+                        jnp.ones(msh + arg.value.shape[-5:-3])
+                        if arg.mask is None
+                        else arg.mask
+                    ),
+                    -1,
+                    -2,
+                )
                 for arg in [globl, axial]
             ],
             axis=-1,
-        )[..., None, None, None, None, None, :]
+        )[..., None, None, None, None, :]
         if msh
         else None
     )
@@ -195,7 +200,7 @@ def attention_RoPE_with_global(
         assert K * Ma == Na == Ng == K * Mg
         N = Na
         logits = jnp.block([[log_gg, log_ga], [log_ag, log_aa]])
-        print(f"{logits.shape=} ({show_dims("fpmkts", logits)}) {msk.shape=}")
+        # print(f"{logits.shape=} ({show_dims("fpmkts", logits)}) {msk.shape=} ({show_dims("fpmkts", msk)})")
         prob = jax.nn.softmax(logits * scale, axis=-1, where=msk)
         # print("P:",show_dims("pmkts",prob))
         # print("V:",show_dims("spkd",value))

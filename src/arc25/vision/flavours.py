@@ -313,7 +313,7 @@ class SymAttention(nnx.Module):
         K = self.num_groups
         N = self.num_heads
 
-        print(f"{batch=} {B=} {Y=} {X=} {F=} {R=} {N=} {K=} {H=} {D=}")
+        # print(f"{batch=} {B=} {Y=} {X=} {F=} {R=} {N=} {K=} {H=} {D=}")
 
         # `o` dimension: singular dimension to add as broadcast for "other" spatial axis
         xphi = jnp.einsum(
@@ -339,7 +339,7 @@ class SymAttention(nnx.Module):
         qkvi = {}
         for k, v in self.qkv.items():
             inp = getattr(features, k)
-            print(f"{k}: {inp.shapes} {v.in_features=} {v.out_features=}")
+            # print(f"{k}: {inp.shapes} {v.in_features=} {v.out_features=}")
             mix = mixmap.get(k)
             if mix is not None:
                 inp = attrs.evolve(inp, iso=jnp.concatenate([mix, inp.iso], axis=-1))
@@ -351,13 +351,13 @@ class SymAttention(nnx.Module):
             di = {}
             d = {}
             for kk, n in dict(Q=N * H * 2, K=K * H * 2, V=K * D).items():
-                d[kk] = dd = full[..., :n]
-                print(f"full {k}.{kk}.shape = {dd.shape}")
+                d[kk] = full[..., :n]
+                # print(f"full {k}.{kk}.shape = {d[kk].shape}")
                 full = full[..., n:]
                 if not self.hdrs_attend and k in {"rows", "cols"}:
                     continue
-                di[kk] = dd = iso[..., :n]
-                print(f"iso {k}.{kk}.shape = {dd.shape}")
+                di[kk] = iso[..., :n]
+                # print(f"iso {k}.{kk}.shape = {di[kk].shape}")
                 iso = iso[..., n:]
             assert not iso.size, f"{k}: {iso.shape=}"
             assert not full.size
@@ -438,7 +438,9 @@ class SymAttention(nnx.Module):
                     },
                     T=T,
                     S=S,
-                    mask=ohmsk[..., None, :],
+                    mask=jnp.tile(features.mask[..., None], (F,)).reshape(
+                        *batch, tB, S, tF
+                    ),
                 ),
                 pQ=phi[axis],
                 polarisation=polarisation,
@@ -459,8 +461,8 @@ class SymAttention(nnx.Module):
         for k in "QKV":
             g = getattr(qkvi.globl, k)[..., None, :, :]  # ... F C
             c = getattr(qkvi.cells, k).reshape(*batch, Y * X, F, -1)  # ... Y X F C
-            print(f"g: {show_dims("sfc", g)}")
-            print(f"c: {show_dims("sfc", c)}")
+            # print(f"g: {show_dims("sfc", g)}")
+            # print(f"c: {show_dims("sfc", c)}")
             v = jnp.concatenate([g, c], axis=-3)
             v = v.reshape(
                 *batch, Y * X + 1, F, *dict(Q=(N, 2 * H), K=(K, 2 * H), V=(K, D))[k]
@@ -523,9 +525,9 @@ class SymAttention(nnx.Module):
         assert globl2cell.shape[-3] == 1
         globl2cell = globl2cell.reshape(*batch, F, R, N * D)
 
-        print(f"{globl2celliso.shape=}")
-        print(f"{cells_iso.shape=}")
-        print(f"{globl_self.shape=}")
+        # print(f"{globl2celliso.shape=}")
+        # print(f"{cells_iso.shape=}")
+        # print(f"{globl_self.shape=}")
         tmp = dict(
             globl=attrs.evolve(
                 features.globl,
@@ -548,8 +550,9 @@ class SymAttention(nnx.Module):
             cells=attrs.evolve(features.cells, iso=cells_iso, full=cells, rep=orep),
         )
 
-        for k, v in tmp.items():
-            print(f"{k}: {v.iso.shape=} {v.full.shape=}")
+        if False:
+            for k, v in tmp.items():
+                print(f"{k}: {v.iso.shape=} {v.full.shape=}")
 
         # finally; output projection
         output = attrs.evolve(features, **{k: self.out[k](v) for k, v in tmp.items()})
