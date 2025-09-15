@@ -19,14 +19,14 @@ from flax.typing import (
 from jax import lax
 
 from ..dsl.types import Vector
+from ..lib.attrs import AttrsModel
 from ..symmetry import transform_vector
 from .linear import SymmetricLinear
 from .rope import QKV, attention_RoPE_with_global, show_dims
 from .symrep import Embedding, EmbeddingDims, SymRep
 
 
-@attrs.frozen
-class Features:
+class Features(AttrsModel):
     globl: Embedding  # dimensions (... F R? C); full representation
     rows: Embedding  # dimensions (... Y F R? C); representation (t,l,r,d)
     cols: Embedding  # dimensions (... X F R? C); representation (e,x,y,i)
@@ -36,6 +36,14 @@ class Features:
     rmsk: jt.Bool[jt.Array, "... Y"]
     cmsk: jt.Bool[jt.Array, "... X"]
     mask: jt.Bool[jt.Array, "... Y X"]
+
+    @property
+    def embeddings(self) -> dict[str, Embedding]:
+        return {
+            f.name: getattr(self, f.name)
+            for f in attrs.fields(type(self))
+            if f.type is Embedding
+        }
 
     @property
     def shapes(self):
@@ -56,6 +64,14 @@ class FeatureDim:
     # these are in fact optional, as we don't need them for any weight calculation
     flavours: int | None = None
     shape: tuple[int, int] | None = None
+
+    @property
+    def embeddings(self) -> dict[str, Embedding]:
+        return {
+            f.name: getattr(self, f.name)
+            for f in attrs.fields(type(self))
+            if f.type is EmbeddingDims
+        }
 
     def validity_problem(self):
         if not (

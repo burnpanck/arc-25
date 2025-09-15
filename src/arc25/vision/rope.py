@@ -6,9 +6,10 @@ import jax.numpy as jnp
 import jaxtyping as jt
 import numpy as np
 
+from ..lib.attrs import AttrsModel
 
-@attrs.frozen
-class QKV:
+
+class QKV(AttrsModel):
     query: jt.Float[jt.Array, "... T F P N H 2"]
     key: jt.Float[jt.Array, "... S F P K H 2"]
     value: jt.Float[jt.Array, "... S F P K D"]

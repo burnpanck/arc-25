@@ -89,10 +89,14 @@ class SymmetricLinear(nnx.Module):
             else nnx.data(None)
         )
         kernel_key = rngs.params()
-        self.full2full = nnx.Param(
-            kernel_init(
-                kernel_key, (in_features.full, R, out_features.full), param_dtype
+        self.full2full = (
+            nnx.Param(
+                kernel_init(
+                    kernel_key, (in_features.full, R, out_features.full), param_dtype
+                )
             )
+            if in_features.full and out_features.full
+            else nnx.data(None)
         )
 
         self.in_features = in_features
@@ -180,14 +184,7 @@ class SymmetricLinear(nnx.Module):
             inputs
         )
 
-        kernel_base = self.full2full.value
-
-        xi, xf, kernel_base = self.promote_dtype(
-            (inputs.iso, inputs.full, kernel_base), dtype=self.dtype
-        )
-
-        # TODO: should the be applied before promotion instead?
-        kernel = self._prepare_kernel(kernel_base)
+        xi, xf = self.promote_dtype((inputs.iso, inputs.full), dtype=self.dtype)
 
         xfa = jnp.mean(xf, axis=-2)
 
@@ -199,24 +196,39 @@ class SymmetricLinear(nnx.Module):
         ]
         yi = sum(yi) if yi else jnp.empty(xi.shape[:-1] + (of.iso,), xi.dtype)
 
-        # We use dot_general_kwargs for BC compatibility with
-        # user custom self.dot_general method which may not have
-        # preferred_element_type argument to avoid breaking
-        # existing code
-        dot_general_kwargs = {}
-        if False and self.preferred_element_type is not None:
-            dot_general_kwargs["preferred_element_type"] = self.preferred_element_type
-        yf = self.dot_general(
-            xf,
-            kernel,
-            (((xf.ndim - 2, xf.ndim - 1), (0, 1)), ((), ())),
-            precision=self.precision,
-            **dot_general_kwargs,
-        )
+        if self.full2full is not None:
+            # TODO: should the preparation be applied before promotion instead?
+            kernel_base = self.full2full.value
+            kernel_base = self.promote_dtype(kernel_base, dtype=self.dtype)
+            kernel = self._prepare_kernel(kernel_base)
+
+            # We use dot_general_kwargs for BC compatibility with
+            # user custom self.dot_general method which may not have
+            # preferred_element_type argument to avoid breaking
+            # existing code
+            dot_general_kwargs = {}
+            if False and self.preferred_element_type is not None:
+                dot_general_kwargs["preferred_element_type"] = (
+                    self.preferred_element_type
+                )
+            yf = self.dot_general(
+                xf,
+                kernel,
+                (((xf.ndim - 2, xf.ndim - 1), (0, 1)), ((), ())),
+                precision=self.precision,
+                **dot_general_kwargs,
+            )
+        else:
+            yf = None
         if self.iso2full is not None:
-            yfa = self.iso2full(xi)
-            yf = yf + yfa[..., None, :]
-        ret = Embedding(yi, yf, rep=of.rep)
+            yfa = self.iso2full(xi)[..., None, :]
+            if yf is not None:
+                yf = yf + yfa
+            else:
+                yf = jnp.tile(yfa, (of.rep.dim, 1))
+        elif yf is None:
+            yf = jnp.empty(xf.shape[:-2] + (of.rep.dim, 0), self.dtype)
+        ret = Embedding(iso=yi, full=yf, rep=of.rep)
         assert self.out_features.validate(ret), self.out_features.validation_problems(
             ret
         )

@@ -5,6 +5,7 @@ import attrs
 import jaxtyping as jt
 import numpy as np
 
+from ..lib.attrs import AttrsModel
 from ..symmetry import SymOp
 
 # we could have other symmetries
@@ -51,11 +52,18 @@ class SymRep:
 standard_rep = SymRep.from_seq(SymOp)
 
 
-@attrs.frozen
-class Embedding:
+class Embedding(AttrsModel):
     iso: jt.Float[jt.Array, "... Ci"]
     full: jt.Float[jt.Array, "... R Cf"]
-    rep: SymRep = standard_rep
+    rep: SymRep = attrs.field(default=standard_rep, metadata=dict(static=True))
+
+    @property
+    def embeddings(self) -> dict[str, jt.Float]:
+        return {
+            f.name: getattr(self, f.name)
+            for f in attrs.fields(type(self))
+            if f.type is Embedding
+        }
 
     @property
     def shapes(self):
@@ -71,6 +79,10 @@ class EmbeddingDims:
     iso: int  # isotropic values/trivial representation
     full: int  # full-dimensional representation
     rep: SymRep = standard_rep
+
+    @property
+    def embeddings(self) -> dict[str, jt.Float]:
+        return {k: getattr(self, k) for k in ["iso", "full"]}
 
     @property
     def dims(self):
