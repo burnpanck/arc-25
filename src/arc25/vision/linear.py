@@ -55,11 +55,23 @@ class SymmetricLinear(nnx.Module):
             promote_dtype=promote_dtype,
             # preferred_element_type = preferred_element_type,
         )
+        param_key = rngs.params()
+        self.iso_bias = (
+            nnx.Param(bias_init(param_key, (out_features.iso,), param_dtype))
+            if use_bias and out_features.iso
+            else nnx.data(None)
+        )
+        param_key = rngs.params()
+        self.full_bias = (
+            nnx.Param(bias_init(param_key, (out_features.full,), param_dtype))
+            if use_bias and out_features.full
+            else nnx.data(None)
+        )
         self.iso2iso = (
             nnx.Linear(
                 in_features.iso,
                 out_features.iso,
-                use_bias=use_bias,
+                use_bias=False,
                 **kw,
                 rngs=rngs,
             )
@@ -70,7 +82,7 @@ class SymmetricLinear(nnx.Module):
             nnx.Linear(
                 in_features.iso,
                 out_features.full,
-                use_bias=use_bias,
+                use_bias=False,
                 **kw,
                 rngs=rngs,
             )
@@ -185,6 +197,7 @@ class SymmetricLinear(nnx.Module):
         )
 
         xi, xf = self.promote_dtype((inputs.iso, inputs.full), dtype=self.dtype)
+        batch = jnp.broadcast_shapes(xi.shape[:-1], xf.shape[:-2])
 
         xfa = jnp.mean(xf, axis=-2)
 
@@ -193,13 +206,14 @@ class SymmetricLinear(nnx.Module):
             lin(inp)
             for lin, inp in [(self.iso2iso, xi), (self.full2iso, xfa)]
             if lin is not None
-        ]
-        yi = sum(yi) if yi else jnp.empty(xi.shape[:-1] + (of.iso,), xi.dtype)
+        ] + [b for b in [self.iso_bias] if b is not None]
+        yi = sum(yi) if yi else jnp.empty(batch + (of.iso,), xi.dtype)
+        yi = jnp.broadcast_to(yi, batch + (of.iso,))
 
         if self.full2full is not None:
             # TODO: should the preparation be applied before promotion instead?
             kernel_base = self.full2full.value
-            kernel_base = self.promote_dtype(kernel_base, dtype=self.dtype)
+            (kernel_base,) = self.promote_dtype((kernel_base,), dtype=self.dtype)
             kernel = self._prepare_kernel(kernel_base)
 
             # We use dot_general_kwargs for BC compatibility with
@@ -222,12 +236,12 @@ class SymmetricLinear(nnx.Module):
             yf = None
         if self.iso2full is not None:
             yfa = self.iso2full(xi)[..., None, :]
-            if yf is not None:
-                yf = yf + yfa
-            else:
-                yf = jnp.tile(yfa, (of.rep.dim, 1))
-        elif yf is None:
-            yf = jnp.empty(xf.shape[:-2] + (of.rep.dim, 0), self.dtype)
+        else:
+            yfa = None
+        yf = [v for v in [yf, yfa, self.full_bias] if v is not None]
+        yf = sum(yf) if yf else jnp.zeros(batch + (of.rep.dim, of.full), xf.dtype)
+        yf = jnp.broadcast_to(yf, batch + (of.rep.dim, of.full))
+
         ret = Embedding(iso=yi, full=yf, rep=of.rep)
         assert self.out_features.validate(ret), self.out_features.validation_problems(
             ret

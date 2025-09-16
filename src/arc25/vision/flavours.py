@@ -1,4 +1,6 @@
+import typing
 from types import SimpleNamespace
+from typing import Self
 
 import attrs
 import jax
@@ -20,7 +22,7 @@ from jax import lax
 
 from ..dsl.types import Vector
 from ..lib.attrs import AttrsModel
-from ..symmetry import transform_vector
+from ..symmetry import SymOp, transform_vector
 from .linear import SymmetricLinear
 from .rope import QKV, attention_RoPE_with_global, show_dims
 from .symrep import Embedding, EmbeddingDims, SymRep
@@ -45,6 +47,28 @@ class Features(AttrsModel):
             if f.type is Embedding
         }
 
+    def map_embeddings(
+        self, fun: typing.Callable[[Embedding], Embedding], *other: Self
+    ) -> Self:
+        return attrs.evolve(
+            self,
+            **{
+                k: fun(v, *[getattr(o, k) for o in other])
+                for k, v in self.embeddings.items()
+            },
+        )
+
+    def map_features(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self
+    ) -> Self:
+        return attrs.evolve(
+            self,
+            **{
+                k: v.map_features(fun, *[getattr(o, k) for o in other])
+                for k, v in self.embeddings.items()
+            },
+        )
+
     @property
     def shapes(self):
         return SimpleNamespace(
@@ -65,13 +89,66 @@ class FeatureDim:
     flavours: int | None = None
     shape: tuple[int, int] | None = None
 
+    @classmethod
+    def make(cls, *, iso=2, globl=None, hdrs=None, cells, **kw) -> Self:
+        if globl is None:
+            globl = cells
+        if hdrs is None:
+            hdrs = cells
+        return cls(
+            globl=EmbeddingDims(iso=iso * globl, full=globl),
+            rows=EmbeddingDims(
+                iso=iso * hdrs,
+                full=hdrs,
+                rep=SymRep.from_seq((SymOp.t, SymOp.l, SymOp.r, SymOp.d)),
+            ),
+            cols=EmbeddingDims(
+                iso=iso * hdrs,
+                full=hdrs,
+                rep=SymRep.from_seq((SymOp.e, SymOp.x, SymOp.y, SymOp.i)),
+            ),
+            cells=EmbeddingDims(iso=iso * cells, full=cells),
+            **kw,
+        )
+
     @property
-    def embeddings(self) -> dict[str, Embedding]:
+    def embeddings(self) -> dict[str, EmbeddingDims]:
         return {
             f.name: getattr(self, f.name)
             for f in attrs.fields(type(self))
             if f.type is EmbeddingDims
         }
+
+    def map_embeddings(
+        self,
+        fun: typing.Callable[[str, Embedding], typing.Any],
+        *other: Self,
+        cls: type = SimpleNamespace,
+    ) -> typing.Any:
+        return cls(
+            **{
+                k: fun(k, v, *[getattr(o, k) for o in other])
+                for k, v in self.embeddings.items()
+            }
+        )
+
+    def map_features(
+        self,
+        fun: typing.Callable[[str, str, jt.Float], jt.Float],
+        *other: Self,
+        cls: type = SimpleNamespace,
+        ecls: type = SimpleNamespace,
+    ) -> typing.Any:
+        return cls(
+            **{
+                k: v.map_features(
+                    lambda kk, *vv: fun(k, kk, *vv),  # noqa: B023
+                    *[getattr(o, k) for o in other],
+                    cls=ecls,
+                )
+                for k, v in self.embeddings.items()
+            }
+        )
 
     def validity_problem(self):
         if not (

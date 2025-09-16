@@ -1,5 +1,6 @@
 import typing
 from types import MappingProxyType, SimpleNamespace
+from typing import Self
 
 import attrs
 import jaxtyping as jt
@@ -58,12 +59,23 @@ class Embedding(AttrsModel):
     rep: SymRep = attrs.field(default=standard_rep, metadata=dict(static=True))
 
     @property
-    def embeddings(self) -> dict[str, jt.Float]:
+    def features(self) -> dict[str, jt.Float]:
         return {
             f.name: getattr(self, f.name)
             for f in attrs.fields(type(self))
             if f.type is Embedding
         }
+
+    def map_features(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self
+    ) -> Self:
+        return attrs.evolve(
+            self,
+            **{
+                k: fun(v, *[getattr(o, k) for o in other])
+                for k, v in self.features.items()
+            },
+        )
 
     @property
     def shapes(self):
@@ -81,8 +93,21 @@ class EmbeddingDims:
     rep: SymRep = standard_rep
 
     @property
-    def embeddings(self) -> dict[str, jt.Float]:
+    def features(self) -> dict[str, jt.Float]:
         return {k: getattr(self, k) for k in ["iso", "full"]}
+
+    def map_features(
+        self,
+        fun: typing.Callable[[str, int], typing.Any],
+        *other: Self,
+        cls: type = SimpleNamespace,
+    ) -> typing.Any:
+        return cls(
+            **{
+                k: fun(k, v, *[getattr(o, k) for o in other])
+                for k, v in self.features.items()
+            }
+        )
 
     @property
     def dims(self):
