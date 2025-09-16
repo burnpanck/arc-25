@@ -64,7 +64,7 @@ jobs:
       - name: Build dependency wheels from pdm.lock with pdm-wheel
         run: |
           # Production deps only:
-          pdm wheel -w wheelhouse --prod -v -G huggingface
+          pdm wheel -w wheelhouse --prod -v -G huggingface,vision
 
       - name: Resolve project metadata
         run: |

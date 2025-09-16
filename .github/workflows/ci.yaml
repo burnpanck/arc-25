@@ -56,7 +56,7 @@ jobs:
           pdm -V
 
       - name: Install (from lock) + test extras
-        run: pdm install --frozen-lockfile -G test,kaggle
+        run: pdm install --frozen-lockfile -G test,kaggle,vision
 
       - name: Run pytest
         run: pdm run pytest

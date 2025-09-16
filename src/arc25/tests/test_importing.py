@@ -19,6 +19,11 @@ def test_importing():
     except ImportError:
         skip.add("arc25.hf")
 
+    try:
+        import jax  # noqa
+    except ImportError:
+        skip.add("arc25.vision")
+
     done = set()
     failed = dict()
     while todo:

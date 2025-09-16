@@ -33,15 +33,16 @@ huggingface = [
     "bitsandbytes; sys_platform == 'linux'",
     "transformers>=4.55.0",
 ]
+vision = [
+    "jax",
+    "flax",
+    "jaxtyping",
+]
 
 [dependency-groups]
 test = [
     "pytest",
     "pytest-asyncio>=1.1.0",
-]
-build-explorer = [
-    "pyinstaller>=6.10",
-    "pillow",
 ]
 kaggle = [
     "kaggle>=1.7.4.5",
