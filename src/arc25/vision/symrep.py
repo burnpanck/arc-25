@@ -53,50 +53,50 @@ class SymRep:
 standard_rep = SymRep.from_seq(SymOp)
 
 
-class Embedding(AttrsModel):
-    iso: jt.Float[jt.Array, "... Ci"]
-    full: jt.Float[jt.Array, "... R Cf"]
+class SymDecomp(AttrsModel):
+    inv: jt.Float[jt.Array, "... Ci"]
+    equiv: jt.Float[jt.Array, "... R Cf"]
     rep: SymRep = attrs.field(default=standard_rep, metadata=dict(static=True))
 
     @property
-    def features(self) -> dict[str, jt.Float]:
+    def representations(self) -> dict[str, jt.Float]:
         return {
             f.name: getattr(self, f.name)
             for f in attrs.fields(type(self))
-            if f.type is Embedding
+            if f.type is SymDecomp
         }
 
-    def map_features(
+    def map_representations(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self
     ) -> Self:
         return attrs.evolve(
             self,
             **{
                 k: fun(v, *[getattr(o, k) for o in other])
-                for k, v in self.features.items()
+                for k, v in self.representations.items()
             },
         )
 
     @property
     def shapes(self):
         return SimpleNamespace(
-            iso=self.iso.shape,
-            full=self.full.shape,
+            inv=self.inv.shape,
+            equiv=self.equiv.shape,
             rep=self.rep.dim,
         )
 
 
 @attrs.frozen
-class EmbeddingDims:
-    iso: int  # isotropic values/trivial representation
-    full: int  # full-dimensional representation
+class SymDecompDims:
+    inv: int  # invariant under symmetry operations
+    equiv: int  # equivariant under symmetry operations
     rep: SymRep = standard_rep
 
     @property
-    def features(self) -> dict[str, jt.Float]:
-        return {k: getattr(self, k) for k in ["iso", "full"]}
+    def representations(self) -> dict[str, jt.Float]:
+        return {k: getattr(self, k) for k in ["inv", "equiv"]}
 
-    def map_features(
+    def map_representations(
         self,
         fun: typing.Callable[[str, int], typing.Any],
         *other: Self,
@@ -105,42 +105,42 @@ class EmbeddingDims:
         return cls(
             **{
                 k: fun(k, v, *[getattr(o, k) for o in other])
-                for k, v in self.features.items()
+                for k, v in self.representations.items()
             }
         )
 
     @property
     def dims(self):
         return SimpleNamespace(
-            iso=self.iso,
-            full=self.full,
+            inv=self.inv,
+            equiv=self.equiv,
             rep=self.rep.dim,
         )
 
-    def validation_problems(self, embedding: Embedding) -> bool:
+    def validation_problems(self, embedding: SymDecomp) -> bool:
         if not self.rep.is_valid():
             return "representation"
         try:
             np.broadcast_shapes(
-                embedding.iso.shape[:-1],
-                embedding.full.shape[:-2],
+                embedding.inv.shape[:-1],
+                embedding.equiv.shape[:-2],
             )
         except ValueError:
             return "batch mismatch"
         if self.rep != embedding.rep:
             return "rep mismatch"
-        if self.iso != embedding.iso.shape[-1]:
-            return "iso dim mismatch"
-        if (self.rep.dim, self.full) != embedding.full.shape[-2:]:
-            return f"full dim mismatch {(self.rep.dim, self.full)} <> {embedding.full.shape}"
+        if self.inv != embedding.inv.shape[-1]:
+            return "inv dim mismatch"
+        if (self.rep.dim, self.equiv) != embedding.equiv.shape[-2:]:
+            return f"equiv dim mismatch {(self.rep.dim, self.equiv)} <> {embedding.equiv.shape}"
 
-    def validate(self, embedding: Embedding) -> bool:
+    def validate(self, embedding: SymDecomp) -> bool:
         return not self.validation_problems(embedding)
 
-    def make_empty(self, batch: tuple[int, ...] = ()) -> Embedding:
-        ret = Embedding(
-            iso=np.empty(batch + (self.iso,)),
-            full=np.empty(batch + (self.rep.dim, self.full)),
+    def make_empty(self, batch: tuple[int, ...] = ()) -> SymDecomp:
+        ret = SymDecomp(
+            inv=np.empty(batch + (self.inv,)),
+            equiv=np.empty(batch + (self.rep.dim, self.equiv)),
             rep=self.rep,
         )
         assert self.validate(ret)

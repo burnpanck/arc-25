@@ -80,7 +80,7 @@ def show_dims(dimnames: str, obj) -> str:
 
 
 def attention_RoPE_with_global(
-    globl: QKV,
+    context: QKV,
     axial: QKV,
     pQ: jt.Float[jt.Array, "... T K H"],
     pK: jt.Float[jt.Array, "... S K H"] | None = None,
@@ -88,13 +88,13 @@ def attention_RoPE_with_global(
     # this one is usually static; values are 0: normal, 1: reverse
     polarisation: jt.Int[jt.Array, " P"],
 ):
-    # print(f"{globl.shape=} {axial.shape=} {pQ.shape=}")
-    assert globl.is_valid(), globl.validation_problems()
+    # print(f"{context.shape=} {axial.shape=} {pQ.shape=}")
+    assert context.is_valid(), context.validation_problems()
     assert axial.is_valid(), axial.validation_problems()
 
     # global and axial need to be mostly consistent
     sa = axial.shape
-    sg = globl.shape
+    sg = context.shape
     for k, v in vars(sa).items():
         if k in {"S", "T"}:
             continue
@@ -131,9 +131,9 @@ def attention_RoPE_with_global(
     rQ, rK = phi
 
     Sa, F, P, K, H = axial.key.shape[-6:-1]
-    Sg, _, _, D = globl.value.shape[-4:]
+    Sg, _, _, D = context.value.shape[-4:]
     Ta, _, _, Na = axial.query.shape[-6:-2]
-    Tg, _, _, Ng = globl.query.shape[-6:-2]
+    Tg, _, _, Ng = context.query.shape[-6:-2]
     assert not Na % K
     assert not Ng % K
     Ma = Na // K
@@ -148,9 +148,9 @@ def attention_RoPE_with_global(
     aK = jnp.einsum("...sfpkhu, ...sfpkhuv -> ...sfpkhv", axial.key, rK)
     aV = axial.value
 
-    gQ = globl.query.reshape(*globl.query.shape[:-6], Tg, F, P, Mg, K, H, 2)
-    gK = globl.key
-    gV = globl.value
+    gQ = context.query.reshape(*context.query.shape[:-6], Tg, F, P, Mg, K, H, 2)
+    gK = context.key
+    gV = context.value
 
     if False:
         print("aQ:", show_dims("tfpmkhv", aQ))
@@ -166,15 +166,16 @@ def attention_RoPE_with_global(
     scale = 1 / np.sqrt(H)
     value = jnp.concatenate([gV, aV], axis=-5)
     msh = np.broadcast_shapes(
-        *[arg.mask.shape[:-2] for arg in [globl, axial] if arg.mask is not None]
+        *[arg.mask.shape[:-2] for arg in [context, axial] if arg.mask is not None]
     )
     if False:
         print(f"{msh=}")
-        if globl.mask is not None:
-            print("globl.mask:", show_dims("sf", globl.mask))
+        if context.mask is not None:
+            print("context.mask:", show_dims("sf", context.mask))
         else:
             print(
-                "globl.mask:", show_dims("sf", jnp.ones(msh + globl.value.shape[-5:-3]))
+                "context.mask:",
+                show_dims("sf", jnp.ones(msh + context.value.shape[-5:-3])),
             )
         print("axial.mask:", show_dims("sf", axial.mask))
     msk = (
@@ -189,7 +190,7 @@ def attention_RoPE_with_global(
                     -1,
                     -2,
                 )
-                for arg in [globl, axial]
+                for arg in [context, axial]
             ],
             axis=-1,
         )[..., None, None, None, None, :]
@@ -210,7 +211,7 @@ def attention_RoPE_with_global(
         result = result.reshape(*result.shape[:-3], -1, D)
         # print(f"rrs: {show_dims("tpnd",result)}, {Tg+Ta=} {P=} {N=} {D=}")
         assert result.shape[-5:] == (Tg + Ta, F, P, N, D)
-        globl = result[..., :Tg, :, :, :, :]
+        context = result[..., :Tg, :, :, :, :]
         axial = result[..., Tg:, :, :, :, :]
     else:
         res = []
@@ -220,5 +221,5 @@ def attention_RoPE_with_global(
             result = jnp.einsum("...fpmkts,...sfpkd -> ...tfpmkd", prob, value)
             result = result.reshape(*result.shape[:-3], -1, D)
             res.append(result)
-        globl, axial = res
-    return globl, axial
+        context, axial = res
+    return context, axial

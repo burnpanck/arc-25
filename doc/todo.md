@@ -1,4 +1,10 @@
 # TODO
+
+## vision
+- implement attention dropout `FieldAttention`
+- try symmetry-preserving dropout?
+
+## reasoning agent
 - Implement solution code outputing two alternate solutions
   - re-write some training example solutions to make use of that (horizontal/vertical are go-to's)
 - Implement managing multiple alternate solutions in the DB and the explorer

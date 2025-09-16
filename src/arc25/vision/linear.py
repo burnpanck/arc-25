@@ -15,7 +15,7 @@ from flax.typing import (
 )
 from jax import lax
 
-from .symrep import Embedding, EmbeddingDims
+from .symrep import SymDecomp, SymDecompDims
 
 
 class SymmetricLinear(nnx.Module):
@@ -27,8 +27,8 @@ class SymmetricLinear(nnx.Module):
 
     def __init__(
         self,
-        in_features: EmbeddingDims,
-        out_features: EmbeddingDims,
+        in_features: SymDecompDims,
+        out_features: SymDecompDims,
         *,
         constraint_mode: typing.Literal[
             "gather-then-concat", "concat-then-gather"
@@ -56,58 +56,58 @@ class SymmetricLinear(nnx.Module):
             # preferred_element_type = preferred_element_type,
         )
         param_key = rngs.params()
-        self.iso_bias = (
-            nnx.Param(bias_init(param_key, (out_features.iso,), param_dtype))
-            if use_bias and out_features.iso
+        self.inv_bias = (
+            nnx.Param(bias_init(param_key, (out_features.inv,), param_dtype))
+            if use_bias and out_features.inv
             else nnx.data(None)
         )
         param_key = rngs.params()
-        self.full_bias = (
-            nnx.Param(bias_init(param_key, (out_features.full,), param_dtype))
-            if use_bias and out_features.full
+        self.equiv_bias = (
+            nnx.Param(bias_init(param_key, (out_features.equiv,), param_dtype))
+            if use_bias and out_features.equiv
             else nnx.data(None)
         )
-        self.iso2iso = (
+        self.inv2inv = (
             nnx.Linear(
-                in_features.iso,
-                out_features.iso,
+                in_features.inv,
+                out_features.inv,
                 use_bias=False,
                 **kw,
                 rngs=rngs,
             )
-            if in_features.iso and out_features.iso
+            if in_features.inv and out_features.inv
             else nnx.data(None)
         )
-        self.iso2full = (
+        self.inv2equiv = (
             nnx.Linear(
-                in_features.iso,
-                out_features.full,
+                in_features.inv,
+                out_features.equiv,
                 use_bias=False,
                 **kw,
                 rngs=rngs,
             )
-            if in_features.iso and out_features.full
+            if in_features.inv and out_features.equiv
             else nnx.data(None)
         )
-        self.full2iso = (
+        self.equiv2inv = (
             nnx.Linear(
-                in_features.full,
-                out_features.iso,
+                in_features.equiv,
+                out_features.inv,
                 use_bias=False,
                 **kw,
                 rngs=rngs,
             )
-            if in_features.full and out_features.iso
+            if in_features.equiv and out_features.inv
             else nnx.data(None)
         )
         kernel_key = rngs.params()
-        self.full2full = (
+        self.equiv2equiv = (
             nnx.Param(
                 kernel_init(
-                    kernel_key, (in_features.full, R, out_features.full), param_dtype
+                    kernel_key, (in_features.equiv, R, out_features.equiv), param_dtype
                 )
             )
-            if in_features.full and out_features.full
+            if in_features.equiv and out_features.equiv
             else nnx.data(None)
         )
 
@@ -146,9 +146,9 @@ class SymmetricLinear(nnx.Module):
         ), "Not sure if the representation logic below is correct for representation changes"
 
         R = ri.dim  # noqa: F841
-        C = fi.full  # noqa: F841
+        C = fi.equiv  # noqa: F841
         Rp = ro.dim  # noqa: F841
-        Cp = fo.full  # noqa: F841
+        Cp = fo.equiv  # noqa: F841
 
         mode = self.constraint_mode
 
@@ -183,7 +183,7 @@ class SymmetricLinear(nnx.Module):
 
         return ret
 
-    def __call__(self, inputs: Embedding) -> Embedding:
+    def __call__(self, inputs: SymDecomp) -> SymDecomp:
         """Applies a linear transformation to the inputs along the last dimension.
 
         Args:
@@ -196,7 +196,7 @@ class SymmetricLinear(nnx.Module):
             inputs
         )
 
-        xi, xf = self.promote_dtype((inputs.iso, inputs.full), dtype=self.dtype)
+        xi, xf = self.promote_dtype((inputs.inv, inputs.equiv), dtype=self.dtype)
         batch = jnp.broadcast_shapes(xi.shape[:-1], xf.shape[:-2])
 
         xfa = jnp.mean(xf, axis=-2)
@@ -204,15 +204,15 @@ class SymmetricLinear(nnx.Module):
         of = self.out_features
         yi = [
             lin(inp)
-            for lin, inp in [(self.iso2iso, xi), (self.full2iso, xfa)]
+            for lin, inp in [(self.inv2inv, xi), (self.equiv2inv, xfa)]
             if lin is not None
-        ] + [b for b in [self.iso_bias] if b is not None]
-        yi = sum(yi) if yi else jnp.empty(batch + (of.iso,), xi.dtype)
-        yi = jnp.broadcast_to(yi, batch + (of.iso,))
+        ] + [b for b in [self.inv_bias] if b is not None]
+        yi = sum(yi) if yi else jnp.empty(batch + (of.inv,), xi.dtype)
+        yi = jnp.broadcast_to(yi, batch + (of.inv,))
 
-        if self.full2full is not None:
+        if self.equiv2equiv is not None:
             # TODO: should the preparation be applied before promotion instead?
-            kernel_base = self.full2full.value
+            kernel_base = self.equiv2equiv.value
             (kernel_base,) = self.promote_dtype((kernel_base,), dtype=self.dtype)
             kernel = self._prepare_kernel(kernel_base)
 
@@ -234,15 +234,15 @@ class SymmetricLinear(nnx.Module):
             )
         else:
             yf = None
-        if self.iso2full is not None:
-            yfa = self.iso2full(xi)[..., None, :]
+        if self.inv2equiv is not None:
+            yfa = self.inv2equiv(xi)[..., None, :]
         else:
             yfa = None
-        yf = [v for v in [yf, yfa, self.full_bias] if v is not None]
-        yf = sum(yf) if yf else jnp.zeros(batch + (of.rep.dim, of.full), xf.dtype)
-        yf = jnp.broadcast_to(yf, batch + (of.rep.dim, of.full))
+        yf = [v for v in [yf, yfa, self.equiv_bias] if v is not None]
+        yf = sum(yf) if yf else jnp.zeros(batch + (of.rep.dim, of.equiv), xf.dtype)
+        yf = jnp.broadcast_to(yf, batch + (of.rep.dim, of.equiv))
 
-        ret = Embedding(iso=yi, full=yf, rep=of.rep)
+        ret = SymDecomp(inv=yi, equiv=yf, rep=of.rep)
         assert self.out_features.validate(ret), self.out_features.validation_problems(
             ret
         )
