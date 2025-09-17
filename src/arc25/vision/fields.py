@@ -235,7 +235,7 @@ class FieldDims:
             flavours = self.flavours
             assert flavours is not None
         else:
-            assert self.n_flavours is None or flavours == self.flavours
+            assert self.flavours is None or flavours == self.flavours
         Y, X = shape
         F = flavours
         ret = Field(

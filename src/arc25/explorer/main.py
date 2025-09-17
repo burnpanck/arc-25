@@ -366,7 +366,7 @@ def run(**kw):
         log.setLevel(logging.WARNING)
 
     logger.info(
-        f"arc25-explorer v{importlib.metadata.version("yde-arc25")} is starting"
+        f"arc25-explorer v{importlib.metadata.version('yde-arc25')} is starting"
     )
     logger.debug(f"Default location of app-config.yaml: {apd.user_config_dir}")
     logger.debug(f"Location of logs: {apd.user_log_dir}")

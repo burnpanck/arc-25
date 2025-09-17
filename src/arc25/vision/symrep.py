@@ -60,11 +60,7 @@ class SymDecomp(AttrsModel):
 
     @property
     def representations(self) -> dict[str, jt.Float]:
-        return {
-            f.name: getattr(self, f.name)
-            for f in attrs.fields(type(self))
-            if f.type is SymDecomp
-        }
+        return {k: getattr(self, k) for k in ["inv", "equiv"]}
 
     def map_representations(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self

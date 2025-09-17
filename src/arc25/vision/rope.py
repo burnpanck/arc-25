@@ -61,7 +61,9 @@ class QKV(AttrsModel):
                 ]
             )
         except ValueError:
-            return f"batch: {' '.join(f"{k}:{getattr(self, k).shape[:-n]}" for k, n in non_batch_dims.items())}"
+            return "batch: " + " ".join(
+                f"{k}:{getattr(self, k).shape[:-n]}" for k, n in non_batch_dims.items()
+            )
 
     def is_valid(self):
         return not self.validation_problems()
@@ -76,7 +78,8 @@ def show_dims(dimnames: str, obj) -> str:
     ret = [str(n) for n in batch] + [
         f"{k}={v}" for k, v in zip(dimnames, shape[-len(dimnames) :])
     ]
-    return f"({",".join(ret)})"
+    ret = ",".join(ret)
+    return f"({ret})"
 
 
 def attention_RoPE_with_global(
