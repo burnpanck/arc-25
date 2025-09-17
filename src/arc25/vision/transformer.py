@@ -8,6 +8,52 @@ from .fields import Field, FieldDims
 from .linear import SymmetricLinear
 
 
+class FieldMLP(nnx.Module):
+    def __init__(
+        self,
+        hidden_size: FieldDims,
+        *,
+        mlp_width_factor: float,
+        dropout_rate: float = 0.0,
+        rngs: nnx.Rngs,
+    ):
+        def make_linear(in_feat: FieldDims, out_feat: FieldDims, **kw):
+            return in_feat.map_projections(
+                lambda k, v, o: SymmetricLinear(v, o, rngs=rngs),
+                out_feat,
+            )
+
+        mlp_dim = attrs.evolve(
+            hidden_size,
+            **{
+                k: attrs.evolve(
+                    v,
+                    **{
+                        kk: int(round(vv * mlp_width_factor))
+                        for kk, vv in v.representations.items()
+                    },
+                )
+                for k, v in hidden_size.projections.items()
+            },
+        )
+
+        self.widen = make_linear(hidden_size, mlp_dim)
+        self.activation = nnx.gelu
+        self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
+        self.narrow = make_linear(mlp_dim, hidden_size)
+
+    def __call__(self, x: Field) -> Field:
+        def apply(inp, fun, *other):
+            return fun(inp, *other)
+
+        x = x.map_projections(apply, self.widen)
+        x = x.map_representations(self.activation)
+        x = x.map_representations(self.dropout)
+        x = x.map_projections(apply, self.narrow)
+        x = x.map_representations(self.dropout)
+        return x
+
+
 class FieldTransformer(nnx.Module):
     def __init__(
         self,
@@ -23,12 +69,6 @@ class FieldTransformer(nnx.Module):
         def norms(features: FieldDims = hidden_size, **kw):
             return features.map_representations(
                 lambda k, kk, v: nnx.LayerNorm(v, rngs=rngs, **kw)
-            )
-
-        def make_linear(in_feat: FieldDims, out_feat: FieldDims, **kw):
-            return in_feat.map_projections(
-                lambda k, v, o: SymmetricLinear(v, o, rngs=rngs),
-                out_feat,
             )
 
         # First layer normalization using `flax.nnx.LayerNorm`
@@ -49,28 +89,13 @@ class FieldTransformer(nnx.Module):
         # Second layer normalization using `flax.nnx.LayerNorm`.
         self.norm2 = norms()
 
-        mlp_dim = attrs.evolve(
-            hidden_size,
-            **{
-                k: attrs.evolve(
-                    v,
-                    **{
-                        kk: int(round(vv * mlp_width_factor))
-                        for kk, vv in v.representations.items()
-                    },
-                )
-                for k, v in hidden_size.projections.items()
-            },
-        )
-
         # The MLP for point-wise feedforward (using `flax.nnx.Sequential`, `flax.nnx.Linear, flax.nnx.Dropout`)
         # with the GeLU activation function (`flax.nnx.gelu`).
-        self.mlp = SimpleNamespace(
-            widen=make_linear(hidden_size, mlp_dim),
-            activation=nnx.gelu,
-            pre_dropout=nnx.Dropout(dropout_rate, rngs=rngs),
-            narrow=make_linear(mlp_dim, hidden_size),
-            post_dropout=nnx.Dropout(dropout_rate, rngs=rngs),
+        self.mlp = FieldMLP(
+            hidden_size=hidden_size,
+            mlp_width_factor=mlp_width_factor,
+            dropout_rate=dropout_rate,
+            rngs=rngs,
         )
 
     def __call__(self, x: Field) -> Field:
@@ -84,10 +109,6 @@ class FieldTransformer(nnx.Module):
 
         # The feed-forward network with layer normalization.
         ax = x.map_representations(apply, self.norm2)
-        ax = ax.map_projections(apply, self.mlp.widen)
-        ax = ax.map_representations(self.mlp.activation)
-        ax = ax.map_representations(self.mlp.pre_dropout)
-        ax = ax.map_projections(apply, self.mlp.narrow)
-        ax = ax.map_representations(self.mlp.post_dropout)
+        ax = self.mlp(ax)
         x = x.map_representations(lambda a, b: a + b, ax)
         return x
