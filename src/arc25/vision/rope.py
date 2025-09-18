@@ -5,6 +5,12 @@ import jax.nn
 import jax.numpy as jnp
 import jaxtyping as jt
 import numpy as np
+from flax.nnx.nn import dtypes
+from flax.typing import (
+    Dtype,
+    PrecisionLike,
+    PromoteDtypeFn,
+)
 
 from ..lib.attrs import AttrsModel
 
@@ -90,7 +96,7 @@ def attention_RoPE_with_global(
     *,
     # this one is usually static; values are 0: normal, 1: reverse
     polarisation: jt.Int[jt.Array, " P"],
-    # TODO: precision -> goes into einsum
+    precision: PrecisionLike = None,
 ):
     # print(f"{context.shape=} {axial.shape=} {pQ.shape=}")
     assert context.is_valid(), context.validation_problems()
@@ -143,18 +149,19 @@ def attention_RoPE_with_global(
     Ma = Na // K
     Mg = Ng // K
 
-    aQ = jnp.einsum(
-        "...tfpmkhu, ...tfpkhuv -> ...tfpmkhv",
-        axial.query.reshape(*axial.query.shape[:-6], Ta, F, P, Ma, K, H, 2),
-        rQ,
-    )
-
-    aK = jnp.einsum("...sfpkhu, ...sfpkhuv -> ...sfpkhv", axial.key, rK)
+    aQ = axial.query.reshape(*axial.query.shape[:-6], Ta, F, P, Ma, K, H, 2)
+    aK = axial.key
     aV = axial.value
 
     gQ = context.query.reshape(*context.query.shape[:-6], Tg, F, P, Mg, K, H, 2)
     gK = context.key
     gV = context.value
+
+    raQ = jnp.einsum(
+        "...tfpmkhu, ...tfpkhuv -> ...tfpmkhv", aQ, rQ, precision=precision
+    )
+    raK = jnp.einsum("...sfpkhu, ...sfpkhuv -> ...sfpkhv", aK, rK, precision=precision)
+    aV = axial.value
 
     if False:
         print("aQ:", show_dims("tfpmkhv", aQ))
@@ -162,10 +169,18 @@ def attention_RoPE_with_global(
         print("aK:", show_dims("sfpkhv", aK))
         print("gK:", show_dims("sfpkhv", gK))
 
-    log_aa = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", aQ, aK)
-    log_gg = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, gK)
-    log_ga = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, aK)
-    log_ag = jnp.einsum("...tfpmkhv,...sfpkhv -> ...fpmkts", aQ, gK)
+    log_aa = jnp.einsum(
+        "...tfpmkhv,...sfpkhv -> ...fpmkts", raQ, raK, precision=precision
+    )
+    log_gg = jnp.einsum(
+        "...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, gK, precision=precision
+    )
+    log_ga = jnp.einsum(
+        "...tfpmkhv,...sfpkhv -> ...fpmkts", gQ, aK, precision=precision
+    )
+    log_ag = jnp.einsum(
+        "...tfpmkhv,...sfpkhv -> ...fpmkts", aQ, gK, precision=precision
+    )
 
     scale = 1 / np.sqrt(H)
     value = jnp.concatenate([gV, aV], axis=-5)
@@ -208,10 +223,12 @@ def attention_RoPE_with_global(
         N = Na
         logits = jnp.block([[log_gg, log_ga], [log_ag, log_aa]])
         # print(f"{logits.shape=} ({show_dims("fpmkts", logits)}) {msk.shape=} ({show_dims("fpmkts", msk)})")
-        prob = jax.nn.softmax(logits * scale, axis=-1, where=msk)
+        prob = jax.nn.softmax(logits * scale, axis=-1, where=msk).astype(value.dtype)
         # print("P:",show_dims("pmkts",prob))
         # print("V:",show_dims("spkd",value))
-        result = jnp.einsum("...fpmkts,...sfpkd -> ...tfpmkd", prob, value)
+        result = jnp.einsum(
+            "...fpmkts,...sfpkd -> ...tfpmkd", prob, value, precision=precision
+        )
         # print("result:",show_dims("tpmkd",result))
         result = result.reshape(*result.shape[:-3], -1, D)
         # print(f"rrs: {show_dims("tpnd",result)}, {Tg+Ta=} {P=} {N=} {D=}")
@@ -222,8 +239,12 @@ def attention_RoPE_with_global(
         res = []
         for logits in [[log_gg, log_ga], [log_ag, log_aa]]:
             logits = jnp.concatenate(logits, axis=-1)
-            prob = jax.nn.softmax(logits * scale, axis=-1, where=msk)
-            result = jnp.einsum("...fpmkts,...sfpkd -> ...tfpmkd", prob, value)
+            prob = jax.nn.softmax(logits * scale, axis=-1, where=msk).astype(
+                value.dtype
+            )
+            result = jnp.einsum(
+                "...fpmkts,...sfpkd -> ...tfpmkd", prob, value, precision=precision
+            )
             result = result.reshape(*result.shape[:-3], -1, D)
             res.append(result)
         context, axial = res

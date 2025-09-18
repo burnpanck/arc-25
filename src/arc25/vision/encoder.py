@@ -5,6 +5,11 @@ import jax.numpy as jnp
 import jaxtyping as jt
 import numpy as np
 from flax import nnx
+from flax.typing import (
+    Dtype,
+    Initializer,
+    PrecisionLike,
+)
 
 from .fields import Field, FieldDims
 from .linear import SymmetricLinear
@@ -18,7 +23,9 @@ class ARCEncoder(nnx.Module):
         *,
         num_colours: int = 10,
         num_layers: int = 12,
-        dtype: typing.Any | None = None,
+        dtype: Dtype | None = None,
+        param_dtype: Dtype = jnp.float32,
+        precision: PrecisionLike = None,
         hidden_size: FieldDims,
         mha_features: int,
         mlp_width_factor: float,
@@ -29,6 +36,8 @@ class ARCEncoder(nnx.Module):
     ):
         self.num_colours = num_colours
         self.dtype = dtype
+        self.param_dtype = param_dtype
+        self.precision = precision
         self.hidden_size = hidden_size
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
@@ -37,6 +46,9 @@ class ARCEncoder(nnx.Module):
             lambda k, v: SymmetricLinear(
                 attrs.evolve(v, inv=dict(context=2, cells=2).get(k, 0), equiv=0),
                 v,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                precision=precision,
                 rngs=rngs,
             )
         )
@@ -49,6 +61,10 @@ class ARCEncoder(nnx.Module):
                     num_heads=num_heads,
                     num_groups=num_groups,
                     dropout_rate=dropout_rate,
+                    dtype=dtype,
+                    param_dtype=param_dtype,
+                    attention_dtype=jnp.promote_types(dtype, jnp.float32),
+                    precision=precision,
                     rngs=rngs,
                 )
                 for i in range(num_layers)
@@ -57,7 +73,13 @@ class ARCEncoder(nnx.Module):
 
         # Layer normalization with `flax.nnx.LayerNorm`.
         self.final_norm = hidden_size.map_representations(
-            lambda k, kk, v: nnx.LayerNorm(v, rngs=rngs)
+            lambda k, kk, v: nnx.LayerNorm(
+                v,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                precision=precision,
+                rngs=rngs,
+            )
         )
 
     def __call__(
@@ -80,7 +102,8 @@ class ARCEncoder(nnx.Module):
         # Process the embedded patches through the transformer encoder layers.
         x = self.encoder(embedding)
         # Apply final layer normalization
-        return x.map_representations(lambda v, f: f(v), self.final_norm)
+        y = x.map_representations(lambda v, f: f(v), self.final_norm)
+        return y
 
     def encode(
         self, x: jt.Int[jt.Array, "... Y X"], size: jt.Int[jt.Array, "... 2"]
@@ -91,7 +114,7 @@ class ARCEncoder(nnx.Module):
         F = Fc + 1
         R = standard_rep.dim
 
-        dtype = self.dtype
+        dtype = self.dtype or jnp.float32
 
         x = x[..., :, :, None]
         sY = size[..., 0, None]
@@ -137,7 +160,7 @@ class ARCEncoder(nnx.Module):
             ],
             axis=-2,
         )
-        context = jnp.concatenate([special_ind, prevalence_ind], axis=-1)
+        context = jnp.concatenate([special_ind, prevalence_ind], dtype=dtype, axis=-1)
 
         presence_ind = jnp.concatenate(
             [
@@ -155,7 +178,7 @@ class ARCEncoder(nnx.Module):
             ],
             axis=-2,
         )
-        cells = jnp.concatenate([presence_ind, intensity_ind], axis=-1)
+        cells = jnp.concatenate([presence_ind, intensity_ind], dtype=dtype, axis=-1)
         # print(f"{batch=} {context.shape=} {cells.shape=}")
 
         rrep = self.hidden_size.rows.rep

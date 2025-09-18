@@ -94,7 +94,8 @@ class FieldAttention(nnx.Module):
         num_groups: int | None = None,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
-        broadcast_dropout: bool = True,
+        attention_dtype: Dtype | None = None,
+        # broadcast_dropout: bool = True,
         dropout_rate: float = 0.0,
         deterministic: bool = False,
         precision: PrecisionLike = None,
@@ -124,6 +125,7 @@ class FieldAttention(nnx.Module):
         self.num_heads = num_heads
         self.num_groups = num_groups
         self.dtype = dtype
+        self.attention_dtype = attention_dtype
         self.param_dtype = param_dtype
 
         # frequency is both per group, per features, and linear in both absolute and relative
@@ -208,12 +210,28 @@ class FieldAttention(nnx.Module):
 
         # print(f"{batch=} {B=} {Y=} {X=} {F=} {R=} {N=} {K=} {H=} {D=}")
 
+        inputs = [r for p in features.projections for r in p.representations]
+        dtype = nnx.nn.dtypes.canonicalize_dtypes(*inputs, dtype=self.dtype)
+        attention_dtype = nnx.nn.dtypes.canonicalize_dtypes(
+            *inputs, dtype=self.attention_dtype
+        )
+        attention_dtype = jnp.promote_types(attention_dtype, jnp.float32)
+
+        freqs = (self.freqs).astype(dtype)
+        precision = self.precision
+
         # `o` dimension: singular dimension to add as broadcast for "other" spatial axis
         xphi = jnp.einsum(
-            "...oxa,kha -> ...oxkh", features.xpos[..., None, :, :], self.freqs
+            "...oxa,kha -> ...oxkh",
+            features.xpos[..., None, :, :].astype(dtype),
+            freqs,
+            precision=precision,
         )
         yphi = jnp.einsum(
-            "...oya,kha -> ...oykh", features.ypos[..., None, :, :], self.freqs
+            "...oya,kha -> ...oykh",
+            features.ypos[..., None, :, :].astype(dtype),
+            freqs,
+            precision=precision,
         )
         phi = [yphi, xphi]
 
@@ -244,12 +262,16 @@ class FieldAttention(nnx.Module):
             di = {}
             d = {}
             for kk, n in dict(Q=N * H * 2, K=K * H * 2, V=K * D).items():
-                d[kk] = equiv[..., :n]
+                if kk in "QK":
+                    maybe_cast = lambda v: v.astype(attention_dtype)
+                else:
+                    maybe_cast = lambda v: v
+                d[kk] = maybe_cast(equiv[..., :n])
                 # print(f"equiv {k}.{kk}.shape = {d[kk].shape}")
                 equiv = equiv[..., n:]
                 if not self.hdrs_attend and k in {"rows", "cols"}:
                     continue
-                di[kk] = inv[..., :n]
+                di[kk] = maybe_cast(inv[..., :n])
                 # print(f"inv {k}.{kk}.shape = {di[kk].shape}")
                 inv = inv[..., n:]
             assert not inv.size, f"{k}: {inv.shape=}"
@@ -337,6 +359,7 @@ class FieldAttention(nnx.Module):
                 ),
                 pQ=phi[axis],
                 polarisation=polarisation,
+                precision=precision,
             )
             ohdr, oax = (v.reshape(*v.shape[:-2], N * D) for v in res)
             # ohdr now has dimensions tB 1 tF P C
@@ -369,7 +392,7 @@ class FieldAttention(nnx.Module):
             key=efc.K.reshape(B * (Y * X + 1), F, K, 2 * H),
             value=efc.V.reshape(B * (Y * X + 1), F, K, D),
             # mask = features.mask[...,None],
-        )
+        ).astype(dtype)
         pwatt = pwatt.reshape(*batch, Y * X + 1, F, N * D)
         context_self = pwatt[..., 0, :, :]
         cells_inv = pwatt[..., 1:, :, :].reshape(*batch, Y, X, F, -1)
@@ -394,7 +417,7 @@ class FieldAttention(nnx.Module):
                 ],
                 axis=-1,
             ),
-        )
+        ).astype(dtype)
         assert glatt.shape[-3] == 1
         glatt = glatt.reshape(*batch, F, N * D)
         context2cellinv = glatt
@@ -414,7 +437,7 @@ class FieldAttention(nnx.Module):
                 -1, Y * X, K, D
             ),
             mask=jnp.tile(features.mask, (F * R, 1)).reshape(-1, 1, 1, Y * X),
-        )
+        ).astype(dtype)
         assert context2cell.shape[-3] == 1
         context2cell = context2cell.reshape(*batch, F, R, N * D)
 
@@ -430,13 +453,13 @@ class FieldAttention(nnx.Module):
             ),
             cols=attrs.evolve(
                 features.cols,
-                inv=jnp.empty(batch + (X, F, 0), self.dtype),
+                inv=jnp.empty(batch + (X, F, 0), dtype),
                 equiv=gres[0],
                 rep=qkv.cols.rep,
             ),
             rows=attrs.evolve(
                 features.rows,
-                inv=jnp.empty(batch + (Y, F, 0), self.dtype),
+                inv=jnp.empty(batch + (Y, F, 0), dtype),
                 equiv=gres[1],
                 rep=qkv.rows.rep,
             ),

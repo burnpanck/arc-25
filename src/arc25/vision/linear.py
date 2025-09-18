@@ -53,7 +53,7 @@ class SymmetricLinear(nnx.Module):
             bias_init=bias_init,
             dot_general=dot_general,
             promote_dtype=promote_dtype,
-            # preferred_element_type = preferred_element_type,
+            preferred_element_type=preferred_element_type,
         )
         param_key = rngs.params()
         self.inv_bias = (
@@ -208,7 +208,16 @@ class SymmetricLinear(nnx.Module):
             inputs
         )
 
-        xi, xf = self.promote_dtype((inputs.inv, inputs.equiv), dtype=self.dtype)
+        to_consider = [inputs.inv, inputs.equiv]
+        if self.equiv2equiv is not None:
+            to_consider.append(self.equiv2equiv.value)
+        if self.inv_bias is not None:
+            to_consider.append(self.inv_bias.value)
+        if self.equiv_bias is not None:
+            to_consider.append(self.equiv_bias.value)
+        dtype = nnx.nn.dtypes.canonicalize_dtypes(*to_consider, dtype=self.dtype)
+
+        xi, xf = self.promote_dtype((inputs.inv, inputs.equiv), dtype=dtype)
         batch = jnp.broadcast_shapes(xi.shape[:-1], xf.shape[:-2])
 
         xfa = jnp.mean(xf, axis=-2)
@@ -218,14 +227,17 @@ class SymmetricLinear(nnx.Module):
             lin(inp)
             for lin, inp in [(self.inv2inv, xi), (self.equiv2inv, xfa)]
             if lin is not None
-        ] + [b for b in [self.inv_bias] if b is not None]
-        yi = sum(yi) if yi else jnp.empty(batch + (of.inv,), xi.dtype)
+        ] + [
+            self.promote_dtype((b,), dtype=dtype)[0]
+            for b in [self.inv_bias]
+            if b is not None
+        ]
+        yi = sum(yi) if yi else jnp.empty(batch + (of.inv,), dtype)
         yi = jnp.broadcast_to(yi, batch + (of.inv,))
 
         if self.equiv2equiv is not None:
             # TODO: should the preparation be applied before promotion instead?
-            kernel_base = self.equiv2equiv.value
-            (kernel_base,) = self.promote_dtype((kernel_base,), dtype=self.dtype)
+            (kernel_base,) = self.promote_dtype((self.equiv2equiv.value,), dtype=dtype)
             kernel = self._prepare_kernel(kernel_base)
 
             # We use dot_general_kwargs for BC compatibility with
@@ -233,7 +245,7 @@ class SymmetricLinear(nnx.Module):
             # preferred_element_type argument to avoid breaking
             # existing code
             dot_general_kwargs = {}
-            if False and self.preferred_element_type is not None:
+            if self.preferred_element_type is not None:
                 dot_general_kwargs["preferred_element_type"] = (
                     self.preferred_element_type
                 )
@@ -250,8 +262,10 @@ class SymmetricLinear(nnx.Module):
             yfa = self.inv2equiv(xi)[..., None, :]
         else:
             yfa = None
-        yf = [v for v in [yf, yfa, self.equiv_bias] if v is not None]
-        yf = sum(yf) if yf else jnp.zeros(batch + (of.rep.dim, of.equiv), xf.dtype)
+        yf = [v for v in [yf, yfa] if v is not None]
+        if self.equiv_bias is not None:
+            yf.append(self.promote_dtype((self.equiv_bias,), dtype=dtype)[0])
+        yf = sum(yf) if yf else jnp.zeros(batch + (of.rep.dim, of.equiv), dtype)
         yf = jnp.broadcast_to(yf, batch + (of.rep.dim, of.equiv))
 
         ret = SymDecomp(inv=yi, equiv=yf, rep=of.rep)

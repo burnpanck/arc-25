@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 
 import attrs
+import jax.numpy as jnp
 from flax import nnx
+from flax.typing import (
+    Dtype,
+    PrecisionLike,
+)
 
 from .attention import FieldAttention
 from .fields import Field, FieldDims
@@ -13,13 +18,27 @@ class FieldMLP(nnx.Module):
         self,
         hidden_size: FieldDims,
         *,
+        dtype: Dtype | None = None,
+        param_dtype: Dtype = jnp.float32,
+        precision: PrecisionLike = None,
         mlp_width_factor: float,
         dropout_rate: float = 0.0,
         rngs: nnx.Rngs,
     ):
+        self.dtype = dtype
+        self.param_dtype = param_dtype
+        self.precision = (precision,)
+
         def make_linear(in_feat: FieldDims, out_feat: FieldDims, **kw):
             return in_feat.map_projections(
-                lambda k, v, o: SymmetricLinear(v, o, rngs=rngs),
+                lambda k, v, o: SymmetricLinear(
+                    v,
+                    o,
+                    dtype=dtype,
+                    param_dtype=param_dtype,
+                    precision=precision,
+                    rngs=rngs,
+                ),
                 out_feat,
             )
 
@@ -63,6 +82,10 @@ class FieldTransformer(nnx.Module):
         mlp_width_factor: float,
         num_heads: int,
         num_groups: int | None = None,
+        dtype: Dtype | None = None,
+        attention_dtype: Dtype | None = None,
+        param_dtype: Dtype = jnp.float32,
+        precision: PrecisionLike = None,
         dropout_rate: float = 0.0,
         rngs: nnx.Rngs,
     ) -> None:
@@ -78,10 +101,14 @@ class FieldTransformer(nnx.Module):
         self.attn = FieldAttention(
             num_heads=num_heads,
             num_groups=num_groups,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            attention_dtype=attention_dtype,
+            precision=precision,
             in_features=hidden_size,
             qkv_features=mha_features,
             dropout_rate=dropout_rate,
-            broadcast_dropout=False,
+            # broadcast_dropout=False,
             deterministic=False,
             normalize_qk=False,  # True to stabilise learning in ViT-22B; see paper http://arxiv.org/abs/2302.05442
             rngs=rngs,
@@ -93,6 +120,9 @@ class FieldTransformer(nnx.Module):
         # with the GeLU activation function (`flax.nnx.gelu`).
         self.mlp = FieldMLP(
             hidden_size=hidden_size,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            precision=precision,
             mlp_width_factor=mlp_width_factor,
             dropout_rate=dropout_rate,
             rngs=rngs,
