@@ -33,6 +33,7 @@ class ARCClassifier(nnx.Module):
         num_groups: int | None = None,
         dropout_rate: float = 0.1,
         rngs: nnx.Rngs,
+        **kw,
     ):
         self.num_colours = num_colours
         self.dtype = dtype
@@ -51,6 +52,7 @@ class ARCClassifier(nnx.Module):
             num_groups=num_groups,
             dropout_rate=dropout_rate,
             rngs=rngs,
+            **kw,
         )
 
         # Classification head (maps the transformer encoder to class probabilities).
@@ -79,18 +81,18 @@ class ARCClassifier(nnx.Module):
         self.classifier = nnx.Linear(
             n_base + n_equiv * rep.dim + n_colour * self.num_colours,
             num_classes,
-            dtype=jnp.promote_dtypes(dtype, jnp.float32),
+            dtype=jnp.promote_types(dtype, jnp.float32),
             param_dtype=param_dtype,
             precision=precision,
             rngs=rngs,
         )
 
     def __call__(
-        self, x: jt.Int[jt.Array, "... Y X"], size: jt.Int[jt.Array, "... 2"]
+        self, x: jt.Int[jt.Array, "... Y X"], size: jt.Int[jt.Array, "... 2"], **kw
     ) -> jt.Float[jt.Array, "... L"]:
         batch = x.shape[:-2]
 
-        x = self.encoder(x, size)
+        x = self.encoder(x, size, **kw)
 
         x = x.context
 

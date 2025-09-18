@@ -31,23 +31,23 @@ class Field(AttrsModel):
         }
 
     def map_projections(
-        self, fun: typing.Callable[[SymDecomp], SymDecomp], *other: Self
+        self, fun: typing.Callable[[SymDecomp], SymDecomp], *other: Self, **kw
     ) -> Self:
         return attrs.evolve(
             self,
             **{
-                k: fun(v, *[getattr(o, k) for o in other])
+                k: fun(v, *[getattr(o, k) for o in other], **kw)
                 for k, v in self.projections.items()
             },
         )
 
     def map_representations(
-        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
         return attrs.evolve(
             self,
             **{
-                k: v.map_representations(fun, *[getattr(o, k) for o in other])
+                k: v.map_representations(fun, *[getattr(o, k) for o in other], **kw)
                 for k, v in self.projections.items()
             },
         )

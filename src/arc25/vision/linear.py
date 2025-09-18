@@ -41,7 +41,6 @@ class SymmetricLinear(nnx.Module):
         bias_init: Initializer = default_bias_init,
         dot_general: DotGeneralT = lax.dot_general,
         promote_dtype: PromoteDtypeFn = dtypes.promote_dtype,
-        preferred_element_type: Dtype | None = None,
         rngs: rnglib.Rngs,
     ):
         R = min(in_features.rep.dim, out_features.rep.dim)
@@ -53,7 +52,6 @@ class SymmetricLinear(nnx.Module):
             bias_init=bias_init,
             dot_general=dot_general,
             promote_dtype=promote_dtype,
-            preferred_element_type=preferred_element_type,
         )
         param_key = rngs.params()
         self.inv_bias = (
@@ -215,7 +213,7 @@ class SymmetricLinear(nnx.Module):
             to_consider.append(self.inv_bias.value)
         if self.equiv_bias is not None:
             to_consider.append(self.equiv_bias.value)
-        dtype = nnx.nn.dtypes.canonicalize_dtypes(*to_consider, dtype=self.dtype)
+        dtype = nnx.nn.dtypes.canonicalize_dtype(*to_consider, dtype=self.dtype)
 
         xi, xf = self.promote_dtype((inputs.inv, inputs.equiv), dtype=dtype)
         batch = jnp.broadcast_shapes(xi.shape[:-1], xf.shape[:-2])
@@ -240,21 +238,11 @@ class SymmetricLinear(nnx.Module):
             (kernel_base,) = self.promote_dtype((self.equiv2equiv.value,), dtype=dtype)
             kernel = self._prepare_kernel(kernel_base)
 
-            # We use dot_general_kwargs for BC compatibility with
-            # user custom self.dot_general method which may not have
-            # preferred_element_type argument to avoid breaking
-            # existing code
-            dot_general_kwargs = {}
-            if self.preferred_element_type is not None:
-                dot_general_kwargs["preferred_element_type"] = (
-                    self.preferred_element_type
-                )
             yf = self.dot_general(
                 xf,
                 kernel,
                 (((xf.ndim - 2, xf.ndim - 1), (0, 1)), ((), ())),
                 precision=self.precision,
-                **dot_general_kwargs,
             )
         else:
             yf = None

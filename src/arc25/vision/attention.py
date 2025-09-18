@@ -107,6 +107,7 @@ class FieldAttention(nnx.Module):
         hdrs_attend: bool = False,
         # attention_fn: Callable[..., Array] = dot_product_attention,
         normalize_qk: bool = False,
+        keep_rngs: bool = True,
         rngs: rnglib.Rngs,
     ):
         if num_groups is None:
@@ -127,6 +128,7 @@ class FieldAttention(nnx.Module):
         self.dtype = dtype
         self.attention_dtype = attention_dtype
         self.param_dtype = param_dtype
+        self.precision = precision
 
         # frequency is both per group, per features, and linear in both absolute and relative
         kernel_key = rngs.params()
@@ -193,7 +195,13 @@ class FieldAttention(nnx.Module):
             for k, v in self.qkv.items()
         }
 
-    def __call__(self, features: Field) -> Field:
+    def __call__(
+        self,
+        features: Field,
+        *,
+        rngs: nnx.Rngs | None = None,
+        deterministic: bool | None = None,
+    ) -> Field:
         assert self.in_features.validate(
             features
         ), self.in_features.validation_problems(features)
@@ -210,9 +218,11 @@ class FieldAttention(nnx.Module):
 
         # print(f"{batch=} {B=} {Y=} {X=} {F=} {R=} {N=} {K=} {H=} {D=}")
 
-        inputs = [r for p in features.projections for r in p.representations]
-        dtype = nnx.nn.dtypes.canonicalize_dtypes(*inputs, dtype=self.dtype)
-        attention_dtype = nnx.nn.dtypes.canonicalize_dtypes(
+        inputs = [
+            r for p in features.projections.values() for r in p.representations.values()
+        ]
+        dtype = nnx.nn.dtypes.canonicalize_dtype(*inputs, dtype=self.dtype)
+        attention_dtype = nnx.nn.dtypes.canonicalize_dtype(
             *inputs, dtype=self.attention_dtype
         )
         attention_dtype = jnp.promote_types(attention_dtype, jnp.float32)

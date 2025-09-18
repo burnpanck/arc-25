@@ -23,6 +23,7 @@ class FieldMLP(nnx.Module):
         precision: PrecisionLike = None,
         mlp_width_factor: float,
         dropout_rate: float = 0.0,
+        keep_rngs: bool = True,
         rngs: nnx.Rngs,
     ):
         self.dtype = dtype
@@ -40,6 +41,7 @@ class FieldMLP(nnx.Module):
                     rngs=rngs,
                 ),
                 out_feat,
+                cls=dict,
             )
 
         mlp_dim = attrs.evolve(
@@ -58,18 +60,24 @@ class FieldMLP(nnx.Module):
 
         self.widen = make_linear(hidden_size, mlp_dim)
         self.activation = nnx.gelu
-        self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
+        self.dropout = nnx.Dropout(dropout_rate, rngs=rngs if keep_rngs else None)
         self.narrow = make_linear(mlp_dim, hidden_size)
 
-    def __call__(self, x: Field) -> Field:
+    def __call__(
+        self,
+        x: Field,
+        *,
+        rngs: nnx.Rngs | None = None,
+        deterministic: bool | None = None,
+    ) -> Field:
         def apply(inp, fun, *other):
             return fun(inp, *other)
 
-        x = x.map_projections(apply, self.widen)
+        x = x.map_projections(apply, SimpleNamespace(**self.widen))
         x = x.map_representations(self.activation)
-        x = x.map_representations(self.dropout)
-        x = x.map_projections(apply, self.narrow)
-        x = x.map_representations(self.dropout)
+        x = x.map_representations(self.dropout, rngs=rngs, deterministic=deterministic)
+        x = x.map_projections(apply, SimpleNamespace(**self.narrow))
+        x = x.map_representations(self.dropout, rngs=rngs, deterministic=deterministic)
         return x
 
 
@@ -87,11 +95,14 @@ class FieldTransformer(nnx.Module):
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
         dropout_rate: float = 0.0,
+        keep_rngs: bool = True,
         rngs: nnx.Rngs,
     ) -> None:
         def norms(features: FieldDims = hidden_size, **kw):
             return features.map_representations(
-                lambda k, kk, v: nnx.LayerNorm(v, rngs=rngs, **kw)
+                lambda k, kk, v: nnx.LayerNorm(
+                    v, dtype=dtype, param_dtype=param_dtype, rngs=rngs, **kw
+                )
             )
 
         # First layer normalization using `flax.nnx.LayerNorm`
@@ -111,6 +122,7 @@ class FieldTransformer(nnx.Module):
             # broadcast_dropout=False,
             deterministic=False,
             normalize_qk=False,  # True to stabilise learning in ViT-22B; see paper http://arxiv.org/abs/2302.05442
+            keep_rngs=keep_rngs,
             rngs=rngs,
         )
         # Second layer normalization using `flax.nnx.LayerNorm`.
@@ -125,20 +137,27 @@ class FieldTransformer(nnx.Module):
             precision=precision,
             mlp_width_factor=mlp_width_factor,
             dropout_rate=dropout_rate,
+            keep_rngs=keep_rngs,
             rngs=rngs,
         )
 
-    def __call__(self, x: Field) -> Field:
+    def __call__(
+        self,
+        x: Field,
+        *,
+        rngs: nnx.Rngs | None = None,
+        deterministic: bool | None = None,
+    ) -> Field:
         def apply(inp, fun, *other):
             return fun(inp, *other)
 
         # The Multi-Head Attention layer with layer normalization.
         ax = x.map_representations(apply, self.norm1)
-        ax = self.attn(ax)
+        ax = self.attn(ax, rngs=rngs, deterministic=deterministic)
         x = x.map_representations(lambda a, b: a + b, ax)
 
         # The feed-forward network with layer normalization.
         ax = x.map_representations(apply, self.norm2)
-        ax = self.mlp(ax)
+        ax = self.mlp(ax, rngs=rngs, deterministic=deterministic)
         x = x.map_representations(lambda a, b: a + b, ax)
         return x
