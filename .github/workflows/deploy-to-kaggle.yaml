@@ -66,6 +66,12 @@ jobs:
           # Production deps only:
           pdm wheel -w wheelhouse --prod -v -G huggingface,vision
 
+      - name: Remove excessively heavy libraries (nvidia*, torch)
+        run: |
+          rm wheelhouse/torch-*
+          rm wheelhouse/nvidia*
+          ls -al wheelhouse/
+
       - name: Resolve project metadata
         run: |
           set -e
