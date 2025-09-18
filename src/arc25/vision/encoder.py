@@ -49,7 +49,6 @@ class ARCEncoder(nnx.Module):
                     num_heads=num_heads,
                     num_groups=num_groups,
                     dropout_rate=dropout_rate,
-                    broadcast_dropout=False,
                     rngs=rngs,
                 )
                 for i in range(num_layers)
