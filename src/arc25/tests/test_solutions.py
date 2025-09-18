@@ -18,7 +18,8 @@ def available_cpus():
 @pytest.mark.asyncio
 async def test_all_solutions():
     data_dir = (Path(__file__).parent / "../../../data").resolve()
-    ds = await Dataset.from_binary(data_dir / "all-challenges.cbor.xz")
+    repack_dir = data_dir / "repack"
+    ds = await Dataset.from_binary(repack_dir / "all-challenges.cbor.xz")
     solutions = await SolutionDB.load(data_dir / "solutions")
     known_good_path = anyio.Path(data_dir / "known-good-solutions.txt")
     known_good = await known_good_path.read_text()

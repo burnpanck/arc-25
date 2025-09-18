@@ -90,6 +90,7 @@ def attention_RoPE_with_global(
     *,
     # this one is usually static; values are 0: normal, 1: reverse
     polarisation: jt.Int[jt.Array, " P"],
+    # TODO: precision -> goes into einsum
 ):
     # print(f"{context.shape=} {axial.shape=} {pQ.shape=}")
     assert context.is_valid(), context.validation_problems()
@@ -200,6 +201,7 @@ def attention_RoPE_with_global(
         if msh
         else None
     )
+
     # print(f"{Ma=} {Mg=} {Na=} {Ng=}")
     if Ma == Mg:
         assert K * Ma == Na == Ng == K * Mg

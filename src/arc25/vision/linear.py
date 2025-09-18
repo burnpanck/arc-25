@@ -120,6 +120,18 @@ class SymmetricLinear(nnx.Module):
         for k, v in kw.items():
             setattr(self, k, v)
 
+    @property
+    def approximate_flops(self):
+        ret = 0
+        for lin in [self.inv2inv, self.equiv2inv, self.inv2equiv]:
+            if lin is None:
+                continue
+            ret += lin.kernel.size
+        if self.equiv2equiv is not None:
+            kernel = self._prepare_kernel(self.equiv2equiv)
+            ret += kernel.size
+        return ret
+
     def _prepare_kernel(self, kernel):
         r"""
         The layer computes o(n,h,w,r',c') = sum_mr k(c,r^-1.r',c') * i(n,h,w,r,c)

@@ -55,39 +55,51 @@ async def update_training_data(msg: str):
 
     proj_root = await anyio.Path(__file__).parents[2].resolve()
     data_root = proj_root / "data"
+    repack_root = data_root / "repack"
     dataset = KaggleDatasetMeta(
         title="ARC Prize 2025 training data",
         id=f"{username}/arc25-training-data",
-        subtitle="Hand-written DSL solutions",
+        subtitle="",
     )
     lim = anyio.CapacityLimiter(total_tokens=8)
 
-    def make_copy_fn(src, dst):
-        async def copy_fn():
-            async with lim:
-                print(f"Copy {src.relative_to(data_root)} to {dst.relative_to(tdir)}")
-                await anyio.to_thread.run_sync(shutil.copy2, src, dst)
-
-        return copy_fn
-
     async with contextlib.AsyncExitStack() as stack:
         tdir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+
+        def make_copy_fn(src, dst_root=tdir):
+            async def copy_fn():
+                async with lim:
+                    rel = src.relative_to(data_root)
+                    dst = dst_root / rel
+                    if dst_root != tdir:
+                        print(f"Copy {rel} to {dst.relative_to(tdir)}")
+                    else:
+                        print(f"Copy {rel}")
+                    if not dst.parent.exists():
+                        await anyio.Path(dst.parent).mkdir(parents=True, exist_ok=True)
+                    await anyio.to_thread.run_sync(shutil.copy2, src, dst)
+
+            return copy_fn
+
         atdir = anyio.Path(tdir)
         await (atdir / "dataset-metadata.json").write_text(
             json.dumps(dataset.as_json())
         )
-        sdst = atdir / "solutions"
-        await sdst.mkdir()
         async with anyio.create_task_group() as tg:
-            tg.start_soon(make_copy_fn(data_root / "all-challenges.cbor.xz", tdir))
-            tg.start_soon(make_copy_fn(data_root / "harc-rule-descr.cbor.xz", tdir))
-            tg.start_soon(make_copy_fn(data_root / "larc-human.cbor.xz", tdir))
-            tg.start_soon(make_copy_fn(data_root / "known-good-solutions.txt", tdir))
+            tg.start_soon(make_copy_fn(data_root / "README.md"))
+            for fn in [
+                "all-challenges.cbor.xz",
+                "larc-human.cbor.xz",
+                "harc-rule-descr.cbor.xz",
+                "re-arc.cbor.xz",
+            ]:
+                tg.start_soon(make_copy_fn(repack_root / fn))
+            tg.start_soon(make_copy_fn(data_root / "known-good-solutions.txt"))
             ssrc = data_root / "solutions"
             async for fn in ssrc.glob("*.txt"):
-                tg.start_soon(make_copy_fn(fn, sdst))
+                tg.start_soon(make_copy_fn(fn))
             async for fn in ssrc.glob("*.py"):
-                tg.start_soon(make_copy_fn(fn, sdst))
+                tg.start_soon(make_copy_fn(fn))
         await anyio.to_thread.run_sync(
             lambda: api.dataset_create_version(
                 str(tdir), version_notes=msg, dir_mode="zip"

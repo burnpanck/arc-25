@@ -9,7 +9,8 @@ from ..prompts import PromptEncoder, parse_explanation
 @pytest.mark.asyncio
 async def test_solutions():
     data_dir = (Path(__file__).parent / "../../../data").resolve()
-    ds = await Dataset.from_binary(data_dir / "all-challenges.cbor.xz")
+    repack_dir = data_dir / "repack"
+    ds = await Dataset.from_binary(repack_dir / "all-challenges.cbor.xz")
     solutions = await SolutionDB.load(data_dir / "solutions")
 
     enc = PromptEncoder()
