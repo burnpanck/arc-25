@@ -393,7 +393,8 @@ class FieldAttention(nnx.Module):
             v = v.reshape(
                 *batch, Y * X + 1, F, *dict(Q=(N, 2 * H), K=(K, 2 * H), V=(K, D))[k]
             )
-            efc[k] = v
+            # unfortunately, `jax.nn.dot_product_attention` doesn't do mixed precision
+            efc[k] = v.astype(attention_dtype)
         efc = SimpleNamespace(**efc)
 
         # third; pointwise self-attention across flavours
@@ -443,9 +444,9 @@ class FieldAttention(nnx.Module):
                 -1, Y * X, K, 2 * H
             ),
             # we first need to move F&R across X and Y before we can merge
-            value=jnp.moveaxis(qkv.cells.V, (-3, -2), (-5, -4)).reshape(
-                -1, Y * X, K, D
-            ),
+            value=jnp.moveaxis(qkv.cells.V, (-3, -2), (-5, -4))
+            .reshape(-1, Y * X, K, D)
+            .astype(attention_dtype),
             mask=jnp.tile(features.mask, (F * R, 1)).reshape(-1, 1, 1, Y * X),
         ).astype(dtype)
         assert context2cell.shape[-3] == 1
