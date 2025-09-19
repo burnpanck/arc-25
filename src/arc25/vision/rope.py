@@ -202,7 +202,7 @@ def attention_RoPE_with_global(
             [
                 jnp.swapaxes(
                     (
-                        jnp.ones(msh + arg.value.shape[-5:-3])
+                        jnp.ones(msh + arg.value.shape[-5:-3], bool)
                         if arg.mask is None
                         else arg.mask
                     ),

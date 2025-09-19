@@ -74,3 +74,4 @@ includes = ["src/arc25"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src"]
+filterwarnings = ["error"]

@@ -81,7 +81,11 @@ class ARCClassifier(nnx.Module):
         self.classifier = nnx.Linear(
             n_base + n_equiv * rep.dim + n_colour * self.num_colours,
             num_classes,
-            dtype=jnp.promote_types(dtype, jnp.float32),
+            dtype=(
+                jnp.promote_types(dtype, jnp.float32)
+                if dtype is not None
+                else jnp.float32
+            ),
             param_dtype=param_dtype,
             precision=precision,
             rngs=rngs,

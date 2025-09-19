@@ -59,6 +59,10 @@ class ARCEncoder(nnx.Module):
             )
         )
 
+        attention_dtype = (
+            jnp.promote_types(dtype, jnp.float32) if dtype is not None else None
+        )
+
         # As Block contains dropout op, we prefer
         # to split RNG into num_layers of RNGs
         # using @nnx.split_rngs decorator.
@@ -78,7 +82,7 @@ class ARCEncoder(nnx.Module):
                 dropout_rate=dropout_rate,
                 dtype=dtype,
                 param_dtype=param_dtype,
-                attention_dtype=jnp.promote_types(dtype, jnp.float32),
+                attention_dtype=attention_dtype,
                 precision=precision,
                 # we can't hold on to the Rngs, as we want to carry it through the scan later
                 keep_rngs=False,
