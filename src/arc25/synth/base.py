@@ -4,13 +4,13 @@ import itertools
 import random
 import typing
 from types import MappingProxyType
-from typing import Self
 
 import attrs
 import cbor2
 
 from ..dataset import Challenge, IOPair, ReasonedSolution
 from ..dsl.types import AnyImage
+from ..lib.compat import Self
 
 
 @attrs.frozen

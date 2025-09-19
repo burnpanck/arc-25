@@ -2,12 +2,13 @@ import abc
 import math
 import typing
 from dataclasses import dataclass
-from enum import Enum, StrEnum
+from enum import Enum
 from types import MappingProxyType
-from typing import Self, TypeAlias, overload
+from typing import TypeAlias, overload
 
 import numpy as np
 
+from ..lib.compat import Self, StrEnum
 from ..symmetry import SymOp
 
 _start = set(locals())

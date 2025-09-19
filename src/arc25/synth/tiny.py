@@ -2,7 +2,6 @@ import abc
 import itertools
 import random
 import typing
-from typing import Self
 
 import attrs
 import numpy as np
@@ -10,6 +9,7 @@ import numpy as np
 from ..dataset import Challenge, Explicitness, ReasonedSolution, RuleProps
 from ..dsl import primitives as P
 from ..dsl.types import Color, Image, IOPair, _color2index, _index2color
+from ..lib.compat import Self
 from .base import ChallengeSynth, SynthChallenge, SynthSpec
 
 tiny_spec = SynthSpec(max_cells=8 * 4, max_side_length=8, max_total_cells=5 * 8 * 4)

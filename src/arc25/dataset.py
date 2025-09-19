@@ -9,7 +9,7 @@ import lzma
 import zipfile
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Literal, Self
+from typing import Iterable, Literal
 
 import anyio
 import attrs
@@ -17,6 +17,7 @@ import cbor2
 import numpy as np
 
 from .dsl.types import Axis8, Color, Dir8, Image, IOPair
+from .lib.compat import Self, StrEnum
 from .serialisation import deserialise, serialisable, serialise
 from .symmetry import SymOp
 
@@ -229,7 +230,7 @@ class Dataset:
         )
 
 
-class Explicitness(enum.StrEnum):
+class Explicitness(StrEnum):
     # this property is completely absent from the example
     absent = "absent"
     # this property is implicity implied by the examples,

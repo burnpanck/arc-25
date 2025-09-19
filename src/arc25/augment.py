@@ -11,6 +11,7 @@ import numpy as np
 
 from . import dataset
 from .dsl.types import Color, Image, MaskedImage, _color2index
+from .lib.compat import Self
 
 all_colors_rex = re.compile(
     r"\b(" + "|".join(re.escape(c.name.lower()) for c in Color) + r")\b", re.I
@@ -94,7 +95,7 @@ def permute_colors(arg: typing.Any, mapping: dict[Color, Color]) -> typing.Any:
 class AugmentationBase(abc.ABC):
     @classmethod
     @abc.abstractmethod
-    def random(cls, rgen: random.Random) -> typing.Self:
+    def random(cls, rgen: random.Random) -> Self:
         pass
 
     @abc.abstractmethod
@@ -117,7 +118,7 @@ class ColorPermutationBase(AugmentationBase):
 @attrs.frozen
 class RandomColorPermutation(ColorPermutationBase):
     @classmethod
-    def random(cls, rgen: random.Random) -> typing.Self:
+    def random(cls, rgen: random.Random) -> Self:
         colors = tuple(Color)
         new_colors = list(colors)
         rgen.shuffle(new_colors)
@@ -128,7 +129,7 @@ class RandomColorPermutation(ColorPermutationBase):
 @attrs.frozen
 class RandomColorPermutationExcludingBlack(ColorPermutationBase):
     @classmethod
-    def random(cls, rgen: random.Random) -> typing.Self:
+    def random(cls, rgen: random.Random) -> Self:
         colors = tuple(Color)[1:]
         assert Color.BLACK not in colors
         new_colors = list(colors)
@@ -140,7 +141,7 @@ class RandomColorPermutationExcludingBlack(ColorPermutationBase):
 @attrs.frozen
 class RandomColorSwap(ColorPermutationBase):
     @classmethod
-    def random(cls, rgen: random.Random) -> typing.Self:
+    def random(cls, rgen: random.Random) -> Self:
         colors = tuple(rgen.choices(Color), k=2, replace=False)
         new_colors = list(colors[::-1])
         mapping = dict(zip(colors, new_colors))
@@ -155,7 +156,7 @@ class MultiAugmentationBase(AugmentationBase):
     sequence: tuple[AugmentationBase, ...]
 
     @classmethod
-    def random(cls, rgen: random.Random) -> typing.Self:
+    def random(cls, rgen: random.Random) -> Self:
         for _retry in range(100):
             seq = [
                 k.random(rgen) for k, v in cls._choices.items() if v <= rgen.random()

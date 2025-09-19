@@ -62,6 +62,7 @@ from flax.typing import (
 )
 
 from ..dsl.types import Vector
+from ..lib import nnx_compat
 from ..symmetry import transform_vector
 from .fields import Field, FieldDims
 from .linear import SymmetricLinear
@@ -173,7 +174,7 @@ class FieldAttention(nnx.Module):
             mixmap.update(rows=hdr_mix, cols=hdr_mix)
             skip_inv = []
         else:
-            self.hdr_global_mix = nnx.data(None)
+            self.hdr_global_mix = nnx_compat.data(None)
             skip_inv = ["rows", "cols"]
         self.qkv = in_features.map_projections(
             lambda k, v: make_linear(

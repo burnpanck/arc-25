@@ -1,12 +1,12 @@
 import typing
 from types import SimpleNamespace
-from typing import Self
 
 import attrs
 import jaxtyping as jt
 import numpy as np
 
 from ..lib.attrs import AttrsModel
+from ..lib.compat import Self
 from ..symmetry import SymOp
 from .symrep import SymDecomp, SymDecompDims, SymRep
 

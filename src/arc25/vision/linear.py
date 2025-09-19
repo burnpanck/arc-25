@@ -15,6 +15,7 @@ from flax.typing import (
 )
 from jax import lax
 
+from ..lib import nnx_compat
 from .symrep import SymDecomp, SymDecompDims
 
 
@@ -57,13 +58,13 @@ class SymmetricLinear(nnx.Module):
         self.inv_bias = (
             nnx.Param(bias_init(param_key, (out_features.inv,), param_dtype))
             if use_bias and out_features.inv
-            else nnx.data(None)
+            else nnx_compat.data(None)
         )
         param_key = rngs.params()
         self.equiv_bias = (
             nnx.Param(bias_init(param_key, (out_features.equiv,), param_dtype))
             if use_bias and out_features.equiv
-            else nnx.data(None)
+            else nnx_compat.data(None)
         )
         self.inv2inv = (
             nnx.Linear(
@@ -74,7 +75,7 @@ class SymmetricLinear(nnx.Module):
                 rngs=rngs,
             )
             if in_features.inv and out_features.inv
-            else nnx.data(None)
+            else nnx_compat.data(None)
         )
         self.inv2equiv = (
             nnx.Linear(
@@ -85,7 +86,7 @@ class SymmetricLinear(nnx.Module):
                 rngs=rngs,
             )
             if in_features.inv and out_features.equiv
-            else nnx.data(None)
+            else nnx_compat.data(None)
         )
         self.equiv2inv = (
             nnx.Linear(
@@ -96,7 +97,7 @@ class SymmetricLinear(nnx.Module):
                 rngs=rngs,
             )
             if in_features.equiv and out_features.inv
-            else nnx.data(None)
+            else nnx_compat.data(None)
         )
         kernel_key = rngs.params()
         self.equiv2equiv = (
@@ -106,7 +107,7 @@ class SymmetricLinear(nnx.Module):
                 )
             )
             if in_features.equiv and out_features.equiv
-            else nnx.data(None)
+            else nnx_compat.data(None)
         )
 
         self.in_features = in_features

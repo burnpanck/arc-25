@@ -11,6 +11,7 @@ from flax.typing import (
     PrecisionLike,
 )
 
+from ..lib import nnx_compat
 from .fields import Field, FieldDims
 from .linear import SymmetricLinear
 from .symrep import SymDecomp, standard_rep
@@ -96,7 +97,7 @@ class ARCEncoder(nnx.Module):
             )
         )
 
-        self.rngs = rngs if keep_rngs else nnx.data(None)
+        self.rngs = rngs if keep_rngs else nnx_compat.data(None)
 
     def __call__(
         self,

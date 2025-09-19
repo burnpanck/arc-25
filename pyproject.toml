@@ -20,6 +20,8 @@ dependencies = [
     "scipy>=1.15.3",
     "msgpack>=1.1.1",
     "cbor2>=5.7.0",
+    "typing-extensions; python_version < '3.11'",
+    "strenum; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

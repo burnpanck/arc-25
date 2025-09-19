@@ -1,12 +1,12 @@
 import typing
 from types import MappingProxyType, SimpleNamespace
-from typing import Self
 
 import attrs
 import jaxtyping as jt
 import numpy as np
 
 from ..lib.attrs import AttrsModel
+from ..lib.compat import Self
 from ..symmetry import SymOp
 
 # we could have other symmetries
@@ -29,7 +29,7 @@ class SymRep:
     )
 
     @classmethod
-    def from_seq(cls, opseq: typing.Iterable[AnySymOp]) -> typing.Self:
+    def from_seq(cls, opseq: typing.Iterable[AnySymOp]) -> Self:
         ret = cls(tuple(opseq))
         assert ret.is_valid()
         return ret
