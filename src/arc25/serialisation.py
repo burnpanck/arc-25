@@ -6,7 +6,7 @@ import attrs
 import numpy as np
 
 from .dsl import types
-from .symmetry import SymOp
+from .symmetry import D4
 
 
 def serialise(obj):
@@ -36,7 +36,7 @@ def serialise(obj):
             return obj
 
 
-_known_types = {t.__qualname__: t for t in [np.ndarray, SymOp]} | {
+_known_types = {t.__qualname__: t for t in [np.ndarray, D4]} | {
     t.__qualname__: t
     for k, t in vars(types).items()
     if isinstance(t, type) and not k.startswith("_")

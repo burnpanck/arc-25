@@ -7,10 +7,10 @@ import numpy as np
 
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
-from ..symmetry import SymOp
+from ..symmetry import D4
 
 # we could have other symmetries
-AnySymOp: typing.TypeAlias = SymOp
+AnySymOp: typing.TypeAlias = D4
 
 
 @attrs.frozen
@@ -50,7 +50,7 @@ class SymRep:
         return len(self.opseq)
 
 
-standard_rep = SymRep.from_seq(SymOp)
+standard_rep = SymRep.from_seq(D4)
 
 
 class SymDecomp(AttrsModel):

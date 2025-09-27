@@ -387,7 +387,7 @@ def transform(canvas: AnyImage | Mask, op: Transform) -> AnyImage | Mask:
     match op:
         case Transform():
             sop = op.value
-        case symmetry.SymOp():
+        case symmetry.D4():
             sop = op
         case _:
             raise _make_type_error(op, "op", "Transform")

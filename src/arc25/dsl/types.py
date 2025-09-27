@@ -9,7 +9,7 @@ from typing import TypeAlias, overload
 import numpy as np
 
 from ..lib.compat import Self, StrEnum
-from ..symmetry import SymOp
+from ..symmetry import D4
 
 _start = set(locals())
 
@@ -30,14 +30,14 @@ Dir8 = StrEnum(
 
 
 class Transform(Enum):
-    IDENTITY = SymOp.e
-    FLIP_LR = SymOp.x
-    FLIP_UD = SymOp.y
-    ROTATE_180 = SymOp.i
-    FLIP_DIAG_MAIN = SymOp.t
-    ROTATE_LEFT = SymOp.l
-    ROTATE_RIGHT = SymOp.r
-    FLIP_DIAG_ANTI = SymOp.d
+    IDENTITY = D4.e
+    FLIP_LR = D4.x
+    FLIP_UD = D4.y
+    ROTATE_180 = D4.i
+    FLIP_DIAG_MAIN = D4.t
+    ROTATE_LEFT = D4.l
+    ROTATE_RIGHT = D4.r
+    FLIP_DIAG_ANTI = D4.d
 
 
 class Color(StrEnum):

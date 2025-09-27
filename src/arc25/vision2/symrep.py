@@ -1,0 +1,270 @@
+import abc
+import typing
+from types import MappingProxyType, SimpleNamespace
+
+import attrs
+import jax.numpy as jnp
+import jaxtyping as jt
+import numpy as np
+from flax.typing import Dtype
+
+from ..lib.attrs import AttrsModel
+from ..lib.compat import Self
+from ..symmetry import D4, FullRep, PermRepBase
+
+
+@attrs.frozen
+class RepSpec:
+    # these are not actually operations of the symmetry!
+    # these are just labels, and symmetry operations connect these labels
+    repseq: tuple[PermRepBase, ...] = attrs.field(
+        repr=lambda seq: f"({','.join(o.name for o in seq)})",
+    )
+    n_flavours: int
+    rep2idx: typing.Mapping[PermRepBase, int] = attrs.field(
+        default=attrs.Factory(
+            lambda self: MappingProxyType({v: k for k, v in enumerate(self.opseq)}),
+            takes_self=True,
+        ),
+        repr=False,
+    )
+
+    @classmethod
+    def from_seq(cls, repseq: typing.Iterable[PermRepBase], n_flavours: int) -> Self:
+        ret = cls(tuple(repseq), n_flavours)
+        assert ret.is_valid()
+        return ret
+
+    def is_valid(self):
+        # ensure inverse map is correct
+        if self.rep2idx != {v: k for k, v in enumerate(self.repseq)}:
+            return False
+        # ensure group is closed
+        operations = set(self.repseq[0].tfo_to(o) for o in self.repseq)
+        completion = set(o.inverse for o in operations) | set(
+            a.combine(b) for a in operations for b in operations
+        )
+        return completion == operations
+
+    @property
+    def n_space(self) -> int:
+        return len(self.repseq)
+
+
+standard_rep = RepSpec.from_seq(FullRep, n_flavours=10)
+
+
+class SymDecompBase(abc.ABC, AttrsModel):
+    @property
+    @abc.abstractmethod
+    def rep(self) -> RepSpec: ...
+
+    @property
+    @abc.abstractmethod
+    def batch_shape(self) -> tuple[int, ...]: ...
+
+
+@attrs.frozen
+class SymDecompDims:
+    invariant: int  # invariant under symmetry operations
+    space: int  # equivariant under spatial symmetry operations
+    flavour: int  # equivariant under symmetry operations of flavours
+    rep: RepSpec = standard_rep
+
+    @property
+    def n_space(self):
+        return self.rep.n_space
+
+    @property
+    def n_flavours(self):
+        return self.rep.n_flavours
+
+    @property
+    def representations(self) -> dict[str, jt.Float]:
+        return {k: getattr(self, k) for k in ["invariant", "space", "flavour"]}
+
+    def map_representations(
+        self,
+        fun: typing.Callable[[str, int], typing.Any],
+        *other: Self,
+        cls: type = SimpleNamespace,
+    ) -> typing.Any:
+        return cls(
+            **{
+                k: fun(k, v, *[getattr(o, k) for o in other])
+                for k, v in self.representations.items()
+            }
+        )
+
+    @property
+    def dims(self):
+        return SimpleNamespace(
+            invariant=self.invariant,
+            space=(self.n_space, self.space),
+            flavour=(self.n_flavours, self.flavour),
+        )
+
+    @property
+    def total_channels(self) -> int:
+        return (
+            self.n_space * self.space + self.invariant + self.n_flavours * self.flavour
+        )
+
+    def validation_problems(self, embedding: SymDecompBase) -> str | None:
+        if not self.rep.is_valid():
+            return "representation"
+        return embedding.validation_problems(self)
+
+    def validate(self, embedding: SymDecompBase) -> bool:
+        return not self.validation_problems(embedding)
+
+
+class SplitSymDecomp(SymDecompBase):
+    invariant: jt.Float[jt.Array, "... Ci"]
+    space: jt.Float[jt.Array, "... R Cs"]
+    flavour: jt.Float[jt.Array, "... F Cf"]
+    rep: RepSpec = attrs.field(default=standard_rep, metadata=dict(static=True))
+
+    @classmethod
+    def empty(cls, dims: SymDecompDims, batch: tuple[int, ...] = ()) -> Self:
+        ret = cls(
+            invariant=np.empty(batch + (dims.invariant,)),
+            space=np.empty(batch + (dims.n_space, dims.space)),
+            flavour=np.empty(batch + (dims.n_flavours, dims.flavour)),
+            rep=dims.rep,
+        )
+        assert dims.validate(ret)
+        return ret
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return np.broadcast_shapes(
+            self.invariant.shape[:-1],
+            self.space.shape[:-2],
+            self.flavour.shape[:-2],
+        )
+
+    def as_split(self) -> Self:
+        return self
+
+    def as_flat(self, *, dtype: Dtype | None = None) -> "FlatSymDecomp":
+        batch = self.batch_shape
+        return FlatSymDecomp(
+            data=jnp.concatenate(
+                [
+                    jnp.broadcast_to(vv, batch + vv.shape[-1:])
+                    for vv in [
+                        v.reshape(*v.shape[:-k], -1)
+                        for k, v in dict(space=2, invariant=1, flavour=2).items()
+                    ]
+                ],
+                axis=-1,
+                dtype=dtype,
+            ),
+            dim=self.repspec,
+        )
+
+    def validation_problems(self, dims: SymDecompDims) -> str | None:
+        try:
+            self.batch_shape
+        except ValueError:
+            return "batch mismatch"
+        if self.rep != dims.rep:
+            return "rep mismatch"
+        if self.invariant.shape[-1] != dims.invariant:
+            return "invariant dim mismatch"
+        if self.flavour.shape[-2:] != (dims.n_space, dims.flavour):
+            return f"flavour dim mismatch {self.flavour.shape} <> {(dims.n_space, dims.flavour)}"
+        if self.space.shape[-2:] != (dims.n_flavours, dims.space):
+            return f"space dim mismatch {self.space.shape} <> {(dims.n_flavours, dims.space)}"
+
+    @property
+    def representations(self) -> dict[str, jt.Float]:
+        return {k: getattr(self, k) for k in ["invariant", "space", "flavour"]}
+
+    def map_representations(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
+    ) -> Self:
+        return attrs.evolve(
+            self,
+            **{
+                k: fun(v, *[getattr(o, k) for o in other], **kw)
+                for k, v in self.representations.items()
+            },
+        )
+
+    @property
+    def shapes(self):
+        return SimpleNamespace(
+            invariant=self.invariant.shape,
+            space=self.space.shape,
+            flavour=self.flavour.shape,
+        )
+
+
+class FlatSymDecomp(SymDecompBase):
+    data: jt.Float[jt.Array, "... C"]
+    dim: SymDecompDims
+
+    @classmethod
+    def empty(
+        cls, dims: SymDecompDims, batch: tuple[int, ...] = (), *, dtype=np.float32
+    ) -> Self:
+        ret = cls(
+            data=np.empty(batch + (dims.total_channels,), dtype=dtype),
+            dim=dims,
+        )
+        assert dims.validate(ret)
+        return ret
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self.data.shape[:-1]
+
+    def as_split(self) -> SplitSymDecomp:
+        kw = {}
+        d = self.data
+        batch = d.shape[:-1]
+        for k, v in dict(
+            space=(self.dim.n_space, self.dim.space),
+            invariant=self.dim.invariant,
+            flavour=(self.dim.n_flavours, self.dim.flavour),
+        ).items():
+            n = np.prod(v)
+            kw[k] = d[..., :n].reshape(*batch, *v)
+            d = d[..., n:]
+        assert not d.size
+        return SplitSymDecomp(
+            **kw,
+            rep=self.dim.rep,
+        )
+
+    def as_flat(self, *, dtype: Dtype | None = None) -> Self:
+        if dtype is not None:
+            return attrs.evolve(self, data=self.data.astype(dtype))
+        return self
+
+    def validation_problems(self, dims: SymDecompDims) -> str | None:
+        if self.dim != dims:
+            return "dim mismatch"
+        if self.data.shape[-1] != dims.total_channels:
+            return "total channel mismatch"
+
+    @property
+    def representations(self) -> dict[str, jt.Float]:
+        return self.as_split().representations
+
+    def map_representations(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
+    ) -> Self:
+        return self.as_split().map_representations(fun, *other, **kw)
+
+    @property
+    def shapes(self):
+        batch = self.batch_shape
+        dim = self.dim
+        return SimpleNamespace(
+            invariant=batch + (dim.invariant,),
+            space=batch + (dim.n_space, dim.space),
+            flavour=batch + (dim.n_flavours, dim.flavour),
+        )

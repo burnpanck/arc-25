@@ -7,10 +7,11 @@ import numpy as np
 
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
-from ..symmetry import SymOp
+from ..symmetry import D4
 from .symrep import SymDecomp, SymDecompDims, SymRep
 
 
+# TODO: latest flax has `nnx.PyTree` that seems to work with `dataclass`
 class Field(AttrsModel):
     context: SymDecomp  # dimensions (... F R? C); equiv representation
     rows: SymDecomp  # dimensions (... Y F R? C); representation (t,l,r,d)
@@ -83,12 +84,12 @@ class FieldDims:
             rows=SymDecompDims(
                 inv=inv_fac * hdrs,
                 equiv=hdrs,
-                rep=SymRep.from_seq((SymOp.t, SymOp.l, SymOp.r, SymOp.d)),
+                rep=SymRep.from_seq((D4.t, D4.l, D4.r, D4.d)),
             ),
             cols=SymDecompDims(
                 inv=inv_fac * hdrs,
                 equiv=hdrs,
-                rep=SymRep.from_seq((SymOp.e, SymOp.x, SymOp.y, SymOp.i)),
+                rep=SymRep.from_seq((D4.e, D4.x, D4.y, D4.i)),
             ),
             cells=SymDecompDims(inv=inv_fac * cells, equiv=cells),
             **kw,

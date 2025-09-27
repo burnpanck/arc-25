@@ -19,7 +19,7 @@ import numpy as np
 from .dsl.types import Axis8, Color, Dir8, Image, IOPair
 from .lib.compat import Self, StrEnum
 from .serialisation import deserialise, serialisable, serialise
-from .symmetry import SymOp
+from .symmetry import D4
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ class RuleProps:
     # Symmetries, and their effect on the rule. For symmetries that are not mentioned
     # in this attribute, the lowest explicitness of all atomic decompositions is
     # taken to be correct, or `explicit` if there aren't any.
-    symmetries: dict[SymOp, Explicitness] = attrs.field(
+    symmetries: dict[D4, Explicitness] = attrs.field(
         factory=lambda: MappingProxyType({})
     )
 
