@@ -8,31 +8,31 @@ import numpy as np
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
 from ..symmetry import D4
-from .symrep import SymDecomp, SymDecompDims, SymRep
+from .symrep import SymDecompBase, SymDecompDims, SymRep, standard_rep
 
 
 # TODO: latest flax has `nnx.PyTree` that seems to work with `dataclass`
 class Field(AttrsModel):
-    context: SymDecomp  # dimensions (... F R? C); equiv representation
-    rows: SymDecomp  # dimensions (... Y F R? C); representation (t,l,r,d)
-    cols: SymDecomp  # dimensions (... X F R? C); representation (e,x,y,i)
-    cells: SymDecomp  # dimensions (... Y X F R? C); equiv representation
+    context: SymDecompBase  # dimensions (... T R? C); full representation
+    # rows: SymDecompBase  # dimensions (... Y R? C); representation (t,l,r,d)
+    # cols: SymDecompBase  # dimensions (... X R? C); representation (e,x,y,i)
+    cells: SymDecompBase  # dimensions (... Y X R? C); full representation
     ypos: jt.Float[jt.Array, "... Y 2"]  # (absolute positions, relative positions)
     xpos: jt.Float[jt.Array, "... X 2"]  # (absolute positions, relative positions)
-    rmsk: jt.Bool[jt.Array, "... Y"]
-    cmsk: jt.Bool[jt.Array, "... X"]
+    # rmsk: jt.Bool[jt.Array, "... Y"]
+    # cmsk: jt.Bool[jt.Array, "... X"]
     mask: jt.Bool[jt.Array, "... Y X"]
 
     @property
-    def projections(self) -> dict[str, SymDecomp]:
+    def projections(self) -> dict[str, SymDecompBase]:
         return {
             f.name: getattr(self, f.name)
             for f in attrs.fields(type(self))
-            if f.type is SymDecomp
+            if f.type is SymDecompBase
         }
 
     def map_projections(
-        self, fun: typing.Callable[[SymDecomp], SymDecomp], *other: Self, **kw
+        self, fun: typing.Callable[[SymDecompBase], SymDecompBase], *other: Self, **kw
     ) -> Self:
         return attrs.evolve(
             self,
@@ -57,41 +57,63 @@ class Field(AttrsModel):
     def shapes(self):
         return SimpleNamespace(
             {
-                k: v.shapes if isinstance(v, SymDecomp) else v.shape
+                k: v.shapes if isinstance(v, SymDecompBase) else v.shape
                 for k, v in attrs.asdict(self, recurse=False).items()
             }
+        )
+
+    @property
+    def batch_shape(self):
+        np.broadcast_shapes(
+            self.context.batch_shape[:-1],
+            #                self.rows.batch_shape[:-1],
+            #                self.cols.batch_shape[:-1],
+            self.cells.batch_shape[:-2],
+            self.ypos.shape[:-2],
+            self.xpos.shape[:-2],
+            #                self.rmsk.shape[:-1],
+            #                self.cmsk.shape[:-1],
+            self.mask.shape[:-2],
         )
 
 
 @attrs.frozen
 class FieldDims:
     context: SymDecompDims
-    rows: SymDecompDims
-    cols: SymDecompDims
+    # rows: SymDecompDims
+    # cols: SymDecompDims
     cells: SymDecompDims
     # these are in fact optional, as we don't need them for any weight calculation
-    flavours: int | None = None
+    context_tokens: int | None = None
     shape: tuple[int, int] | None = None
 
     @classmethod
-    def make(cls, *, inv_fac=2, context=None, hdrs=None, cells, **kw) -> Self:
+    def make(
+        cls,
+        cells,
+        *,
+        invariant=22,
+        flavours=1,
+        space=2,
+        context=None,
+        rep=standard_rep,
+        **kw,
+    ) -> Self:
         if context is None:
             context = cells
-        if hdrs is None:
-            hdrs = cells
         return cls(
-            context=SymDecompDims(inv=inv_fac * context, equiv=context),
-            rows=SymDecompDims(
-                inv=inv_fac * hdrs,
-                equiv=hdrs,
-                rep=SymRep.from_seq((D4.t, D4.l, D4.r, D4.d)),
+            context=SymDecompDims(
+                invariant=invariant * context,
+                flavour=flavours * context,
+                space=space * context,
+                rep=rep,
             ),
-            cols=SymDecompDims(
-                inv=inv_fac * hdrs,
-                equiv=hdrs,
-                rep=SymRep.from_seq((D4.e, D4.x, D4.y, D4.i)),
+            cells=SymDecompDims(
+                invariant=invariant * cells,
+                flavour=flavours * cells,
+                space=space * cells,
+                rep=rep,
             ),
-            cells=SymDecompDims(inv=inv_fac * cells, equiv=cells),
             **kw,
         )
 
@@ -105,7 +127,7 @@ class FieldDims:
 
     def map_projections(
         self,
-        fun: typing.Callable[[str, SymDecomp], typing.Any],
+        fun: typing.Callable[[str, SymDecompBase], typing.Any],
         *other: Self,
         cls: type = SimpleNamespace,
     ) -> typing.Any:
@@ -140,22 +162,22 @@ class FieldDims:
     def validity_problems(self):
         if not (
             self.context.rep.is_valid()
-            and self.rows.rep.is_valid()
-            and self.cols.rep.is_valid()
+            # and self.rows.rep.is_valid()
+            # and self.cols.rep.is_valid()
             and self.cells.rep.is_valid()
         ):
             return "invalid rep"
-        if (
-            not set(self.context.rep.opseq)
-            == set(self.rows.rep.opseq) | set(self.cols.rep.opseq)
-            == set(self.cells.rep.opseq)
+        if not (
+            set(self.context.rep.repseq)
+            # == (set(self.rows.rep.repseq) | set(self.cols.rep.repseq))
+            == set(self.cells.rep.repseq)
         ):
             return "rep mismatch"
-        if set(self.rows.rep.opseq) & set(self.cols.rep.opseq):
-            return "rep overlap"
-        for k in ["inv", "equiv"]:
-            if getattr(self.rows, k) != getattr(self.cols, k):
-                return f"row/col mismatch on {k}"
+        # if set(self.rows.rep.opseq) & set(self.cols.rep.opseq):
+        #    return "rep overlap"
+        # for k in ["inv", "equiv"]:
+        #     if getattr(self.rows, k) != getattr(self.cols, k):
+        #        return f"row/col mismatch on {k}"
 
     def is_valid(self):
         return not self.validity_problems()
@@ -166,54 +188,37 @@ class FieldDims:
             return ret
         if not self.context.validate(f.context):
             return f"context {self.context.dims} != {f.context.shapes}"
-        if not self.rows.validate(f.rows):
-            return f"rows {self.rows.dims} != {f.rows.shapes}"
-        if not self.cols.validate(f.cols):
-            return f"cols {self.cols.dims} != {f.cols.shapes}"
+        # if not self.rows.validate(f.rows):
+        #     return f"rows {self.rows.dims} != {f.rows.shapes}"
+        # if not self.cols.validate(f.cols):
+        #     return f"cols {self.cols.dims} != {f.cols.shapes}"
         if not self.cells.validate(f.cells):
             return f"cells {self.cells.dims} != {f.cells.shapes}"
-        if self.flavours is None:
-            F = f.context.inv.shape[-2]
-        else:
-            F = self.flavours
         if self.shape is None:
-            Y, X = f.cells.equiv.shape[-5:-3]
+            Y, X = f.cells.batch_shape[-2:]
         else:
             Y, X = self.shape
-        shi = f"[{Y},{X},{F}]"
-        if f.rows.equiv.shape[-4:-2] != (Y, F):
-            return f"rows {shi} <> {f.rows.shapes}"
-        if f.cols.equiv.shape[-4:-2] != (X, F):
-            return f"cols {shi} <> {f.cols.shapes}"
-        if f.cells.equiv.shape[-5:-2] != (Y, X, F):
+        shi = f"[{Y},{X},{self.context_tokens}]"
+        if f.context.batch_shape[-1:] != (self.context_tokens,):
+            return f"context tokens {shi} <> {f.context.shapes}"
+        # if f.rows.equiv.shape[-4:-2] != (Y, F):
+        #     return f"rows {shi} <> {f.rows.shapes}"
+        # if f.cols.equiv.shape[-4:-2] != (X, F):
+        #     return f"cols {shi} <> {f.cols.shapes}"
+        if f.cells.batch_shape[-2:] != (Y, X):
             return f"cols {shi} <> {f.cells.shapes}"
         if f.ypos.shape[-2:] != (Y, 2):
             return f"ypos {shi} <> {f.ypos.shape}"
         if f.xpos.shape[-2:] != (X, 2):
             return f"xpos {shi} <> {f.xpos.shape}"
-        if f.rmsk.shape[-1] != Y:
-            return f"rmsk {shi} <> {f.rmsk.shape}"
-        if f.cmsk.shape[-1] != X:
-            return f"cmsk {shi} <> {f.cmsk.shape}"
+        # if f.rmsk.shape[-1] != Y:
+        #     return f"rmsk {shi} <> {f.rmsk.shape}"
+        # if f.cmsk.shape[-1] != X:
+        #     return f"cmsk {shi} <> {f.cmsk.shape}"
         if f.mask.shape[-2:] != (Y, X):
             return f"mask {shi} <> {f.mask.shape}"
         try:
-            np.broadcast_shapes(
-                f.context.inv.shape[:-2],
-                f.rows.inv.shape[:-3],
-                f.cols.inv.shape[:-3],
-                f.cells.inv.shape[:-4],
-                f.context.equiv.shape[:-3],
-                f.rows.equiv.shape[:-4],
-                f.cols.equiv.shape[:-4],
-                f.cells.equiv.shape[:-5],
-                f.ypos.shape[:-2],
-                f.xpos.shape[:-2],
-                f.rmsk.shape[:-1],
-                f.cmsk.shape[:-1],
-                f.mask.shape[:-2],
-            )
-
+            f.batch_shape
         except ValueError:
             return f"batch {f.shapes}"
 
@@ -225,25 +230,18 @@ class FieldDims:
         batch: tuple[int, ...] = (),
         *,
         shape: tuple[int, int] | None = None,
-        flavours: int | None = None,
     ) -> Field:
         if shape is None:
             shape = self.shape
             assert shape is not None
         else:
             assert self.shape is None or shape == self.shape
-        if flavours is None:
-            flavours = self.flavours
-            assert flavours is not None
-        else:
-            assert self.flavours is None or flavours == self.flavours
         Y, X = shape
-        F = flavours
         ret = Field(
-            context=self.context.make_empty(batch + (F,)),
-            rows=self.rows.make_empty(batch + (Y, F)),
-            cols=self.cols.make_empty(batch + (X, F)),
-            cells=self.cells.make_empty(batch + shape + (F,)),
+            context=self.context.make_empty(batch + (self.context_tokens,)),
+            #            rows=self.rows.make_empty(batch + (Y, F)),
+            #            cols=self.cols.make_empty(batch + (X, F)),
+            cells=self.cells.make_empty(batch + shape),
             ypos=np.empty(batch + (Y, 2)),
             xpos=np.empty(batch + (X, 2)),
             rmsk=np.empty(batch + (Y,), bool),

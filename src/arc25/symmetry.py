@@ -7,7 +7,17 @@ import numpy as np
 from .lib.compat import Self, enum_nonmember, enum_property
 
 
-class D4(enum.Enum):
+class SymOpBase(enum.Enum):
+    @property
+    def inverse(self) -> Self:
+        raise NotImplementedError
+
+    def combine(self, rhs: Self) -> Self:
+        """Apply `rhs` first, then `self`"""
+        raise NotImplementedError
+
+
+class D4(SymOpBase):
     """Represents the symmetry operations of the rectangular grid;
 
     Internally encoded as the combinations of three sequential mirror ops.
@@ -268,12 +278,12 @@ FullRep = PermRepBase.make_repr(
     """
    e x y i t l r d
 lu ⦨ ⦩ ⦪ ⦫ ⦯ ⦭ ⦮ ⦬
-ru ⦩ . . . . . . .
 ld ⦪ . . . . . . .
+ru ⦩ . . . . . . .
 rd ⦫ . . . . . . .
 ul ⦯ . . . . . . .
-dl ⦭ . . . . . . .
 ur ⦮ . . . . . . .
+dl ⦭ . . . . . . .
 dr ⦬ . . . . . . .
 """,
 )

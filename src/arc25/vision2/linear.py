@@ -1,7 +1,9 @@
+import itertools
 import typing
 
 import attrs
 import jax.numpy as jnp
+import jaxtyping as jt
 import numpy as np
 from flax import nnx
 from flax.nnx import rnglib
@@ -17,16 +19,150 @@ from flax.typing import (
 from jax import lax
 
 from ..lib import nnx_compat
+from ..symmetry import D4, PermRepBase, SymOpBase
 from .symrep import FlatSymDecomp, SplitSymDecomp, SymDecompBase, SymDecompDims
 
 
-class SymmetricLinear(nnx.Module):
-    """Representation-elemet-wise pointwise operation across symmetry and groups of channels; respecting symmetry.
+class SpaceSymmetricLinear(nnx.Module):
+    r"""A linear operator that is equivariant under point-group operations.
+    It represents an operator $A^{uvw\ldots}_{abc\ldots}$ that commutes with
+    symmetry operations in the following way:
+    $$
+    \sum_{u'v'w'\ldots} A^{u'v'w'\ldots}_{abc\ldots} R^U_{u'u}(s) R^V_{v'v}(s) R^W_{w'w}(s)\ldots =
+    \sum_{a'b'c'\ldots}  R^A_{a'a}(s) R^B_{b'b}(s) R^C_{c'c}(s)\ldots A^{uvw\ldots}_{a'b'c'\ldots}
+    \quad\forall a,b,c,\, u,v,w,\, s.
+    $$
+    That is, it commutes with the symmetry operations as represented by
+    $R^U \otimes R^V \otimes R^W \ldots$ on the input side
+    and $R^A \otimes R^B \otimes R^C \ldots$, where each of these representations is a permutation representation.
 
-    Weight format is (C,R,C')
-    The layer computes o(n,h,w,r',c') = b(c') + sum_cr k(c,r^-1.r',c') * i(n,h,w,r,c)
+    The weight format is (N,C,C'), where N enumerates the free subsets of parameters as encountered in
+    the usual row-major order among the full (u,v,w,a,b,c) kernel shape, excluding the mandatory last invariant axis.
+    The layer computes o(...,a,b,c,...,o) = b(o) + sum_{uvw...i} k(u,v,w,i,a,b,c,o) * i(...,u,v,w,...,i)
     """
 
+    def __init__(
+        self,
+        in_reps: tuple[PermRepBase, ...],
+        in_features: int,
+        out_reps: tuple[PermRepBase, ...],
+        out_features: int,
+        *,
+        # in_axes: tuple[int,...] | None = None,
+        # out_axes: tuple[int,...] | None = None,
+        symmetry_group: type[SymOpBase] = D4,
+        use_bias: bool = True,
+        dtype: Dtype | None = None,
+        param_dtype: Dtype = jnp.float32,
+        precision: PrecisionLike = None,
+        kernel_init: Initializer = default_kernel_init,
+        bias_init: Initializer = default_bias_init,
+        dot_general: DotGeneralT = lax.dot_general,
+        promote_dtype: PromoteDtypeFn = dtypes.promote_dtype,
+        rngs: rnglib.Rngs,
+    ):
+        kw = dict(
+            in_reps=in_reps,
+            in_features=in_features,
+            out_reps=out_reps,
+            out_features=out_features,
+            symmetry_group=symmetry_group,
+            use_bias=use_bias,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            precision=precision,
+            kernel_init=kernel_init,
+            bias_init=bias_init,
+            dot_general=dot_general,
+            promote_dtype=promote_dtype,
+        )
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+        permutation_index, N = self._get_permutation_index(
+            in_reps, out_reps, symmetry_group
+        )
+        self.permutation_index = nnx_compat.static(permutation_index)
+        self.bias = (
+            nnx.Param(bias_init(rngs.params(), (out_features,), param_dtype))
+            if use_bias
+            else nnx_compat.data(None)
+        )
+        self.kernel_params = nnx.Param(
+            kernel_init(
+                rngs.params(),
+                (N, in_features, out_features),
+                param_dtype,
+            )
+        )
+
+    def get_kernel(self, dtype: Dtype | None = None):
+        params = self.kernel_params
+        if dtype is not None:
+            params = params.astype(dtype)
+        kernel = params[self.permutation_index, :, :]
+        kernel = jnp.moveaxis(kernel, -2, len(self.in_reps))
+        return kernel
+
+    _permutation_index_cache: dict[
+        tuple[tuple[PermRepBase, ...], tuple[PermRepBase, ...]],
+        tuple[jt.Int[np.ndarray, "..."], int],
+    ] = {}
+
+    @classmethod
+    def _get_permutation_index(
+        cls,
+        in_reps: tuple[PermRepBase, ...],
+        out_reps: tuple[PermRepBase, ...],
+        symmetry_group: type[SymOpBase],
+    ) -> tuple[jt.Int[np.ndarray, "..."], int]:
+        if (ret := cls._permutation_index_cache.get((in_reps, out_reps))) is not None:
+            return ret
+        # TODO: this is a rather brute-force approach; it should be possible to do better
+        reps = in_reps + out_reps
+        idxmap = {basis: i for rep in set(reps) for i, basis in enumerate(rep)}
+        result_shape = tuple(len(rep) for rep in reps)
+        idx = np.arange(np.prod(result_shape), dtype=int).reshape(result_shape)
+        for op in symmetry_group:
+            if op == symmetry_group.e:
+                continue
+            iop = op.inverse
+            # ensure commutativity by merging all parameters that need to be equal
+            for ein in itertools.product(*in_reps):
+                iein = tuple(idxmap[b] for b in ein)
+                itin = tuple(idxmap[b.apply(iop)] for b in ein)
+                for eout in itertools.product(*out_reps):
+                    ieout = tuple(idxmap[b] for b in eout)
+                    itout = tuple(idxmap[b.apply(op)] for b in eout)
+                    # find position in `idx` for A R(s) and R(s) A
+                    ia = iein + itout  # A R(s)
+                    ib = itin + ieout  # R(s) A
+                    if False and idx[ia] != idx[ib]:
+                        print(
+                            f"{op} merges [{''.join(str(b) for b in ein)},{''.join(str(b.apply(op)) for b in eout)}]{ia}"
+                            f" and [{''.join(str(b.apply(iop)) for b in ein)},{''.join(str(b) for b in eout)}]{ib}"
+                        )
+                    # merge their trees
+                    idx[ia] = idx[ib] = min(idx[ia], idx[ib])
+        # now, we need to simplify all remaining trees into "bushes": each leaf is a direct child of their root;
+        # at the same time, we also reindex the roots into a new consecutive sequence of tree indexes
+        idx = idx.ravel()
+        count = 0
+        for i, v in enumerate(idx):
+            assert v <= i
+            if v < i:
+                idx[i] = idx[v]
+                continue
+            # this is a root:
+            idx[i] = count
+            count += 1
+        idx = idx.reshape(result_shape)
+        ret = (idx, count)
+        cls._permutation_index_cache[in_reps, out_reps] = ret
+        return ret
+
+
+class SymDecompLinear(nnx.Module):
     def __init__(
         self,
         in_features: SymDecompDims,

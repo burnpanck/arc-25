@@ -15,32 +15,28 @@ from ..symmetry import D4, FullRep, PermRepBase
 
 @attrs.frozen
 class RepSpec:
-    # these are not actually operations of the symmetry!
-    # these are just labels, and symmetry operations connect these labels
-    repseq: tuple[PermRepBase, ...] = attrs.field(
-        repr=lambda seq: f"({','.join(o.name for o in seq)})",
+    rep: type[PermRepBase] = attrs.field(
+        repr=lambda rep: f"({','.join(o.name for o in rep)})",
     )
     n_flavours: int
-    rep2idx: typing.Mapping[PermRepBase, int] = attrs.field(
+    basis2idx: typing.Mapping[PermRepBase, int] = attrs.field(
         default=attrs.Factory(
-            lambda self: MappingProxyType({v: k for k, v in enumerate(self.opseq)}),
+            lambda self: MappingProxyType({v: k for k, v in enumerate(self.rep)}),
             takes_self=True,
         ),
         repr=False,
     )
 
-    @classmethod
-    def from_seq(cls, repseq: typing.Iterable[PermRepBase], n_flavours: int) -> Self:
-        ret = cls(tuple(repseq), n_flavours)
-        assert ret.is_valid()
-        return ret
+    def __attrs_post_init__(self):
+        assert self.is_valid()
 
     def is_valid(self):
         # ensure inverse map is correct
-        if self.rep2idx != {v: k for k, v in enumerate(self.repseq)}:
+        if self.basis2idx != {v: k for k, v in enumerate(self.rep)}:
             return False
         # ensure group is closed
-        operations = set(self.repseq[0].tfo_to(o) for o in self.repseq)
+        ref = list(self.rep)[0]
+        operations = set(ref.canonical_mapping_to(o) for o in self.rep)
         completion = set(o.inverse for o in operations) | set(
             a.combine(b) for a in operations for b in operations
         )
@@ -48,10 +44,10 @@ class RepSpec:
 
     @property
     def n_space(self) -> int:
-        return len(self.repseq)
+        return len(self.rep)
 
 
-standard_rep = RepSpec.from_seq(FullRep, n_flavours=10)
+standard_rep = RepSpec(FullRep, n_flavours=10)
 
 
 class SymDecompBase(abc.ABC, AttrsModel):
@@ -168,7 +164,7 @@ class SplitSymDecomp(SymDecompBase):
         try:
             self.batch_shape
         except ValueError:
-            return "batch mismatch"
+            return f"batch mismatch: {self.shapes}"
         if self.rep != dims.rep:
             return "rep mismatch"
         if self.invariant.shape[-1] != dims.invariant:
