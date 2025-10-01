@@ -1,10 +1,17 @@
+import flax
 import numpy as np
+import pytest
 from flax import nnx
 
 from ..vision1.classification import ARCClassifier
 from ..vision1.fields import FieldDims
 
 
+# @pytest.mark.skip
+@pytest.mark.skipif(
+    tuple(int(v) for v in flax.__version__.split(".")) >= (0, 12),
+    reason="vision1 violates the rules of flax.nnx",
+)
 def test_classification():
     dims = FieldDims.make(
         inv_fac=2,

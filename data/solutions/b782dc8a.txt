@@ -1,0 +1,7 @@
+# Analysis
+- The input represents a maze with passages in black and walls in cyan.
+- There is a colored start-point with all cells in passages next to the start-point in a different color.
+
+# Rule
+- Follow all passages from the start-point in a breadth-first fashion
+- Colour visited cells in an alternating colour pattern, continuing from start-point color and the adjacent pre-colored next-cells.

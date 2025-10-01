@@ -10,18 +10,17 @@ from flax.typing import Dtype
 
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
-from ..symmetry import D4, FullRep, PermRepBase
+from ..symmetry import D4, FullRep, PermRepBase, SymOpBase
 
 
 @attrs.frozen
 class RepSpec:
-    rep: type[PermRepBase] = attrs.field(
-        repr=lambda rep: f"({','.join(o.name for o in rep)})",
-    )
+    space: type[PermRepBase]
     n_flavours: int
+    symmetry_group: type[SymOpBase] = D4
     basis2idx: typing.Mapping[PermRepBase, int] = attrs.field(
         default=attrs.Factory(
-            lambda self: MappingProxyType({v: k for k, v in enumerate(self.rep)}),
+            lambda self: MappingProxyType({v: k for k, v in enumerate(self.space)}),
             takes_self=True,
         ),
         repr=False,
@@ -32,29 +31,25 @@ class RepSpec:
 
     def is_valid(self):
         # ensure inverse map is correct
-        if self.basis2idx != {v: k for k, v in enumerate(self.rep)}:
+        if self.basis2idx != {v: k for k, v in enumerate(self.space)}:
             return False
-        # ensure group is closed
-        ref = list(self.rep)[0]
-        operations = set(ref.canonical_mapping_to(o) for o in self.rep)
+        # ensure subgroup is closed
+        ref = list(self.space)[0]
+        operations = set(ref.canonical_mapping_to(o) for o in self.space)
         completion = set(o.inverse for o in operations) | set(
             a.combine(b) for a in operations for b in operations
         )
-        return completion == operations
+        return operations.issubset(self.symmetry_group) and completion == operations
 
     @property
     def n_space(self) -> int:
-        return len(self.rep)
+        return len(self.space)
 
 
 standard_rep = RepSpec(FullRep, n_flavours=10)
 
 
 class SymDecompBase(abc.ABC, AttrsModel):
-    @property
-    @abc.abstractmethod
-    def rep(self) -> RepSpec: ...
-
     @property
     @abc.abstractmethod
     def batch_shape(self) -> tuple[int, ...]: ...
@@ -129,7 +124,7 @@ class SplitSymDecomp(SymDecompBase):
             flavour=np.empty(batch + (dims.n_flavours, dims.flavour)),
             rep=dims.rep,
         )
-        assert dims.validate(ret)
+        assert dims.validate(ret), dims.validation_problems(ret)
         return ret
 
     @property
@@ -169,10 +164,12 @@ class SplitSymDecomp(SymDecompBase):
             return "rep mismatch"
         if self.invariant.shape[-1] != dims.invariant:
             return "invariant dim mismatch"
-        if self.flavour.shape[-2:] != (dims.n_space, dims.flavour):
-            return f"flavour dim mismatch {self.flavour.shape} <> {(dims.n_space, dims.flavour)}"
-        if self.space.shape[-2:] != (dims.n_flavours, dims.space):
-            return f"space dim mismatch {self.space.shape} <> {(dims.n_flavours, dims.space)}"
+        if self.flavour.shape[-2:] != (dims.n_flavours, dims.flavour):
+            return f"flavour dim mismatch {self.flavour.shape} <> {(dims.n_flavours, dims.flavour)}"
+        if self.space.shape[-2:] != (dims.n_space, dims.space):
+            return (
+                f"space dim mismatch {self.space.shape} <> {(dims.n_space, dims.space)}"
+            )
 
     @property
     def representations(self) -> dict[str, jt.Float]:
@@ -210,7 +207,7 @@ class FlatSymDecomp(SymDecompBase):
             data=np.empty(batch + (dims.total_channels,), dtype=dtype),
             dim=dims,
         )
-        assert dims.validate(ret)
+        assert dims.validate(ret), dims.validation_problems(ret)
         return ret
 
     @property

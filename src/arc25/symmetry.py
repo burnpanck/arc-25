@@ -289,8 +289,13 @@ dr ⦬ . . . . . . .
 )
 
 
-def transform_rep(s: D4, rep: PermRepBase) -> PermRepBase:
-    return rep.apply(s)
+def transform_rep(s: D4, basis: PermRepBase) -> PermRepBase:
+    return basis.apply(s)
+
+
+def transform_rep_idx(s: D4, rep: type[PermRepBase]) -> np.ndarray:
+    backmap = {v: k for k, v in enumerate(rep)}
+    return np.array([backmap[basis.apply(s)] for basis in rep], dtype=int)
 
 
 def transform_image(s: D4, image: np.ndarray) -> np.ndarray:

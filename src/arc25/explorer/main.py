@@ -177,12 +177,12 @@ def main_page(*, request: Request):
             {d: d for d in app.dataset.subsets},
         ).bind_value(nicegui_app.storage.user, "dataset")
 
-        cur_ds = ds_select.value
+        cur_ds = ds_select.value or sorted(app.dataset.subsets)[0]
         ckeys = tuple(sorted(app.dataset.subsets[cur_ds]))
         csel = ui.slider(min=0, max=len(ckeys) - 1).bind_value(
             nicegui_app.storage.user, "challenge"
         )
-        cur_c = ckeys[min(csel.value, len(ckeys) - 1)]
+        cur_c = ckeys[min(csel.value or 0, len(ckeys) - 1)]
 
         def update_dataset(evt):
             nonlocal cur_ds, ckeys
@@ -213,7 +213,7 @@ def main_page(*, request: Request):
             nonlocal cur_c, store_holdoff
             remember_solution()
             store_holdoff = anyio.current_time()
-            idx = min(int(evt.value), len(ckeys) - 1)
+            idx = min(int(evt.value or 0), len(ckeys) - 1)
             cur_c = ckeys[idx]
             clabel.set_text(f"{cur_ds}: {cur_c} ({idx+1}/{len(ckeys)})")
             sol = app.solutions.get(cur_c, Solution.make(id=cur_c))
@@ -375,7 +375,7 @@ def run(**kw):
     data_path = proj_root / "data"
     db_root = data_path / "solutions"
     db_root.mkdir(exist_ok=True, parents=True)
-    dataset_file = data_path / "all-challenges.cbor.xz"
+    dataset_file = data_path / "repack/all-challenges.cbor.xz"
 
     _orig_lifespan_context = nicegui.app.router.lifespan_context
 
