@@ -13,24 +13,18 @@ def test_SymDecompLinear():
     # prepare an example op
     inpf = SymDecompDims(17, 11, 5)
     outf = SymDecompDims(19, 13, 7)
+
+    def quant(key, shape, dtype):
+        return (jax.random.randint(key, shape, -3, 4) / 2).astype(dtype)
+
     lin = SymDecompLinear(
         inpf,
         outf,
         extra_in_reps=(symmetry.AxialDirRep,),
         rngs=nnx.Rngs(42),
+        kernel_init=quant,
+        bias_init=quant,
     )
-
-    def reset(obj):
-        match obj:
-            case dict() | nnx.State():
-                for v in obj.values():
-                    reset(v)
-            case nnx.Param():
-                obj[...] = jax.random.randint(lin.rngs.params(), obj.shape, -3, 4) / 2
-            case _:
-                raise TypeError(f"{type(obj).__name__}: {type(obj).mro()}")
-
-    reset(nnx.state(lin, nnx.Param))
 
     # verify symmetry
     inp = SplitSymDecomp.empty(inpf, batch=(3, 4))
