@@ -213,6 +213,13 @@ class PermRepBase(enum.Enum, metaclass=PermRepMeta):
 _box_drawing_rep_symbols = "│─ ╱╲  ╞╡╥╨ ╴╵╶╷ ┌┐└┘      ╒╓╕╖╘╙╛╜"
 _arrow_rep_symbols = "↔︎↕︎ ⤡⤢ ↺↻ ⟲⟳ →←↑↓ ↘︎↗︎↖︎↙︎ ⇄⇆⇅⇵ ⦨⦩⦪⦫⦬⦭⦮⦯"
 
+TrivialRep = PermRepBase.make_repr(
+    "TrivialRep",
+    """
+  e
+o * xyr
+""",
+)
 AxisRep = PermRepBase.make_repr(
     "AxisRep",
     """
@@ -231,8 +238,8 @@ t ⤢ ⤡ dt
 """,
 )
 
-WindingRep = PermRepBase.make_repr(
-    "WindingRep",
+ChiralityRep = PermRepBase.make_repr(
+    "ChiralityRep",
     """
     e x
 cw  ↻ ↺ rl
@@ -244,10 +251,10 @@ AxialDirRep = PermRepBase.make_repr(
     "AxialDirRep",
     """
   e r i l
-r → ↓ ← ↑ y
-l ← ↑ → ↓ y
 d ↓ ← ↑ → x
 u ↑ → ↓ ← x
+r → ↓ ← ↑ y
+l ← ↑ → ↓ y
 """,
 )
 

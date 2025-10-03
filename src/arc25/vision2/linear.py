@@ -291,12 +291,12 @@ class SpaceSymmetricLinear(nnx.Module):
         return bias + kernel
 
     def __call__(self, inputs):
+        ind = inputs.ndim
+        incd = len(self.in_reps) + 1
         dtype = nnx.nn.dtypes.canonicalize_dtype(
             inputs, self.kernel.params, dtype=self.dtype
         )
         kernel = self.kernel.get_tensor(dtype=dtype)
-        ind = inputs.ndim
-        incd = len(self.in_reps) + 1
         ret = self.dot_general(
             inputs,
             kernel,
@@ -443,6 +443,11 @@ class SymDecompLinear(nnx.Module):
         assert self.in_features.validate(inputs), self.in_features.validation_problems(
             inputs
         )
+        if self.extra_in_reps:
+            batch = inputs.batch_shape
+            assert batch[-len(self.extra_in_reps) :] == tuple(
+                len(rep) for rep in self.extra_in_reps
+            )
 
         if mode is None:
             match inputs:
@@ -465,6 +470,11 @@ class SymDecompLinear(nnx.Module):
         assert self.out_features.validate(ret), self.out_features.validation_problems(
             ret
         )
+        if self.extra_out_reps:
+            batch = ret.batch_shape
+            assert batch[-len(self.extra_out_reps) :] == tuple(
+                len(rep) for rep in self.extra_out_reps
+            )
         return ret
 
     def _apply_flat(self, inputs: FlatSymDecomp) -> FlatSymDecomp:

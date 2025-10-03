@@ -78,14 +78,15 @@ class SymDecompDims:
         self,
         fun: typing.Callable[[str, int], typing.Any],
         *other: Self,
-        cls: type = SimpleNamespace,
+        cls: type | None = None,
     ) -> typing.Any:
-        return cls(
-            **{
-                k: fun(k, v, *[getattr(o, k) for o in other])
-                for k, v in self.representations.items()
-            }
-        )
+        kw = {
+            k: fun(k, v, *[getattr(o, k) for o in other])
+            for k, v in self.representations.items()
+        }
+        if cls is None:
+            return attrs.evolve(self, **kw)
+        return cls(**kw)
 
     @property
     def dims(self):
