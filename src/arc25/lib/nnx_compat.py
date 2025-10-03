@@ -19,5 +19,5 @@ try:
     Dict = nnx.Dict  # real thing (flax ≥ 0.11)
 except AttributeError:
     # Minimal polyfill: returns the value unchanged
-    def Dict(x: dict) -> dict:
-        return x
+    def Dict(*args, **kw) -> dict:
+        return dict(*args, **kw)

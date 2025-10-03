@@ -17,6 +17,7 @@ from flax.typing import (
 from .. import symmetry
 from ..dsl.types import Vector
 from ..lib import nnx_compat
+from ..lib.attrs import AttrsModel
 from ..symmetry import transform_vector
 from .linear import SpaceSymmetricTensor, SymDecompLinear
 from .rope import QKV, attention_RoPE_with_global
@@ -41,6 +42,19 @@ def show_dims(dimnames: str, obj) -> str:
     ]
     ret = ",".join(ret)
     return f"({ret})"
+
+
+class CoordinateGrid(AttrsModel):
+    xpos: jt.Float[jt.Array, "... X 2"]
+    ypos: jt.Float[jt.Array, "... Y 2"]
+
+    @classmethod
+    def from_shape(cls, Y: int, X: int):
+        """Build coordinate grid for a Y×X image."""
+        return cls(
+            xpos=np.array([np.arange(X), np.linspace(0, 1, X)]).T,
+            ypos=np.array([np.arange(Y), np.linspace(0, 1, Y)]).T,
+        )
 
 
 class AxialAttention(nnx.Module):
@@ -69,6 +83,7 @@ class AxialAttention(nnx.Module):
         use_v_bias: bool | None = None,
         use_out_bias: bool | None = None,
         use_chirality_rep: bool = True,
+        per_head_rope_freq: bool = True,
         # attention_fn: Callable[..., Array] = dot_product_attention,
         normalise_qk: bool = False,
         normalise_pre_out: bool = False,
@@ -109,6 +124,7 @@ class AxialAttention(nnx.Module):
             self.use_qk_bias = use_qk_bias
             self.use_v_bias = use_v_bias
             self.use_out_bias = use_out_bias
+            self.per_head_rope_freq = per_head_rope_freq
         self.use_chirality_rep = use_chirality_rep
         self.rngs = rngs if keep_rngs else None
 
@@ -158,7 +174,11 @@ class AxialAttention(nnx.Module):
             lambda k, v: nnx.Param(
                 initializers.truncated_normal(stddev=1, dtype=param_dtype)(
                     rngs.param(),
-                    (num_heads // num_groups, num_groups, v // 2, 2),
+                    (
+                        (num_heads // num_groups, num_groups, v // 2, 2)
+                        if per_head_rope_freq
+                        else (v // 2, 2)
+                    ),
                     dtype=param_dtype,
                 )
             ),
@@ -166,7 +186,7 @@ class AxialAttention(nnx.Module):
         )
         self.rope_freq_scaling = qk_head_width.map_representations(
             lambda k, v: np.pi
-            / jnp.array(
+            / np.array(
                 [np.linspace(1, 30, v // 2), np.linspace(0.1, 1, v // 2)], dtype=dtype
             ).T,
             cls=nnx_compat.Dict,
@@ -175,8 +195,9 @@ class AxialAttention(nnx.Module):
     def __call__(
         self,
         inputs: SymDecompBase,
-        xpos: jt.Float[jt.Array, "... X 2"],
-        ypos: jt.Float[jt.Array, "... Y 2"],
+        grid: CoordinateGrid,
+        *,
+        return_attention_weights: bool = False,
     ) -> SymDecompBase:
         batch = inputs.batch_shape
         # Bs = batch[:-2]
@@ -194,7 +215,6 @@ class AxialAttention(nnx.Module):
         for m in "qkv":
             lin = getattr(self, m)
             y = lin(inputs)
-            print(f"{m}: {inputs.shapes} -> {y.shapes}")
             y = dict(
                 rep=y.rep,
                 **{
@@ -217,7 +237,8 @@ class AxialAttention(nnx.Module):
             qkv[m] = y
 
         all_v = []
-        for axis, pos in enumerate([ypos[:, None, :], xpos[None, :, :]]):
+        all_aw = []
+        for axis, pos in enumerate([grid.ypos[:, None, :], grid.xpos[None, :, :]]):
             rot = {}
             for k, v in self.rope_freq_params.items():
                 # M K H 2
@@ -232,30 +253,24 @@ class AxialAttention(nnx.Module):
                 idx = np.r_[0, 2, 1, 0, 0, 1, 2, 0].reshape(2, 2, 2)
                 # r will have shape ... Y X 2 M K H 2 2
                 r = jnp.moveaxis(rd[..., idx], -3, -6)
-                print(f"{k} rot: ", show_dims("yxdmkhpq", r))
                 rot[k] = r
             qk = []
             for kk in ["q", "k"]:
-                for k in rot:
-                    vv = qkv[kk][k]
-                    print(f"{kk}.{k} rot: ", show_dims("yxadvfmkhp", vv))
-                    print(
-                        "-> ",
-                        show_dims(
-                            "yxdvfmkhp", vv[..., :, :, axis, :, :, :, :, :, :, :]
-                        ),
-                    )
                 qk.append(
                     {
                         k: jnp.einsum(
                             "...yxdvfmkhp,yxdmkhpq->...yxdvfmkhq",
                             qkv[kk][k][..., :, :, axis, :, :, :, :, :, :, :],
-                            v,
+                            r,
                         )
-                        for k, v in rot.items()
+                        for k, r in rot.items()
                     }
                 )
             Q, K = qk
+            #            for k in rot:
+            #                print(f"Q[{k}]: {show_dims(["txdvfmkhp","ytdvfmkhp"][axis], Q[k])} (size {Q[k].size})")
+            #                print(f"K[{k}]: {show_dims(["sxdvfmkhp","ysdvfmkhp"][axis], K[k])} (size {K[k].size})")
+
             logits = sum(
                 jnp.einsum(
                     [
@@ -267,19 +282,27 @@ class AxialAttention(nnx.Module):
                 )
                 for k in rot
             )
-            scale = self.activation(logits)
+            d = sum(Q[k].shape[-5] * Q[k].shape[-2] * Q[k].shape[-1] for k in rot)
+            scale = 1 / np.sqrt(d)
+            weight = self.activation(scale * logits)
+            # print(f"weight: {show_dims(["tsxdvmk","ytsdvmk"][axis], weight)}")
             Vrep = qkv["v"]
+            # for k in rot:
+            #    vv = Vrep[k][..., :, :, axis, :, :, :, :, :, :]
+            #    print(f"{k}: {show_dims(["sxdvfmkh","ysdvfmkh"][axis], vv)}")
             V = {
                 k: jnp.einsum(
                     [
                         "...tsxdvmk,...sxdvfmkh->...txdvfmkh",
                         "...ytsdvmk,...ysdvfmkh->...ytdvfmkh",
                     ][axis],
-                    scale,
-                    Vrep[k],
+                    weight,
+                    Vrep[k][..., :, :, axis, :, :, :, :, :, :],
                 )[..., :, :, None, :, :, :, :, :, :]
+                for k in rot
             }
             all_v.append(V)
+            all_aw.append(weight)
 
         rep = qkv["v"]["rep"]
         V = SplitSymDecomp(
@@ -297,8 +320,11 @@ class AxialAttention(nnx.Module):
                     )[k],
                     -1,
                 )
+                for k in rot
             },
             rep=rep,
         )
         out = self.out(V)
+        if return_attention_weights:
+            return out, all_aw
         return out

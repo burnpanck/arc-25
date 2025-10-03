@@ -18,10 +18,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout (with LFS for hooks that read binary files)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           lfs: true
           fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
@@ -39,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout (with LFS fixtures)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           lfs: true
           fetch-depth: 0

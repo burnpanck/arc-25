@@ -79,10 +79,15 @@ class PermRepMeta(enum.EnumMeta):
                 names,
                 **kw,
             )
-            scls._symbol_to_name = MappingProxyType({v.value.symbol: v for v in scls})
+            scls._symbol_to_element = MappingProxyType(
+                {v.value.symbol: v for v in scls}
+            )
+            scls._element_to_index = MappingProxyType(
+                {v: k for k, v in enumerate(scls)}
+            )
             return scls
         assert isinstance(value, str)
-        return cls._symbol_to_name[value]
+        return cls._symbol_to_element[value]
 
 
 class PermRepBase(enum.Enum, metaclass=PermRepMeta):
@@ -126,6 +131,10 @@ class PermRepBase(enum.Enum, metaclass=PermRepMeta):
     @enum_property
     def stabiliser(self):
         return self._value_.stabiliser
+
+    @enum_property
+    def index(self):
+        return self._element_to_index[self]
 
     def __str__(self):
         return f"{self.value.symbol}"
@@ -300,23 +309,35 @@ def transform_rep(s: D4, basis: PermRepBase) -> PermRepBase:
     return basis.apply(s)
 
 
-def transform_rep_idx(s: D4, rep: type[PermRepBase]) -> np.ndarray:
+def transform_coeff_in_basis(s: D4, rep: type[PermRepBase]) -> np.ndarray:
+    """Returns an array `idx`, such that for any basis `b`, `idx[b.apply(op).index] == b.index` is true.
+
+    That is, it maps **transformed** indices to **untransformed** indices.
+    This is what you usually want if you have an array of coefficients expressed in this basis,
+    and want to re-express those coefficients in the transformed basis.
+    """
     backmap = {v: k for k, v in enumerate(rep)}
-    return np.array([backmap[basis.apply(s)] for basis in rep], dtype=int)
+    si = s.inverse
+    return np.array([backmap[basis.apply(si)] for basis in rep], dtype=int)
 
 
-def transform_image(s: D4, image: np.ndarray) -> np.ndarray:
+def transform_image(
+    s: D4, image: np.ndarray, *, ydim: int = 0, xdim: int = 1
+) -> np.ndarray:
     """Applies the provided symmetry operation to the first two dimensions."""
+    xdim, ydim = [image.ndim + v if v < 0 else v for v in (xdim, ydim)]
     transpose = bool(s.value & 0b100)
     flip_y = bool(s.value & 0b010)
     flip_x = bool(s.value & 0b001)
     img = image
     if flip_y:
-        img = img[::-1, :]
+        img = img[(slice(None),) * ydim + (slice(None, None, -1),)]
     if flip_x:
-        img = img[:, ::-1]
+        img = img[(slice(None),) * xdim + (slice(None, None, -1),)]
     if transpose:
-        img = img.transpose(1, 0, *range(2, img.ndim))
+        dims = np.arange(img.ndim, dtype=int)
+        dims[[xdim, ydim]] = dims[[ydim, xdim]]
+        img = img.transpose(*dims)
     return img
 
 
