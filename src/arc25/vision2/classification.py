@@ -11,8 +11,8 @@ from flax.typing import (
 
 from .encoder import ARCEncoder
 from .fields import Field, FieldDims
-from .linear import SymmetricLinear
-from .symrep import SymDecomp, standard_rep
+from .linear import SymDecompLinear
+from .symrep import SymDecompBase, SymDecompDims, standard_rep
 from .transformer import FieldTransformer
 
 
@@ -21,7 +21,6 @@ class ARCClassifier(nnx.Module):
         self,
         *,
         num_classes: int = 1000,
-        num_colours: int = 10,
         num_layers: int = 12,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
@@ -35,12 +34,10 @@ class ARCClassifier(nnx.Module):
         rngs: nnx.Rngs,
         **kw,
     ):
-        self.num_colours = num_colours
         self.dtype = dtype
         self.hidden_size = hidden_size
 
         self.encoder = ARCEncoder(
-            num_colours=num_colours,
             num_layers=num_layers,
             dtype=dtype,
             param_dtype=param_dtype,

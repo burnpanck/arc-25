@@ -8,7 +8,87 @@ import numpy as np
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
 from ..symmetry import D4
-from .symrep import SymDecompBase, SymDecompDims, SymRep, standard_rep
+from .symrep import SymDecompBase, SymDecompDims, standard_rep
+
+
+class CoordinateGrid(AttrsModel):
+    xpos: jt.Float[jt.Array, "... X 2"]
+    ypos: jt.Float[jt.Array, "... Y 2"]
+    mask: jt.Bool[jt.Array, "... Y X"]
+    # rmsk: jt.Bool[jt.Array, "... Y"]
+    # cmsk: jt.Bool[jt.Array, "... X"]
+
+    @classmethod
+    def from_shape(cls, H: int, W: int, mask: np.ndarray | None = None):
+        """Build coordinate grid for a Y×X image."""
+        if mask is None:
+            mask = np.ones((H, W), bool)
+        return cls(
+            xpos=np.array([np.arange(W), np.linspace(0, 1, W)]).T,
+            ypos=np.array([np.arange(H), np.linspace(0, 1, H)]).T,
+            mask=mask,
+        )
+
+    @classmethod
+    def for_batch(
+        cls,
+        H: int,
+        W: int,
+        shapes: np.ndarray,
+        *,
+        start: np.ndarray | None = None,
+        mask: np.ndarray | None = None,
+    ):
+        if start is None:
+            start = np.zeros_like(shapes)
+        assert start.shape == shapes.shape
+        batch = shapes.shape[:-1]
+        h, w = np.moveaxis(shapes, -1, 0)[..., None]
+        y0, x0 = np.moveaxis(start, -1, 0)[..., None]
+        xpos = np.arange(W)
+        ypos = np.arange(H)
+        if mask is None:
+            ym = (y0 <= ypos) & (ypos < y0 + h)
+            xm = (x0 <= xpos) & (xpos < x0 + w)
+            mask = ym[..., :, None] & xm[..., None, :]
+        xpos = np.concatenate(
+            [
+                np.tile(xpos, batch + (1,))[..., None],
+                ((xpos - x0) / w)[..., None],
+            ],
+            -1,
+        )
+        ypos = np.concatenate(
+            [
+                np.tile(ypos, batch + (1,))[..., None],
+                ((ypos - y0) / h)[..., None],
+            ],
+            -1,
+        )
+        assert xpos.shape == batch + (W, 2)
+        assert ypos.shape == batch + (H, 2)
+        assert mask.shape == batch + (H, W)
+        return cls(
+            xpos=xpos,
+            ypos=ypos,
+            mask=mask,
+        )
+
+    @property
+    def batch_shape(self):
+        return np.broadcast_shapes(
+            self.ypos.shape[:-2],
+            self.xpos.shape[:-2],
+            #                self.rmsk.shape[:-1],
+            #                self.cmsk.shape[:-1],
+            self.mask.shape[:-2],
+        )
+
+    @property
+    def shapes(self):
+        return SimpleNamespace(
+            **{k: v.shape for k, v in attrs.asdict(self, recurse=False).items()}
+        )
 
 
 # TODO: latest flax has `nnx.PyTree` that seems to work with `dataclass`
@@ -17,11 +97,7 @@ class Field(AttrsModel):
     # rows: SymDecompBase  # dimensions (... Y R? C); representation (t,l,r,d)
     # cols: SymDecompBase  # dimensions (... X R? C); representation (e,x,y,i)
     cells: SymDecompBase  # dimensions (... Y X R? C); full representation
-    ypos: jt.Float[jt.Array, "... Y 2"]  # (absolute positions, relative positions)
-    xpos: jt.Float[jt.Array, "... X 2"]  # (absolute positions, relative positions)
-    # rmsk: jt.Bool[jt.Array, "... Y"]
-    # cmsk: jt.Bool[jt.Array, "... X"]
-    mask: jt.Bool[jt.Array, "... Y X"]
+    grid: CoordinateGrid
 
     @property
     def projections(self) -> dict[str, SymDecompBase]:
@@ -56,10 +132,7 @@ class Field(AttrsModel):
     @property
     def shapes(self):
         return SimpleNamespace(
-            {
-                k: v.shapes if isinstance(v, SymDecompBase) else v.shape
-                for k, v in attrs.asdict(self, recurse=False).items()
-            }
+            **{k: v.shapes for k, v in attrs.asdict(self, recurse=False).items()}
         )
 
     @property
@@ -69,11 +142,7 @@ class Field(AttrsModel):
             #                self.rows.batch_shape[:-1],
             #                self.cols.batch_shape[:-1],
             self.cells.batch_shape[:-2],
-            self.ypos.shape[:-2],
-            self.xpos.shape[:-2],
-            #                self.rmsk.shape[:-1],
-            #                self.cmsk.shape[:-1],
-            self.mask.shape[:-2],
+            self.grid.batch_shape,
         )
 
 
@@ -118,6 +187,10 @@ class FieldDims:
         )
 
     @property
+    def rep(self):
+        return self.cells.rep
+
+    @property
     def projections(self) -> dict[str, SymDecompDims]:
         return {
             f.name: getattr(self, f.name)
@@ -160,19 +233,10 @@ class FieldDims:
         )
 
     def validity_problems(self):
-        if not (
-            self.context.rep.is_valid()
-            # and self.rows.rep.is_valid()
-            # and self.cols.rep.is_valid()
-            and self.cells.rep.is_valid()
-        ):
-            return "invalid rep"
-        if not (
-            set(self.context.rep.repseq)
-            # == (set(self.rows.rep.repseq) | set(self.cols.rep.repseq))
-            == set(self.cells.rep.repseq)
-        ):
-            return "rep mismatch"
+        if self.context.rep.is_valid():
+            return f"invalid context rep: {self.context.validity_problems()}"
+        if self.cells.rep.is_valid():
+            return f"invalid cell rep: {self.cells.validity_problems()}"
         # if set(self.rows.rep.opseq) & set(self.cols.rep.opseq):
         #    return "rep overlap"
         # for k in ["inv", "equiv"]:

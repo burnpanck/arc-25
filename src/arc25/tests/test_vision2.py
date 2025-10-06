@@ -43,11 +43,12 @@ def test_SymDecompLinear1():
     inpf = SymDecompDims(17, 11, 5)
     outf = SymDecompDims(19, 13, 7)
 
+    rngs = nnx.Rngs(42)
     lin = SymDecompLinear(
         inpf,
         outf,
         extra_in_reps=(symmetry.AxialDirRep,),
-        rngs=nnx.Rngs(42),
+        rngs=rngs,
         kernel_init=quant,
         bias_init=quant,
     )
@@ -56,7 +57,7 @@ def test_SymDecompLinear1():
     inp = SplitSymDecomp.empty(inpf, batch=(3, 4))
     for k, v in inp.representations.items():
         s = dict(invariant=1, space=8, flavour=10)[k]
-        v[...] = s * jax.random.randint(lin.rngs.params(), v.shape, -3, 4) / 2
+        v[...] = s * jax.random.randint(rngs.params(), v.shape, -3, 4) / 2
     out = lin(inp)
     for op in D4:
         atfo, ftfo = [
@@ -80,7 +81,7 @@ def test_SymDecompLinear1():
             a = getattr(actual, k)
             assert np.allclose(a, v), f"{op}: {k}"
 
-        verify_swap(op, tinp, expected, lin.rngs, lin)
+        verify_swap(op, tinp, expected, rngs, lin)
 
 
 def test_SymDecompLinear2():
@@ -88,11 +89,12 @@ def test_SymDecompLinear2():
     inpf = SymDecompDims(17, 11, 5)
     outf = SymDecompDims(19, 13, 7)
 
+    rngs = nnx.Rngs(42)
     lin = SymDecompLinear(
         inpf,
         outf,
         extra_out_reps=(symmetry.AxialDirRep,),
-        rngs=nnx.Rngs(42),
+        rngs=rngs,
         kernel_init=quant,
         bias_init=quant,
     )
@@ -101,7 +103,7 @@ def test_SymDecompLinear2():
     inp = SplitSymDecomp.empty(inpf, batch=(3,))
     for k, v in inp.representations.items():
         s = dict(invariant=1, space=8, flavour=10)[k]
-        v[...] = s * jax.random.randint(lin.rngs.params(), v.shape, -3, 4) / 2
+        v[...] = s * jax.random.randint(rngs.params(), v.shape, -3, 4) / 2
     out = lin(inp)
     for op in D4:
         atfo, ftfo = [
@@ -124,7 +126,7 @@ def test_SymDecompLinear2():
         for k, v in expected.representations.items():
             a = getattr(actual, k)
             assert np.allclose(a, v), f"{op}: {k}"
-        verify_swap(op, tinp, expected, lin.rngs, lin)
+        verify_swap(op, tinp, expected, rngs, lin)
 
 
 def test_SymDecompLinear3():
@@ -132,11 +134,12 @@ def test_SymDecompLinear3():
     inpf = SymDecompDims(17, 11, 5)
     outf = SymDecompDims(19, 13, 7, rep=RepSpec(symmetry.TrivialRep, 10))
 
+    rngs = nnx.Rngs(42)
     lin = SymDecompLinear(
         inpf,
         outf,
         extra_out_reps=(symmetry.AxialDirRep,),
-        rngs=nnx.Rngs(42),
+        rngs=rngs,
         kernel_init=quant,
         bias_init=quant,
     )
@@ -145,7 +148,7 @@ def test_SymDecompLinear3():
     inp = SplitSymDecomp.empty(inpf, batch=(3,))
     for k, v in inp.representations.items():
         s = dict(invariant=1, space=8, flavour=10)[k]
-        v[...] = s * jax.random.randint(lin.rngs.params(), v.shape, -3, 4) / 2
+        v[...] = s * jax.random.randint(rngs.params(), v.shape, -3, 4) / 2
     out = lin(inp)
     for op in D4:
         atfo, ftfo = [
@@ -168,7 +171,7 @@ def test_SymDecompLinear3():
         for k, v in expected.representations.items():
             a = getattr(actual, k)
             assert np.allclose(a, v), f"{op}: {k}"
-        verify_swap(op, tinp, expected, lin.rngs, lin)
+        verify_swap(op, tinp, expected, rngs, lin)
 
 
 def test_RoPE():

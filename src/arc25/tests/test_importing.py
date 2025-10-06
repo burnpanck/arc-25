@@ -24,9 +24,6 @@ def test_importing():
     except ImportError:
         skip.add("arc25.vision1")
 
-    # TODO: this one is WIP
-    skip.add("arc25.vision2")
-
     done = set()
     failed = dict()
     while todo:

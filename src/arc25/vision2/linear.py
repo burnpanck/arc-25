@@ -21,6 +21,7 @@ from jax import lax
 
 from ..lib import nnx_compat
 from ..lib.compat import Self
+from ..lib.misc import first_from
 from ..symmetry import D4, PermRepBase, SymOpBase
 from .symrep import FlatSymDecomp, SplitSymDecomp, SymDecompBase, SymDecompDims
 
@@ -321,6 +322,7 @@ class SymDecompLinear(nnx.Module):
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
+        mode: typing.Literal["flat", "split"] | None = None,
         kernel_init: Initializer = default_kernel_init,
         bias_init: Initializer = default_bias_init,
         dot_general: DotGeneralT = lax.dot_general,
@@ -340,7 +342,6 @@ class SymDecompLinear(nnx.Module):
             bias_init=bias_init,
             dot_general=dot_general,
             promote_dtype=promote_dtype,
-            rngs=rngs,
         )
 
         self.in_features = in_features
@@ -348,6 +349,7 @@ class SymDecompLinear(nnx.Module):
         self.out_features = out_features
         self.extra_out_reps = extra_out_reps
         self.use_bias = use_bias
+        self.mode = mode
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -380,6 +382,7 @@ class SymDecompLinear(nnx.Module):
                             + ((outf.rep.space,) if ko == "space" else ()),
                             vo,
                             use_bias=False,
+                            rngs=rngs,
                             **kw,
                         )
                         for ko, vo in outf.representations.items()
@@ -407,6 +410,7 @@ class SymDecompLinear(nnx.Module):
                 extra_out_reps,
                 vo,
                 use_bias=False,
+                rngs=rngs,
                 **kw,
             )
             if vi and vo
@@ -449,6 +453,7 @@ class SymDecompLinear(nnx.Module):
                 len(rep) for rep in self.extra_in_reps
             )
 
+        mode = first_from(mode, self.mode)
         if mode is None:
             match inputs:
                 case FlatSymDecomp():

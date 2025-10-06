@@ -1,3 +1,4 @@
+import typing
 from types import SimpleNamespace
 
 import attrs
@@ -18,43 +19,12 @@ from .. import symmetry
 from ..dsl.types import Vector
 from ..lib import nnx_compat
 from ..lib.attrs import AttrsModel
-from ..symmetry import transform_vector
+from ..lib.compat import Self
+from ..lib.misc import first_from, show_dims
+from ..symmetry import PermRepBase, transform_vector
+from .fields import CoordinateGrid
 from .linear import SpaceSymmetricTensor, SymDecompLinear
-from .rope import QKV, attention_RoPE_with_global
 from .symrep import FlatSymDecomp, SplitSymDecomp, SymDecompBase, SymDecompDims
-
-
-def first_from(*args):
-    for arg in args:
-        if arg is not None:
-            return arg
-    return None
-
-
-def show_dims(dimnames: str, obj) -> str:
-    try:
-        shape = obj.shape
-    except AttributeError:
-        shape = obj
-    batch = shape[: -len(dimnames)]
-    ret = [str(n) for n in batch] + [
-        f"{k}={v}" for k, v in zip(dimnames, shape[-len(dimnames) :])
-    ]
-    ret = ",".join(ret)
-    return f"({ret})"
-
-
-class CoordinateGrid(AttrsModel):
-    xpos: jt.Float[jt.Array, "... X 2"]
-    ypos: jt.Float[jt.Array, "... Y 2"]
-
-    @classmethod
-    def from_shape(cls, Y: int, X: int):
-        """Build coordinate grid for a Y×X image."""
-        return cls(
-            xpos=np.array([np.arange(X), np.linspace(0, 1, X)]).T,
-            ypos=np.array([np.arange(Y), np.linspace(0, 1, Y)]).T,
-        )
 
 
 class AxialAttention(nnx.Module):
@@ -64,9 +34,9 @@ class AxialAttention(nnx.Module):
         in_features: SymDecompDims,
         out_features: SymDecompDims | None = None,
         *,
+        num_groups: int | None = None,
         qk_head_width: SymDecompDims | None = None,
         v_head_width: SymDecompDims | None = None,
-        num_groups: int | None = None,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         # broadcast_dropout: bool = True,
@@ -90,8 +60,6 @@ class AxialAttention(nnx.Module):
         keep_rngs: bool = True,
         rngs: rnglib.Rngs,
     ):
-        if num_groups is None:
-            num_groups = num_heads
         if out_features is None:
             out_features = in_features
         if qk_head_width is None:
@@ -103,6 +71,9 @@ class AxialAttention(nnx.Module):
         use_qk_bias = first_from(use_qk_bias, use_bias, False)
         use_v_bias = first_from(use_v_bias, use_bias, True)
         use_out_bias = first_from(use_out_bias, use_bias, False)
+
+        if normalise_qk or normalise_pre_out:
+            raise NotImplementedError()
 
         self.num_heads = num_heads
         self.in_features = in_features
@@ -198,7 +169,15 @@ class AxialAttention(nnx.Module):
         grid: CoordinateGrid,
         *,
         return_attention_weights: bool = False,
+        rngs: nnx.Rngs | None = None,
+        deterministic: bool | None = None,
+        mode: typing.Literal["flat", "split"] | None = None,
     ) -> SymDecompBase:
+
+        assert self.in_features.validate(inputs), self.in_features.validation_problems(
+            inputs
+        )
+
         batch = inputs.batch_shape
         # Bs = batch[:-2]
         Y, X = batch[-2:]
@@ -238,7 +217,9 @@ class AxialAttention(nnx.Module):
 
         all_v = []
         all_aw = []
-        for axis, pos in enumerate([grid.ypos[:, None, :], grid.xpos[None, :, :]]):
+        for axis, pos in enumerate(
+            [grid.ypos[..., :, None, :], grid.xpos[..., None, :, :]]
+        ):
             rot = {}
             for k, v in self.rope_freq_params.items():
                 # M K H 2
@@ -259,7 +240,7 @@ class AxialAttention(nnx.Module):
                 qk.append(
                     {
                         k: jnp.einsum(
-                            "...yxdvfmkhp,yxdmkhpq->...yxdvfmkhq",
+                            "...yxdvfmkhp,...yxdmkhpq->...yxdvfmkhq",
                             qkv[kk][k][..., :, :, axis, :, :, :, :, :, :, :],
                             r,
                         )
@@ -284,7 +265,14 @@ class AxialAttention(nnx.Module):
             )
             d = sum(Q[k].shape[-5] * Q[k].shape[-2] * Q[k].shape[-1] for k in rot)
             scale = 1 / np.sqrt(d)
-            weight = self.activation(scale * logits)
+            # print(f"weight: {show_dims(["tsxdvmk","ytsdvmk"][axis], scale)}")
+            mask = (
+                grid.mask[..., None, :, :, None, None, None, None]
+                if not axis
+                else grid.mask[..., :, None, :, None, None, None, None]
+            )
+            # print(f"gridmask: {show_dims(["tsxdvmk","ytsdvmk"][axis], mask)}")
+            weight = jnp.where(mask, self.activation(scale * logits), 0)
             # print(f"weight: {show_dims(["tsxdvmk","ytsdvmk"][axis], weight)}")
             Vrep = qkv["v"]
             # for k in rot:
@@ -327,4 +315,236 @@ class AxialAttention(nnx.Module):
         out = self.out(V)
         if return_attention_weights:
             return out, all_aw
+        return out
+
+
+class GlobalAttention(nnx.Module):
+    def __init__(
+        self,
+        num_heads: int,
+        *,
+        in_features: SymDecompDims | None = None,
+        target_features: SymDecompDims | None = None,
+        source_features: SymDecompDims | None = None,
+        out_features: SymDecompDims | None = None,
+        qk_head_width: SymDecompDims | None = None,
+        v_head_width: SymDecompDims | None = None,
+        num_groups: int | None = None,
+        dtype: Dtype | None = None,
+        param_dtype: Dtype = jnp.float32,
+        # broadcast_dropout: bool = True,
+        dropout_rate: float = 0.0,
+        deterministic: bool = False,
+        precision: PrecisionLike = None,
+        kernel_init: Initializer = default_kernel_init,
+        use_softmax: bool = True,
+        activation=None,
+        # out_kernel_init: Initializer | None = None,
+        bias_init: Initializer = default_bias_init,
+        # out_bias_init: Initializer | None = None,
+        use_bias: bool | None = None,
+        use_qk_bias: bool | None = None,
+        use_v_bias: bool | None = None,
+        use_out_bias: bool | None = None,
+        head_rep: type[PermRepBase] = symmetry.TrivialRep,
+        # attention_fn: Callable[..., Array] = dot_product_attention,
+        normalise_qk: bool = False,
+        keep_rngs: bool = True,
+        rngs: rnglib.Rngs,
+    ):
+        if num_groups is None:
+            num_groups = num_heads
+        if target_features is None:
+            target_features = in_features
+        if source_features is None:
+            source_features = in_features
+        if out_features is None:
+            out_features = target_features
+        if qk_head_width is None:
+            qk_head_width = target_features.map_representations(
+                lambda k, vq, vkv: min(vq, vkv) // num_heads, source_features
+            )
+        if v_head_width is None:
+            v_head_width = out_features.map_representations(lambda k, v: v // num_heads)
+        assert not num_heads % num_groups
+        use_qk_bias = first_from(use_qk_bias, use_bias, False)
+        use_v_bias = first_from(use_v_bias, use_bias, False)
+        use_out_bias = first_from(use_out_bias, use_bias, False)
+
+        if normalise_qk:
+            raise NotImplementedError()
+
+        self.num_heads = num_heads
+        self.target_features = target_features
+        self.source_features = source_features
+        self.out_features = out_features
+        self.qk_head_width = qk_head_width
+        self.v_head_width = v_head_width
+        self.num_groups = num_groups
+        self.dtype = dtype
+        self.dropout_rate = dropout_rate
+        self.deterministic = deterministic
+        self.precision = precision
+        self.use_softmax = use_softmax
+        self.activation = activation
+        self.normalise_qk = normalise_qk
+        if False:
+            self.param_dtype = param_dtype
+            self.kernel_init = kernel_init
+            self.bias_init = bias_init
+            self.use_qk_bias = use_qk_bias
+            self.use_v_bias = use_v_bias
+            self.use_out_bias = use_out_bias
+        self.head_rep = head_rep
+        self.rngs = rngs if keep_rngs else None
+
+        head_reps = (head_rep,)
+        kw = dict(
+            kernel_init=kernel_init,
+            bias_init=bias_init,
+            precision=precision,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+        )
+        for mode, (inf, nh) in dict(
+            q=(target_features, num_heads),
+            k=(source_features, num_groups),
+        ).items():
+            setattr(
+                self,
+                mode,
+                SymDecompLinear(
+                    inf,
+                    qk_head_width.map_representations(
+                        lambda k, v: v * nh  # noqa: B023
+                    ),
+                    extra_out_reps=head_reps,
+                    use_bias=use_qk_bias,
+                    **kw,
+                ),
+            )
+        self.v = SymDecompLinear(
+            source_features,
+            v_head_width.map_representations(lambda k, v: v * num_groups),
+            extra_out_reps=head_reps,
+            use_bias=use_v_bias,
+            **kw,
+        )
+        self.out = SymDecompLinear(
+            v_head_width.map_representations(lambda k, v: v * num_heads),
+            out_features,
+            extra_in_reps=head_reps,
+            use_bias=use_out_bias,
+            **kw,
+        )
+
+    def __call__(
+        self,
+        target: SymDecompBase,
+        source: SymDecompBase | None = None,
+        mask: jt.Bool[jt.Array, "... T S"] | None = None,
+        *,
+        return_attention_weights: bool = False,
+        rngs: nnx.Rngs | None = None,
+        deterministic: bool | None = None,
+        mode: typing.Literal["flat", "split"] | None = None,
+    ) -> SymDecompBase:
+        if source is None:
+            source = target
+
+        assert self.target_features.validate(
+            target
+        ), self.target_features.validation_problems(target)
+        assert self.source_features.validate(
+            source
+        ), self.source_features.validation_problems(source)
+        assert target.batch_shape[:-1] == source.batch_shape[:-1]
+        if mask is not None:
+            # done early, so we get an exeption if shapes mismatch
+            mask = jnp.broadcast_to(
+                mask,
+                target.batch_shape[:-1]
+                + (
+                    target.batch_shape[-1],
+                    source.batch_shape[-1],
+                ),
+            )
+
+        batch = np.broadcast_shapes(target.batch_shape[:-1], source.batch_shape[:-1])
+        T = target.batch_shape[-1]  # noqa: F841
+        S = source.batch_shape[-1]  # noqa: F841
+        N = self.num_heads
+        K = self.num_groups
+        M = N // K
+
+        qkv = {}
+        qkvrep = {}
+        for m in "qkv":
+            lin = getattr(self, m)
+            y = lin(dict(q=target).get(m, source), mode=mode)
+            qkvrep[m] = y.rep
+            y = dict(
+                **{
+                    k: v.reshape(
+                        *v.shape[
+                            : len(batch) + 2
+                        ],  # batch, including T/S and the newly created head_rep
+                        *v.shape[len(batch) + 2 : -1]
+                        or (
+                            1,
+                        ),  # (1) main representation (flavour/space) if any, adding broadcasting dim otherwise
+                        (M if m == "q" else 1),
+                        K,  # (2) heads in groups
+                        v.shape[-1] // (N if m == "q" else K),  # (1) head dim
+                    )
+                    for k, v in y.representations.items()
+                },
+            )
+            qkv[m] = y
+
+        Q, K = [qkv[k] for k in ["q", "k"]]
+        logits = sum(
+            jnp.einsum(
+                "...tdfmkh,...sdfmkh->...tsdmk",
+                Q[k],
+                K[k],
+            )
+            for k in Q
+        )
+        d = sum(v.shape[-4] * v.shape[-1] for v in Q.values())
+        scale = 1 / np.sqrt(d)
+        logits = scale * logits
+        if self.activation is not None:
+            logits = self.activation(logits)
+        lgmsk = mask[..., :, :, None, None, None] if mask is not None else True
+        if self.use_softmax:
+            weight = jax.nn.softmax(logits, axis=-4, where=lgmsk)
+        else:
+            weight = jnp.where(lgmsk, logits, 0)
+        V = {
+            k: jnp.einsum(
+                "...tsdmk,...sdfmkh->...tdfmkh",
+                weight,
+                v,
+            )
+            for k, v in qkv["v"].items()
+        }
+
+        rep = qkvrep["v"]
+        V = SplitSymDecomp(
+            **{
+                # get rid of that "f" dimension where it doesn't belong
+                k: v.reshape(
+                    *v.shape[: len(batch) + 2],  # retain the head_rep dim
+                    *v.shape[-dict(invariant=3).get(k, 4) : -3],
+                    np.prod(v.shape[-3:]),
+                )
+                for k, v in V.items()
+            },
+            rep=rep,
+        )
+        out = self.out(V, mode=mode)
+        if return_attention_weights:
+            return out, weight
         return out

@@ -35,7 +35,7 @@ class RepSpec:
             return False
         # ensure subgroup is closed
         ref = list(self.space)[0]
-        operations = set(ref.canonical_mapping_to(o) for o in self.space)
+        operations = frozenset.union(*[ref.mapping_to(o) for o in self.space])
         completion = set(o.inverse for o in operations) | set(
             a.combine(b) for a in operations for b in operations
         )
@@ -53,6 +53,21 @@ class SymDecompBase(abc.ABC, AttrsModel):
     @property
     @abc.abstractmethod
     def batch_shape(self) -> tuple[int, ...]: ...
+
+    def batch_reshape(self, *new_batch_shape) -> Self:
+        cur_batch_shape = self.batch_shape
+        n_elements = np.prod(cur_batch_shape)
+        if n_unspec := sum(v < 0 for v in new_batch_shape):
+            if n_unspec > 1:
+                raise ValueError(f"Got more than one ({n_unspec}) -1 values")
+            n_rem = np.prod([v for v in new_batch_shape if v > 0])
+            assert n_elements == n_rem or (n_rem > 0 and not n_elements % n_rem)
+            new_batch_shape = tuple(
+                v if v >= 0 else n_elements // n_rem if n_rem > 0 else 0
+                for v in new_batch_shape
+            )
+        n = len(cur_batch_shape)
+        return self.map_elementwise(lambda v: v.reshape(*new_batch_shape, *v.shape[n:]))
 
 
 @attrs.frozen
@@ -187,6 +202,11 @@ class SplitSymDecomp(SymDecompBase):
             },
         )
 
+    def map_elementwise(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
+    ) -> Self:
+        return self.map_representations(fun, *other, **kw)
+
     @property
     def shapes(self):
         return SimpleNamespace(
@@ -252,6 +272,14 @@ class FlatSymDecomp(SymDecompBase):
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
         return self.as_split().map_representations(fun, *other, **kw)
+
+    def map_elementwise(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
+    ) -> Self:
+        return attrs.evolve(
+            self,
+            data=fun(self.data, *[o.data for o in other], **kw),
+        )
 
     @property
     def shapes(self):
