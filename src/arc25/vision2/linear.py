@@ -36,7 +36,7 @@ class AxisSymmetryInfo:
 class SymmetryMappingSpec:
     symmetry_group: type[SymOpBase]
     axes: tuple[AxisSymmetryInfo, ...]
-    permutation_index: np.ndarray = attrs.field(repr=lambda v: f"{v.shape}")
+    permutation_index: np.ndarray = attrs.field(repr=lambda v: f"{v.shape}", eq=False)
     n_free_subspaces: int
     fully_independent: bool
     fully_coupled: bool
@@ -424,10 +424,14 @@ class SymDecompLinear(nnx.Module):
             if self.bias is not None
             else 0
         )
-        for lin in self.flavour_invariant.values():
-            ret += lin.approximate_flops
+        for ilin in self.flavour_invariant.values():
+            for lin in ilin.values():
+                ret += lin.approximate_flops
         if self.flavour_pointwise is not None:
-            ret += self.flavour_pointwise.kernel.size
+            ret += (
+                self.flavour_pointwise.approximate_flops
+                * self.in_features.rep.n_flavours
+            )
         return ret
 
     def __call__(

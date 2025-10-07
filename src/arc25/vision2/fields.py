@@ -2,13 +2,14 @@ import typing
 from types import SimpleNamespace
 
 import attrs
+import jax.numpy as jnp
 import jaxtyping as jt
 import numpy as np
 
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
 from ..symmetry import D4
-from .symrep import SymDecompBase, SymDecompDims, standard_rep
+from .symrep import SplitSymDecomp, SymDecompBase, SymDecompDims, standard_rep
 
 
 class CoordinateGrid(AttrsModel):
@@ -40,27 +41,27 @@ class CoordinateGrid(AttrsModel):
         mask: np.ndarray | None = None,
     ):
         if start is None:
-            start = np.zeros_like(shapes)
+            start = jnp.zeros_like(shapes)
         assert start.shape == shapes.shape
         batch = shapes.shape[:-1]
-        h, w = np.moveaxis(shapes, -1, 0)[..., None]
-        y0, x0 = np.moveaxis(start, -1, 0)[..., None]
+        h, w = jnp.moveaxis(shapes, -1, 0)[..., None]
+        y0, x0 = jnp.moveaxis(start, -1, 0)[..., None]
         xpos = np.arange(W)
         ypos = np.arange(H)
         if mask is None:
             ym = (y0 <= ypos) & (ypos < y0 + h)
             xm = (x0 <= xpos) & (xpos < x0 + w)
             mask = ym[..., :, None] & xm[..., None, :]
-        xpos = np.concatenate(
+        xpos = jnp.concatenate(
             [
-                np.tile(xpos, batch + (1,))[..., None],
+                jnp.tile(xpos, batch + (1,))[..., None],
                 ((xpos - x0) / w)[..., None],
             ],
             -1,
         )
-        ypos = np.concatenate(
+        ypos = jnp.concatenate(
             [
-                np.tile(ypos, batch + (1,))[..., None],
+                jnp.tile(ypos, batch + (1,))[..., None],
                 ((ypos - y0) / h)[..., None],
             ],
             -1,
@@ -233,10 +234,10 @@ class FieldDims:
         )
 
     def validity_problems(self):
-        if self.context.rep.is_valid():
-            return f"invalid context rep: {self.context.validity_problems()}"
-        if self.cells.rep.is_valid():
-            return f"invalid cell rep: {self.cells.validity_problems()}"
+        if not self.context.rep.is_valid():
+            return f"invalid context rep: {self.context.rep}"
+        if not self.cells.rep.is_valid():
+            return f"invalid cell rep: {self.cells.rep}"
         # if set(self.rows.rep.opseq) & set(self.cols.rep.opseq):
         #    return "rep overlap"
         # for k in ["inv", "equiv"]:
@@ -271,16 +272,16 @@ class FieldDims:
         #     return f"cols {shi} <> {f.cols.shapes}"
         if f.cells.batch_shape[-2:] != (Y, X):
             return f"cols {shi} <> {f.cells.shapes}"
-        if f.ypos.shape[-2:] != (Y, 2):
-            return f"ypos {shi} <> {f.ypos.shape}"
-        if f.xpos.shape[-2:] != (X, 2):
-            return f"xpos {shi} <> {f.xpos.shape}"
+        if f.grid.ypos.shape[-2:] != (Y, 2):
+            return f"ypos {shi} <> {f.grid.ypos.shape}"
+        if f.grid.xpos.shape[-2:] != (X, 2):
+            return f"xpos {shi} <> {f.grid.xpos.shape}"
         # if f.rmsk.shape[-1] != Y:
         #     return f"rmsk {shi} <> {f.rmsk.shape}"
         # if f.cmsk.shape[-1] != X:
         #     return f"cmsk {shi} <> {f.cmsk.shape}"
-        if f.mask.shape[-2:] != (Y, X):
-            return f"mask {shi} <> {f.mask.shape}"
+        if f.grid.mask.shape[-2:] != (Y, X):
+            return f"mask {shi} <> {f.grid.mask.shape}"
         try:
             f.batch_shape
         except ValueError:
@@ -294,6 +295,7 @@ class FieldDims:
         batch: tuple[int, ...] = (),
         *,
         shape: tuple[int, int] | None = None,
+        sym_decomp_cls: SymDecompBase = SplitSymDecomp,
     ) -> Field:
         if shape is None:
             shape = self.shape
@@ -302,15 +304,13 @@ class FieldDims:
             assert self.shape is None or shape == self.shape
         Y, X = shape
         ret = Field(
-            context=self.context.make_empty(batch + (self.context_tokens,)),
-            #            rows=self.rows.make_empty(batch + (Y, F)),
-            #            cols=self.cols.make_empty(batch + (X, F)),
-            cells=self.cells.make_empty(batch + shape),
-            ypos=np.empty(batch + (Y, 2)),
-            xpos=np.empty(batch + (X, 2)),
-            rmsk=np.empty(batch + (Y,), bool),
-            cmsk=np.empty(batch + (X,), bool),
-            mask=np.empty(batch + (Y, X), bool),
+            context=sym_decomp_cls.empty(self.context, batch + (self.context_tokens,)),
+            cells=sym_decomp_cls.empty(self.cells, batch + shape),
+            grid=CoordinateGrid(
+                ypos=np.empty(batch + (Y, 2)),
+                xpos=np.empty(batch + (X, 2)),
+                mask=np.empty(batch + (Y, X), bool),
+            ),
         )
         assert self.validate(ret), self.validation_problems(ret)
         return ret

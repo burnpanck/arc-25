@@ -26,16 +26,17 @@ class ARCEncoder(nnx.Module):
         self,
         *,
         num_heads: int,
+        hidden_size: FieldDims,
         num_layers: int = 12,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
-        hidden_size: FieldDims,
         qk_head_width: FieldDims | None = None,
         v_head_width: FieldDims | None = None,
         swiglu_width_factor: float | None = None,
         use_chirality_rep: bool = True,
         per_head_rope_freq: bool = True,
+        head_rep: type[symmetry.PermRepBase] = symmetry.TrivialRep,
         num_groups: int | None = None,
         dropout_rate: float = 0.1,
         keep_rngs: bool = True,
@@ -110,6 +111,7 @@ class ARCEncoder(nnx.Module):
                 param_dtype=param_dtype,
                 # attention_dtype=attention_dtype,
                 precision=precision,
+                head_rep=head_rep,
                 # we can't hold on to the Rngs, as we want to carry it through the scan later
                 keep_rngs=False,
                 rngs=rngs,
@@ -146,9 +148,9 @@ class ARCEncoder(nnx.Module):
         the others map to the input colours.
         """
         pre_embedding = self.encode(x, size)
-        print(f"{pre_embedding.shapes=}")
+        # print(f"{pre_embedding.shapes=}")
         embedding = pre_embedding.map_projections(lambda v, f: f(v), self.embedding)
-        print(f"{embedding.shapes=}")
+        # print(f"{embedding.shapes=}")
         embedding = attrs.evolve(
             embedding,
             context=attrs.evolve(
@@ -235,7 +237,7 @@ as either a __call__ argument or class attribute""",
         dtype = self.dtype or jnp.float32
 
         x = x[..., :, :, None]
-        print(f"{x.shape=} {grid.mask.shape=}")
+        # print(f"{x.shape=} {grid.mask.shape=}")
 
         colour_idx = np.r_[: hs.rep.n_flavours]
         presence = (x == colour_idx) & grid.mask[..., None]
@@ -244,9 +246,9 @@ as either a __call__ argument or class attribute""",
             1 + grid.mask.astype(dtype).sum((-2, -1))[..., None]
         ).astype(dtype)
         intensity = 1 / (1 + count)
-        print(
-            f"{presence.shape=} {count.shape=} {grid.mask.shape=} {prevalence.shape=} {intensity.shape=}"
-        )
+        # print(
+        #    f"{presence.shape=} {count.shape=} {grid.mask.shape=} {prevalence.shape=} {intensity.shape=}"
+        # )
         # size comes in as (height, width)
         axl = [symmetry.AxisRep.v, symmetry.AxisRep.h]
         context = SplitSymDecomp(
@@ -317,7 +319,7 @@ as either a __call__ argument or class attribute""",
             space=cells_space,
             rep=RepSpec(symmetry.AxialDirRep, hs.cells.n_flavours),
         )
-        print(f"{context.shapes=} {cells.shapes=}")
+        # print(f"{context.shapes=} {cells.shapes=}")
         return Field(
             context=context,
             cells=cells,
