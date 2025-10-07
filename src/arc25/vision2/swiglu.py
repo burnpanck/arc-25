@@ -33,6 +33,7 @@ class SwiGLU(nnx.Module):
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
+        init_scale: float = 0.1,  # should be chosen at most ~ 1/sqrt(L)
         activation: typing.Any = jax.nn.silu,
         hidden_features: SymDecompDims | None = None,
         linear_mode: typing.Literal["flat", "split"] | None = None,
@@ -76,6 +77,7 @@ class SwiGLU(nnx.Module):
                 param_dtype=param_dtype,
                 precision=precision,
                 use_bias=use_bias,
+                init_scale=np.sqrt(init_scale),
                 mode=linear_mode,
                 rngs=rngs,
             )

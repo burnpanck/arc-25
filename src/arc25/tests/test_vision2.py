@@ -55,9 +55,15 @@ def test_SymDecompLinear1():
 
     # verify symmetry
     inp = SplitSymDecomp.empty(inpf, batch=(3, 4))
-    for k, v in inp.representations.items():
-        s = dict(invariant=1, space=8, flavour=10)[k]
-        v[...] = s * jax.random.randint(rngs.params(), v.shape, -3, 4) / 2
+    inp = attrs.evolve(
+        inp,
+        **{
+            k: dict(invariant=1, space=8, flavour=10)[k]
+            * jax.random.randint(rngs.params(), v.shape, -3, 4)
+            / 2
+            for k, v in inp.representations.items()
+        },
+    )
     out = lin(inp)
     for op in D4:
         atfo, ftfo = [
@@ -101,9 +107,15 @@ def test_SymDecompLinear2():
 
     # verify symmetry
     inp = SplitSymDecomp.empty(inpf, batch=(3,))
-    for k, v in inp.representations.items():
-        s = dict(invariant=1, space=8, flavour=10)[k]
-        v[...] = s * jax.random.randint(rngs.params(), v.shape, -3, 4) / 2
+    inp = attrs.evolve(
+        inp,
+        **{
+            k: dict(invariant=1, space=8, flavour=10)[k]
+            * jax.random.randint(rngs.params(), v.shape, -3, 4)
+            / 2
+            for k, v in inp.representations.items()
+        },
+    )
     out = lin(inp)
     for op in D4:
         atfo, ftfo = [
@@ -146,9 +158,15 @@ def test_SymDecompLinear3():
 
     # verify symmetry
     inp = SplitSymDecomp.empty(inpf, batch=(3,))
-    for k, v in inp.representations.items():
-        s = dict(invariant=1, space=8, flavour=10)[k]
-        v[...] = s * jax.random.randint(rngs.params(), v.shape, -3, 4) / 2
+    inp = attrs.evolve(
+        inp,
+        **{
+            k: dict(invariant=1, space=8, flavour=10)[k]
+            * jax.random.randint(rngs.params(), v.shape, -3, 4)
+            / 2
+            for k, v in inp.representations.items()
+        },
+    )
     out = lin(inp)
     for op in D4:
         atfo, ftfo = [
@@ -200,11 +218,17 @@ def test_RoPE():
 
         # prepare field inputs with prime spatial dimensions
         Y, X = 3, 4  # prime dimensions for spatial field
-        inp = SplitSymDecomp.empty(inpf, batch=(2, Y, X))
         n_batch_dims = 1
-        for k, v in inp.representations.items():
-            s = dict(invariant=1, space=8, flavour=10)[k]
-            v[...] = s * jax.random.randint(atn.rngs.params(), v.shape, -3, 4) / 2
+        inp = SplitSymDecomp.empty(inpf, batch=(2, Y, X))
+        inp = attrs.evolve(
+            inp,
+            **{
+                k: dict(invariant=1, space=8, flavour=10)[k]
+                * jax.random.randint(atn.rngs.params(), v.shape, -3, 4)
+                / 2
+                for k, v in inp.representations.items()
+            },
+        )
 
         # prepare coordinate grid
         coords = attention.CoordinateGrid.from_shape(*inp.batch_shape[-2:])
@@ -304,11 +328,17 @@ def test_AxialAttention(use_chirality):
 
         # prepare field inputs with prime spatial dimensions
         Y, X = 3, 4  # prime dimensions for spatial field
-        inp = SplitSymDecomp.empty(inpf, batch=(2, Y, X))
         n_batch_dims = 1
-        for k, v in inp.representations.items():
-            s = dict(invariant=1, space=8, flavour=10)[k]
-            v[...] = s * jax.random.randint(atn.rngs.params(), v.shape, -3, 4) / 2
+        inp = SplitSymDecomp.empty(inpf, batch=(2, Y, X))
+        inp = attrs.evolve(
+            inp,
+            **{
+                k: dict(invariant=1, space=8, flavour=10)[k]
+                * jax.random.randint(atn.rngs.params(), v.shape, -3, 4)
+                / 2
+                for k, v in inp.representations.items()
+            },
+        )
 
         # prepare coordinate grid
         coords = attention.CoordinateGrid.from_shape(*inp.batch_shape[-2:])

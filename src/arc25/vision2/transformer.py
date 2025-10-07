@@ -2,6 +2,7 @@ import typing
 from types import SimpleNamespace
 
 import attrs
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.typing import (
@@ -184,4 +185,5 @@ class FieldTransformer(nnx.Module):
             self.swiglu,
         )
         x = x.map_representations(lambda a, b: a + b, ax)
+
         return x

@@ -273,6 +273,7 @@ class AxialAttention(nnx.Module):
             )
             # print(f"gridmask: {show_dims(["tsxdvmk","ytsdvmk"][axis], mask)}")
             weight = jnp.where(mask, self.activation(scale * logits), 0)
+            weight = weight / jnp.sqrt(1 + mask.sum(axis=[-6, -5][axis], keepdims=True))
             # print(f"weight: {show_dims(["tsxdvmk","ytsdvmk"][axis], weight)}")
             Vrep = qkv["v"]
             # for k in rot:

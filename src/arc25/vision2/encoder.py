@@ -148,14 +148,23 @@ class ARCEncoder(nnx.Module):
         the others map to the input colours.
         """
         pre_embedding = self.encode(x, size)
+
         # print(f"{pre_embedding.shapes=}")
         embedding = pre_embedding.map_projections(lambda v, f: f(v), self.embedding)
+
+        dtype = nnx.nn.dtypes.canonicalize_dtype(
+            embedding.context.invariant, self.context_tokens, dtype=self.dtype
+        )
+        context_tokens = self.context_tokens.value
+        if dtype is not None:
+            context_tokens = context_tokens.astype(dtype)
+
         # print(f"{embedding.shapes=}")
         embedding = attrs.evolve(
             embedding,
             context=attrs.evolve(
                 embedding.context,
-                invariant=embedding.context.invariant + self.context_tokens.value,
+                invariant=embedding.context.invariant + context_tokens,
             ),
         )
 
@@ -186,6 +195,16 @@ class ARCEncoder(nnx.Module):
         ) -> tuple[Field, nnx.Rngs]:
             x, rngs = carry
             x = block(x, rngs=rngs, deterministic=deterministic, mode=mode)
+            if False:
+                for pk, proj in x.projections.items():
+                    for rk, rep in proj.representations.items():
+                        jax.debug.print(
+                            f"{pk}.{rk}:".ljust(20)
+                            + "{min:.1f} .. ±{std:.1f}.. {max:.1f}",
+                            min=rep.min(),
+                            std=rep.std(),
+                            max=rep.max(),
+                        )
             return x, rngs
 
         remat = nnx.module.first_from(

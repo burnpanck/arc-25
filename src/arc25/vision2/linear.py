@@ -148,6 +148,7 @@ class SpaceSymmetricTensor(nnx.Module):
         symmetry_group: type[SymOpBase] = D4,
         dtype: Dtype = jnp.float32,
         init: Initializer = default_kernel_init,
+        init_scale: float = 1,
         rngs: rnglib.Rngs,
     ):
         if not isinstance(covariant, tuple):
@@ -181,8 +182,23 @@ class SpaceSymmetricTensor(nnx.Module):
         self.mapping_info = nnx_compat.static(mapping_info)
         self.transpose_dims = transpose_dims
         self.trivial_shape = tuple(trivial_shape)
+        # TODO: how do we teach a general init what is inputs and what is outputs?
+        if init is default_kernel_init:
+            n_in = max(
+                1,
+                np.prod(
+                    [
+                        len(r) if not isinstance(r, int) else r
+                        for r, c in zip(representations, covariant)
+                        if c
+                    ]
+                ),
+            )
+            init = jax.nn.initializers.truncated_normal(stddev=np.sqrt(0.1 / n_in))
+
         self.params = nnx.Param(
-            (init if all(trivial_shape) else jax.nn.initializers.zeros)(
+            init_scale
+            * (init if all(trivial_shape) else jax.nn.initializers.zeros)(
                 rngs.params(),
                 (mapping_info.n_free_subspaces,) + tuple(trivial_shape),
                 dtype,
@@ -242,6 +258,7 @@ class SpaceSymmetricLinear(nnx.Module):
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
         kernel_init: Initializer = default_kernel_init,
+        init_scale: float = 1,
         bias_init: Initializer = default_bias_init,
         dot_general: DotGeneralT = lax.dot_general,
         promote_dtype: PromoteDtypeFn = dtypes.promote_dtype,
@@ -282,6 +299,7 @@ class SpaceSymmetricLinear(nnx.Module):
             symmetry_group=symmetry_group,
             dtype=param_dtype,
             init=kernel_init,
+            init_scale=init_scale,
             rngs=rngs,
         )
 
@@ -324,6 +342,7 @@ class SymDecompLinear(nnx.Module):
         precision: PrecisionLike = None,
         mode: typing.Literal["flat", "split"] | None = None,
         kernel_init: Initializer = default_kernel_init,
+        init_scale: float = 1,
         bias_init: Initializer = default_bias_init,
         dot_general: DotGeneralT = lax.dot_general,
         promote_dtype: PromoteDtypeFn = dtypes.promote_dtype,
@@ -338,10 +357,15 @@ class SymDecompLinear(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             precision=precision,
+            promote_dtype=promote_dtype,
+        )
+        ikw = dict(
             kernel_init=kernel_init,
             bias_init=bias_init,
+            init_scale=init_scale,
             dot_general=dot_general,
-            promote_dtype=promote_dtype,
+            use_bias=False,
+            rngs=rngs,
         )
 
         self.in_features = in_features
@@ -381,9 +405,8 @@ class SymDecompLinear(nnx.Module):
                             extra_out_reps
                             + ((outf.rep.space,) if ko == "space" else ()),
                             vo,
-                            use_bias=False,
-                            rngs=rngs,
                             **kw,
+                            **ikw,
                         )
                         for ko, vo in outf.representations.items()
                         if {ki, ko} != {"space", "flavour"}
@@ -409,9 +432,8 @@ class SymDecompLinear(nnx.Module):
                 vi,
                 extra_out_reps,
                 vo,
-                use_bias=False,
-                rngs=rngs,
                 **kw,
+                **ikw,
             )
             if vi and vo
             else nnx_compat.data(None)
@@ -528,7 +550,7 @@ class SymDecompLinear(nnx.Module):
             flavour=xfa,
         )
         out = (
-            {k: v.get_tensor() for k, v in self.bias.items()}
+            {k: v.get_tensor(dtype=dtype) for k, v in self.bias.items()}
             if self.bias is not None
             else {}
         )

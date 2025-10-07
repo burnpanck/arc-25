@@ -1,7 +1,7 @@
 
 # Training performance
 
-## 1. round of experiments; no attention dropout, no mixed precision, no lax.scan
+## Vision 1
 
 All of the following performance data use the following base configuration (*"nano*"):
 ```python
@@ -47,3 +47,59 @@ Training performance:
 - *4x L4*: global batch size 64, remat=True, fp32: ~ 50 images/s
 - *4x L4*: global batch size 128, remat=True, bf16/mixed: OOM :-(
 - *4x L4*: global batch size 64, remat=True, bf16/mixed: ~ 70 images/s
+
+## Vision 2
+
+### Configuration 1
+
+```python
+width = FieldDims(
+    context = SymDecompDims(
+        space = 2*16,   # 8x2 = 16
+        flavour = 1*16, # 10x1 = 10
+        invariant= 14*16, # 1x14 -> 40*16
+    ),
+    cells = SymDecompDims(
+        space = 2*8,
+        flavour = 1*8,
+        invariant = 22*8, # -> 48*8
+    ),
+    context_tokens = 1,
+)
+
+arc_cls = ARCClassifier(
+    num_classes = 400,
+    num_heads=8,
+    num_groups=2,
+    num_layers=8,
+    hidden_size=width,
+    swiglu_width_factor=8/3,
+    qk_head_width=SymDecompDims(
+        space = 3 * 8,  # 1x3x8
+        flavour = 1 * 4,  # 10x1x4 = 5x1x8
+        invariant = 4 * 8, # 1*4*8 -> 12x8
+        rep=RepSpec(symmetry.ChiralityRep, 10)
+    ),
+    v_head_width=SymDecompDims(
+        space = 2*4,
+        flavour = 1*4,
+        invariant = 14*4,
+    ),
+    use_chirality_rep=False,
+#    kernel_init=quant,
+#    bias_init=quant,
+    per_head_rope_freq=False,
+    dtype=jnp.bfloat16,
+#    activation=jax.nn.relu,
+#    use_bias=False,
+    rngs=nnx.Rngs(42),
+)
+```
+Compilation time on 4x L4: 2min 10s to 2min 40s
+Measurements with a single bucket at 30x30:
+
+- *4x L4*: global batch size 256, remat=True, fp32: OOM
+- *4x L4*: global batch size 128, remat=True, fp32: OOM
+- *4x L4*: global batch size 64, remat=True, fp32: ~ 46.3 images/s
+- *4x L4*: global batch size 64, remat=True, fp32: ~ 133 images/s (at 15x15!)
+- *4x L4*: global batch size 256, remat=True, fp32: ~ 198 images/s (at 15x15!)

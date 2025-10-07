@@ -56,11 +56,11 @@ class SymDecompBase(abc.ABC, AttrsModel):
 
     def batch_reshape(self, *new_batch_shape) -> Self:
         cur_batch_shape = self.batch_shape
-        n_elements = np.prod(cur_batch_shape)
+        n_elements = int(np.prod(cur_batch_shape))
         if n_unspec := sum(v < 0 for v in new_batch_shape):
             if n_unspec > 1:
                 raise ValueError(f"Got more than one ({n_unspec}) -1 values")
-            n_rem = np.prod([v for v in new_batch_shape if v > 0])
+            n_rem = int(np.prod([v for v in new_batch_shape if v > 0]))
             assert n_elements == n_rem or (n_rem > 0 and not n_elements % n_rem)
             new_batch_shape = tuple(
                 v if v >= 0 else n_elements // n_rem if n_rem > 0 else 0
@@ -133,11 +133,13 @@ class SplitSymDecomp(SymDecompBase):
     rep: RepSpec = attrs.field(default=standard_rep, metadata=dict(static=True))
 
     @classmethod
-    def empty(cls, dims: SymDecompDims, batch: tuple[int, ...] = ()) -> Self:
+    def empty(
+        cls, dims: SymDecompDims, batch: tuple[int, ...] = (), *, dtype=jnp.float32
+    ) -> Self:
         ret = cls(
-            invariant=np.empty(batch + (dims.invariant,)),
-            space=np.empty(batch + (dims.n_space, dims.space)),
-            flavour=np.empty(batch + (dims.n_flavours, dims.flavour)),
+            invariant=jnp.empty(batch + (dims.invariant,), dtype=dtype),
+            space=jnp.empty(batch + (dims.n_space, dims.space), dtype=dtype),
+            flavour=jnp.empty(batch + (dims.n_flavours, dims.flavour), dtype=dtype),
             rep=dims.rep,
         )
         assert dims.validate(ret), dims.validation_problems(ret)

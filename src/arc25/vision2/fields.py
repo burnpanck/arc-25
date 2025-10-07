@@ -296,6 +296,7 @@ class FieldDims:
         *,
         shape: tuple[int, int] | None = None,
         sym_decomp_cls: SymDecompBase = SplitSymDecomp,
+        dtype=jnp.float32,
     ) -> Field:
         if shape is None:
             shape = self.shape
@@ -304,12 +305,14 @@ class FieldDims:
             assert self.shape is None or shape == self.shape
         Y, X = shape
         ret = Field(
-            context=sym_decomp_cls.empty(self.context, batch + (self.context_tokens,)),
-            cells=sym_decomp_cls.empty(self.cells, batch + shape),
+            context=sym_decomp_cls.empty(
+                self.context, batch + (self.context_tokens,), dtype=dtype
+            ),
+            cells=sym_decomp_cls.empty(self.cells, batch + shape, dtype=dtype),
             grid=CoordinateGrid(
-                ypos=np.empty(batch + (Y, 2)),
-                xpos=np.empty(batch + (X, 2)),
-                mask=np.empty(batch + (Y, X), bool),
+                ypos=jnp.empty(batch + (Y, 2), dtype=dtype),
+                xpos=jnp.empty(batch + (X, 2), dtype=dtype),
+                mask=jnp.empty(batch + (Y, X), dtype=bool),
             ),
         )
         assert self.validate(ret), self.validation_problems(ret)
