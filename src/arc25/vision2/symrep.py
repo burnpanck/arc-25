@@ -237,7 +237,7 @@ class SplitSymDecomp(SymDecompBase):
 
 class FlatSymDecomp(SymDecompBase):
     data: jt.Float[jt.Array, "... C"]
-    dim: SymDecompDims
+    dim: SymDecompDims = attrs.field(metadata=dict(static=True))
 
     subrep_seq: typing.ClassVar[tuple[str, ...]] = ("invariant", "space", "flavour")
     element_names: typing.ClassVar[frozenset[str]] = frozenset({"data"})
@@ -284,7 +284,7 @@ class FlatSymDecomp(SymDecompBase):
 
     def validation_problems(self, dims: SymDecompDims) -> str | None:
         if self.dim != dims:
-            return "dim mismatch"
+            return f"dim mismatch: {self.dim} != {dims}"
         if self.data.shape[-1] != dims.total_channels:
             return "total channel mismatch"
 

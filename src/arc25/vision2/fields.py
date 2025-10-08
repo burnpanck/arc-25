@@ -151,10 +151,14 @@ class Field(AttrsModel):
         )
 
     def as_split(self):
-        return attrs.evolve(self, **{k: v.as_split() for k, v in self.projections})
+        return attrs.evolve(
+            self, **{k: v.as_split() for k, v in self.projections.items()}
+        )
 
     def as_flat(self):
-        return attrs.evolve(self, **{k: v.as_flat() for k, v in self.projections})
+        return attrs.evolve(
+            self, **{k: v.as_flat() for k, v in self.projections.items()}
+        )
 
 
 @attrs.frozen

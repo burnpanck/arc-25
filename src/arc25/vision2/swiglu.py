@@ -101,8 +101,13 @@ class SwiGLU(nnx.Module):
             k: v.reshape(*v.shape[:-1], v.shape[-1] // 2, 2)
             for k, v in x.elements.items()
         }
-        u = attrs.evolve(x, **{k: v[..., 0] for k, v in reshaped.items()})
-        v = attrs.evolve(x, **{k: v[..., 1] for k, v in reshaped.items()})
+        if isinstance(x, FlatSymDecomp):
+            # need to update metadata
+            extra = dict(dim=x.dim.map_representations(lambda k, v: v // 2))
+        else:
+            extra = {}
+        u = attrs.evolve(x, **{k: v[..., 0] for k, v in reshaped.items()}, **extra)
+        v = attrs.evolve(x, **{k: v[..., 1] for k, v in reshaped.items()}, **extra)
         x = u.map_elementwise(lambda u, v: self.activation(u) * v, v)
         x = x.map_elementwise(self.dropout, rngs=rngs, deterministic=deterministic)
         x = self.down(x, mode=mode)
