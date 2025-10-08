@@ -39,6 +39,7 @@ class CoordinateGrid(AttrsModel):
         *,
         start: np.ndarray | None = None,
         mask: np.ndarray | None = None,
+        dtype=None,
     ):
         if start is None:
             start = jnp.zeros_like(shapes)
@@ -55,17 +56,20 @@ class CoordinateGrid(AttrsModel):
         xpos = jnp.concatenate(
             [
                 jnp.tile(xpos, batch + (1,))[..., None],
-                ((xpos - x0) / w)[..., None],
+                jnp.clip((xpos + 0.5 - x0) / w, 0, 1)[..., None],
             ],
             -1,
         )
         ypos = jnp.concatenate(
             [
                 jnp.tile(ypos, batch + (1,))[..., None],
-                ((ypos - y0) / h)[..., None],
+                jnp.clip((ypos + 0.5 - y0) / h, 0, 1)[..., None],
             ],
             -1,
         )
+        if dtype is not None:
+            xpos = xpos.astype(dtype)
+            ypos = ypos.astype(dtype)
         assert xpos.shape == batch + (W, 2)
         assert ypos.shape == batch + (H, 2)
         assert mask.shape == batch + (H, W)
@@ -145,6 +149,12 @@ class Field(AttrsModel):
             self.cells.batch_shape[:-2],
             self.grid.batch_shape,
         )
+
+    def as_split(self):
+        return attrs.evolve(self, **{k: v.as_split() for k, v in self.projections})
+
+    def as_flat(self):
+        return attrs.evolve(self, **{k: v.as_flat() for k, v in self.projections})
 
 
 @attrs.frozen
@@ -309,10 +319,10 @@ class FieldDims:
                 self.context, batch + (self.context_tokens,), dtype=dtype
             ),
             cells=sym_decomp_cls.empty(self.cells, batch + shape, dtype=dtype),
-            grid=CoordinateGrid(
-                ypos=jnp.empty(batch + (Y, 2), dtype=dtype),
-                xpos=jnp.empty(batch + (X, 2), dtype=dtype),
-                mask=jnp.empty(batch + (Y, X), dtype=bool),
+            grid=CoordinateGrid.for_batch(
+                *shape,
+                jnp.tile(jnp.array(shape), batch + (1,)),
+                dtype=dtype,
             ),
         )
         assert self.validate(ret), self.validation_problems(ret)

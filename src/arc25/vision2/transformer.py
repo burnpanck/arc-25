@@ -144,10 +144,10 @@ class FieldTransformer(nnx.Module):
                 rngs=rngs,
                 deterministic=deterministic,
                 mode=mode,
-            ),
+            ).as_split(),
             context=self.self_attn.context(
                 ax.context, mask=None, rngs=rngs, deterministic=deterministic, mode=mode
-            ),
+            ).as_split(),
         )
         x = x.map_representations(lambda a, b: a + b, ax)
 
@@ -164,7 +164,9 @@ class FieldTransformer(nnx.Module):
                 rngs=rngs,
                 deterministic=deterministic,
                 mode=mode,
-            ).batch_reshape(*ax.cells.batch_shape),
+            )
+            .batch_reshape(*ax.cells.batch_shape)
+            .as_split(),
             context=self.cross_attn.context2cells(
                 target=ax.context,
                 source=cells_flat,
@@ -172,7 +174,7 @@ class FieldTransformer(nnx.Module):
                 rngs=rngs,
                 deterministic=deterministic,
                 mode=mode,
-            ),
+            ).as_split(),
         )
         x = x.map_representations(lambda a, b: a + b, ax)
 
@@ -181,7 +183,7 @@ class FieldTransformer(nnx.Module):
         ax = x.map_projections(
             lambda v, swiglu: swiglu(
                 v, rngs=rngs, deterministic=deterministic, mode=mode
-            ),
+            ).as_split(),
             self.swiglu,
         )
         x = x.map_representations(lambda a, b: a + b, ax)

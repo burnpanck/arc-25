@@ -31,8 +31,8 @@ class ARCEncoder(nnx.Module):
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
-        qk_head_width: FieldDims | None = None,
-        v_head_width: FieldDims | None = None,
+        qk_head_width: SymDecompDims | None = None,
+        v_head_width: SymDecompDims | None = None,
         swiglu_width_factor: float | None = None,
         use_chirality_rep: bool = True,
         per_head_rope_freq: bool = True,
@@ -304,18 +304,21 @@ as either a __call__ argument or class attribute""",
         def encd(arr, abso=0, relo=0):
             # input is (absolute, relative)
             return jnp.concatenate(
-                [1 / jnp.maximum(1, 1 + arr[..., :1] + abso), arr[..., 1:] + relo],
+                [
+                    1 / jnp.maximum(1, 1 + arr[..., :1] + abso),
+                    jnp.clip(arr[..., 1:] + relo, 0, 1),
+                ],
                 axis=-1,
             )
 
         encoded_dir_info = {
             symmetry.AxialDirRep.d: encd(grid.ypos[..., :, None, :]),
             symmetry.AxialDirRep.u: encd(
-                -grid.ypos[..., :, None, :], size[..., None, None, :1], 1
+                -grid.ypos[..., :, None, :], size[..., None, None, :1] - 1, 1
             ),
             symmetry.AxialDirRep.r: encd(grid.xpos[..., None, :, :]),
             symmetry.AxialDirRep.l: encd(
-                -grid.xpos[..., None, :, :], size[..., None, None, 1:], 1
+                -grid.xpos[..., None, :, :], size[..., None, None, 1:] - 1, 1
             ),
         }
         cells_space = jnp.where(
