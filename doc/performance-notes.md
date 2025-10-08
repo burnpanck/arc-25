@@ -103,3 +103,9 @@ Measurements with a single bucket at 30x30:
 - *4x L4*: global batch size 64, remat=True, fp32: ~ 46.3 images/s
 - *4x L4*: global batch size 64, remat=True, fp32: ~ 133 images/s (at 15x15!)
 - *4x L4*: global batch size 256, remat=True, fp32: ~ 198 images/s (at 15x15!)
+- *4x L4*: global batch size 112, remat=True, bf16: OOM
+- *4x L4*: global batch size 96, remat=True, bf16: ~ 65.4 images/s
+- *4x L4*: global batch size 64, remat=True, bf16: ~ 62.1 images/s
+- *4x L4*: global batch size 64, remat=True, bf16: ~ 156 images/s (at 15x15!)
+- *4x L4*: global batch size 256, remat=True, bf16: ~ 261 images/s (at 15x15!)
+- *4x L4*: global batch size 384, remat=True, bf16: ~ 279 images/s (at 15x15!)

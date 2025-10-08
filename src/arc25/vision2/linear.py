@@ -358,12 +358,12 @@ class SymDecompLinear(nnx.Module):
             param_dtype=param_dtype,
             precision=precision,
             promote_dtype=promote_dtype,
+            dot_general=dot_general,
         )
         ikw = dict(
             kernel_init=kernel_init,
             bias_init=bias_init,
             init_scale=init_scale,
-            dot_general=dot_general,
             use_bias=False,
             rngs=rngs,
         )
@@ -492,7 +492,10 @@ class SymDecompLinear(nnx.Module):
                     )
         match mode:
             case "flat":
-                ret = self._apply_flat(inputs.as_flat(dtype=self.dtype))
+                dtype = nnx.nn.dtypes.canonicalize_dtype(
+                    *inputs.elements.values(), dtype=self.dtype
+                )
+                ret = self._apply_flat(inputs.as_flat(dtype=dtype))
             case "split":
                 ret = self._apply_split(inputs.as_split())
             case _:
@@ -508,8 +511,239 @@ class SymDecompLinear(nnx.Module):
             )
         return ret
 
+    def _build_flat_kernel(self, dtype: Dtype) -> jt.Array:
+        """Build the flat kernel matrix as a block-structured matrix.
+
+        Returns:
+            Kernel with shape (*extra_in, total_in, *extra_out, total_out)
+            where blocks correspond to (rep_in → rep_out) transformations.
+        """
+        inf = self.in_features
+        outf = self.out_features
+
+        # Feature dimensions
+        ni, ns, nf = inf.invariant, inf.space, inf.flavour
+        no, nos, nof = outf.invariant, outf.space, outf.flavour
+        n_space_in, n_flavours = inf.rep.n_space, inf.rep.n_flavours
+        n_space_out, n_flavours_out = outf.rep.n_space, outf.rep.n_flavours
+
+        extra_in_shape = tuple(len(rep) for rep in self.extra_in_reps)
+        extra_out_shape = tuple(len(rep) for rep in self.extra_out_reps)
+        n_extra_in = len(extra_in_shape)
+        n_extra_out = len(extra_out_shape)
+
+        # Axis positions for concatenation
+        in_feat_axis = n_extra_in  # Input features are after extra_in dims
+        out_feat_axis = (
+            n_extra_in + 1 + n_extra_out
+        )  # Output features are after extra_in, in_feat, extra_out
+
+        # Build blocks: blocks[ki][ko] = kernel for (ki → ko) transformation
+        # Each block shape: (*extra_in, in_feat, *extra_out, out_feat)
+        blocks = {ki: {} for ki in FlatSymDecomp.subrep_seq}
+
+        # Fill blocks from flavour_invariant pathways
+        for ki in FlatSymDecomp.subrep_seq:
+            if ki not in self.flavour_invariant:
+                continue
+            ilin = self.flavour_invariant[ki]
+
+            for ko in FlatSymDecomp.subrep_seq:
+                if (lin := getattr(ilin, ko, None)) is None:
+                    # No connection between ki and ko, create zero block
+                    in_feat = {
+                        "invariant": ni,
+                        "space": ns * n_space_in,
+                        "flavour": nf * n_flavours,
+                    }[ki]
+                    out_feat = {
+                        "invariant": no,
+                        "space": nos * n_space_out,
+                        "flavour": nof * n_flavours_out,
+                    }[ko]
+
+                    block_shape = (
+                        extra_in_shape + (in_feat,) + extra_out_shape + (out_feat,)
+                    )
+                    blocks[ki][ko] = jnp.zeros(block_shape, dtype=dtype)
+                    continue
+
+                k_block = lin.kernel.get_tensor(dtype=dtype)
+
+                # Flatten space dimensions if present
+                # Original shape has space dims separate: (*extra_in, [n_space_in], feat, *extra_out, [n_space_out], feat)
+
+                if ki == "space":
+                    # Shape: (*extra_in, n_space_in, ns, *extra_out, ...)
+                    # Flatten to: (*extra_in, n_space_in*ns, *extra_out, ...)
+                    k_block = k_block.reshape(
+                        *k_block.shape[:n_extra_in],
+                        n_space_in * ns,
+                        *k_block.shape[n_extra_in + 2 :],
+                    )
+
+                if ko == "space":
+                    # Shape: (*extra_in, in_feat, *extra_out, n_space_out, nos)
+                    # Flatten to: (*extra_in, in_feat, *extra_out, n_space_out*nos)
+                    k_block = k_block.reshape(
+                        *k_block.shape[:out_feat_axis], n_space_out * nos
+                    )
+
+                # Handle flavour averaging on input side
+                if ki == "flavour":
+                    # Tile across n_flavours input flavours with averaging
+                    # Current shape: (*extra_in, nf, *extra_out, out_feat)
+                    # Target shape: (*extra_in, nf*n_flavours, *extra_out, out_feat)
+                    tile_shape = [1] * k_block.ndim
+                    tile_shape[in_feat_axis] = n_flavours
+                    k_block = jnp.tile(k_block, tile_shape) / n_flavours
+
+                # Handle flavour tiling on output side
+                if ko == "flavour":
+                    # Tile across n_flavours_out output flavours
+                    # Current shape: (*extra_in, in_feat, *extra_out, nof)
+                    # Target shape: (*extra_in, in_feat, *extra_out, nof*n_flavours_out)
+                    tile_shape = [1] * k_block.ndim
+                    tile_shape[out_feat_axis] = n_flavours_out
+                    k_block = jnp.tile(k_block, tile_shape)
+
+                blocks[ki][ko] = k_block
+
+        # Add flavour_pointwise to the flavour→flavour block (block-diagonal structure)
+        if self.flavour_pointwise is not None:
+            k_pw = self.flavour_pointwise.kernel.get_tensor(dtype=dtype)
+            # Shape: (*extra_in, nf, *extra_out, nof)
+
+            # Expand to block-diagonal across flavours
+            # Target shape: (*extra_in, nf*n_flavours, *extra_out, nof*n_flavours_out)
+            n_blocks = min(n_flavours, n_flavours_out)
+
+            # Build block-diagonal matrix
+            block_diag_shape = (
+                extra_in_shape
+                + (nf * n_flavours,)
+                + extra_out_shape
+                + (nof * n_flavours_out,)
+            )
+            block_diag = jnp.zeros(block_diag_shape, dtype=dtype)
+
+            for f_idx in range(n_blocks):
+                # Build slice for this diagonal block
+                in_slice = slice(f_idx * nf, (f_idx + 1) * nf)
+                out_slice = slice(f_idx * nof, (f_idx + 1) * nof)
+
+                # Create index tuple accounting for extra dims
+                idx = (
+                    *(slice(None),) * n_extra_in,
+                    in_slice,
+                    *(slice(None),) * n_extra_out,
+                    out_slice,
+                )
+
+                block_diag = block_diag.at[idx].set(k_pw)
+
+            # Add to the flavour→flavour block
+            blocks["flavour"]["flavour"] = blocks["flavour"]["flavour"] + block_diag
+
+        # Concatenate blocks to form the full kernel
+        # First, for each output representation, concatenate all input representations
+        row_blocks = []
+        for ko in FlatSymDecomp.subrep_seq:
+            # Concatenate blocks along the input feature axis
+            row = jnp.concatenate(
+                [blocks[ki][ko] for ki in FlatSymDecomp.subrep_seq], axis=in_feat_axis
+            )
+            row_blocks.append(row)
+
+        # Then concatenate all rows along the output feature axis
+        kernel = jnp.concatenate(row_blocks, axis=out_feat_axis)
+
+        return kernel
+
     def _apply_flat(self, inputs: FlatSymDecomp) -> FlatSymDecomp:
-        raise NotImplementedError
+        """Apply linear transformation using a single large matmul.
+
+        Builds a block-structured kernel and applies it via one matmul,
+        trading slightly more FLOPs for better hardware utilization.
+        """
+        # Canonicalize dtype
+        to_consider = [inputs.data]
+        if self.flavour_pointwise is not None:
+            to_consider.append(self.flavour_pointwise.kernel.params)
+        for ilin in self.flavour_invariant.values():
+            for lin in ilin.values():
+                p = lin.kernel.params
+                if p.size:
+                    to_consider.append(p)
+        if self.bias is not None:
+            for v in self.bias.values():
+                p = v.params
+                if p.size:
+                    to_consider.append(p)
+
+        dtype = nnx.nn.dtypes.canonicalize_dtype(*to_consider, dtype=self.dtype)
+        x_data = self.promote_dtype([inputs.data], dtype=dtype)[0]
+
+        # Build the kernel matrix
+        kernel = self._build_flat_kernel(dtype)
+
+        # Build the bias vector by concatenating blocks
+        if self.bias is not None:
+            outf = self.out_features
+            no, nos, nof = outf.invariant, outf.space, outf.flavour  # noqa: F841
+            n_space_out, n_flavours_out = outf.rep.n_space, outf.rep.n_flavours
+            extra_out_shape = tuple(len(rep) for rep in self.extra_out_reps)
+            n_extra_out = len(extra_out_shape)
+
+            bias_parts = []
+            for rep_name in FlatSymDecomp.subrep_seq:
+                b_block = self.bias[rep_name].get_tensor(dtype=dtype)
+                # Shape: (*extra_out, feat)
+
+                if rep_name == "space":
+                    # Flatten: (*extra_out, n_space_out, nos) -> (*extra_out, n_space_out*nos)
+                    b_block = b_block.reshape(
+                        *b_block.shape[:n_extra_out], n_space_out * nos
+                    )
+                elif rep_name == "flavour":
+                    # Tile: (*extra_out, nof) -> (*extra_out, nof*n_flavours_out)
+                    tile_shape = [1] * b_block.ndim
+                    tile_shape[-1] = n_flavours_out
+                    b_block = jnp.tile(b_block, tile_shape)
+
+                bias_parts.append(b_block)
+
+            # Concatenate along the feature axis (last axis)
+            bias = jnp.concatenate(bias_parts, axis=-1)
+        else:
+            bias = None
+
+        # Apply the transformation
+        # x_data shape: (*batch, *extra_in, total_in)
+        # kernel shape: (*extra_in, total_in, *extra_out, total_out)
+        # output shape: (*batch, *extra_out, total_out)
+
+        # Contract over (*extra_in, total_in) dimensions
+        extra_in_shape = tuple(len(rep) for rep in self.extra_in_reps)
+        n_extra_in = len(extra_in_shape)
+
+        # Calculate contraction axes (must be nonnegative)
+        n_contract = n_extra_in + 1  # extra_in dims + total_in dim
+        n_batch = x_data.ndim - n_contract
+        x_contract_axes = tuple(range(n_batch, x_data.ndim))  # Last n_contract axes
+        k_contract_axes = tuple(range(n_contract))  # First n_extra_in+1 axes
+
+        y_data = self.dot_general(
+            x_data,
+            kernel,
+            ((x_contract_axes, k_contract_axes), ((), ())),
+            precision=self.precision,
+        )
+
+        if bias is not None:
+            y_data = y_data + bias
+
+        return FlatSymDecomp(data=y_data, dim=self.out_features)
 
     def _apply_split(self, inputs: SplitSymDecomp) -> SplitSymDecomp:
         to_consider = list(inputs.representations.values())

@@ -97,12 +97,12 @@ class SwiGLU(nnx.Module):
         mode: typing.Literal["flat", "split"] | None = None,
     ) -> SymDecompBase:
         x = self.up(x, mode=mode)
-        u = x.map_elementwise(
-            lambda a: a.reshape(*a.shape[:-1], a.shape[-1] // 2, 2)[..., 0]
-        )
-        v = x.map_elementwise(
-            lambda a: a.reshape(*a.shape[:-1], a.shape[-1] // 2, 2)[..., 1]
-        )
+        reshaped = {
+            k: v.reshape(*v.shape[:-1], v.shape[-1] // 2, 2)
+            for k, v in x.elements.items()
+        }
+        u = attrs.evolve(x, **{k: v[..., 0] for k, v in reshaped.items()})
+        v = attrs.evolve(x, **{k: v[..., 1] for k, v in reshaped.items()})
         x = u.map_elementwise(lambda u, v: self.activation(u) * v, v)
         x = x.map_elementwise(self.dropout, rngs=rngs, deterministic=deterministic)
         x = self.down(x, mode=mode)

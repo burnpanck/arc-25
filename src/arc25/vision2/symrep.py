@@ -158,20 +158,29 @@ class SplitSymDecomp(SymDecompBase):
 
     def as_flat(self, *, dtype: Dtype | None = None) -> "FlatSymDecomp":
         batch = self.batch_shape
-        return FlatSymDecomp(
+        n_feat_dims = dict(space=2, invariant=1, flavour=2)
+        reps = self.representations
+        assert set(reps) == set(FlatSymDecomp.subrep_seq)
+        # Build SymDecompDims from the actual feature dimensions
+        dim = SymDecompDims(
+            **{k: v.shape[-1] for k, v in reps.items()},
+            rep=self.rep,
+        )
+        ret = FlatSymDecomp(
             data=jnp.concatenate(
                 [
                     jnp.broadcast_to(vv, batch + vv.shape[-1:])
                     for vv in [
-                        v.reshape(*v.shape[:-k], -1)
-                        for k, v in dict(space=2, invariant=1, flavour=2).items()
+                        reps[k].reshape(*reps[k].shape[: -n_feat_dims[k]], -1)
+                        for k in FlatSymDecomp.subrep_seq
                     ]
                 ],
                 axis=-1,
                 dtype=dtype,
             ),
-            dim=self.repspec,
+            dim=dim,
         )
+        return ret
 
     def validation_problems(self, dims: SymDecompDims) -> str | None:
         try:
@@ -204,6 +213,10 @@ class SplitSymDecomp(SymDecompBase):
             },
         )
 
+    @property
+    def elements(self) -> dict[str, jt.Float]:
+        return self.representations
+
     def map_elementwise(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
@@ -221,6 +234,8 @@ class SplitSymDecomp(SymDecompBase):
 class FlatSymDecomp(SymDecompBase):
     data: jt.Float[jt.Array, "... C"]
     dim: SymDecompDims
+
+    subrep_seq: typing.ClassVar[tuple[str, ...]] = ("invariant", "space", "flavour")
 
     @classmethod
     def empty(
@@ -241,11 +256,13 @@ class FlatSymDecomp(SymDecompBase):
         kw = {}
         d = self.data
         batch = d.shape[:-1]
-        for k, v in dict(
+        feat_shape = dict(
             space=(self.dim.n_space, self.dim.space),
-            invariant=self.dim.invariant,
+            invariant=(self.dim.invariant,),
             flavour=(self.dim.n_flavours, self.dim.flavour),
-        ).items():
+        )
+        for k in self.subrep_seq:
+            v = feat_shape[k]
             n = np.prod(v)
             kw[k] = d[..., :n].reshape(*batch, *v)
             d = d[..., n:]
@@ -274,6 +291,10 @@ class FlatSymDecomp(SymDecompBase):
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
         return self.as_split().map_representations(fun, *other, **kw)
+
+    @property
+    def elements(self) -> dict[str, jt.Float]:
+        return dict(data=self.data)
 
     def map_elementwise(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
