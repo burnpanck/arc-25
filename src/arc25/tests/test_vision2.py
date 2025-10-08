@@ -499,3 +499,84 @@ def test_AxialAttention(use_chirality):
                 atn.rngs,
                 lambda i: atn(i, tcoords),  # noqa: B023
             )
+
+
+@pytest.mark.parametrize("use_chirality", [False, True])
+def test_AxialAttention_flat_vs_split(use_chirality):
+    """Test that flat and split modes produce identical results."""
+    with jax.experimental.enable_x64():
+        # prepare an example attention module with prime dimensions
+        inpf = SymDecompDims(17, 11, 5)
+        outf = SymDecompDims(19, 13, 7)
+
+        atn = attention.AxialAttention(
+            num_heads=6,
+            num_groups=2,
+            in_features=inpf,
+            out_features=outf,
+            qk_head_width=SymDecompDims(
+                13 * 2,
+                23 * 2,
+                3 * 2,
+                rep=RepSpec(
+                    symmetry.TrivialRep if use_chirality else symmetry.ChiralityRep, 10
+                ),
+            ),
+            v_head_width=SymDecompDims(5, 4, 2),
+            use_chirality_rep=use_chirality,
+            kernel_init=quant,
+            bias_init=quant,
+            dtype=np.float64,
+            activation=jax.nn.sigmoid,
+            rngs=nnx.Rngs(42),
+        )
+
+        # prepare field inputs with prime spatial dimensions
+        Y, X = 3, 4
+        inp = SplitSymDecomp.empty(inpf, batch=(2, Y, X))
+        inp = attrs.evolve(
+            inp,
+            **{
+                k: dict(invariant=1, space=8, flavour=10)[k]
+                * jax.random.randint(atn.rngs.params(), v.shape, -3, 4)
+                / 2
+                for k, v in inp.representations.items()
+            },
+        )
+
+        # prepare coordinate grid
+        coords = attention.CoordinateGrid.from_shape(*inp.batch_shape[-2:])
+
+        # Apply with split mode
+        out_split, atnw_split = atn(
+            inp, coords, return_attention_weights=True, mode="split"
+        )
+
+        # Apply with flat mode
+        out_flat, atnw_flat = atn(
+            inp, coords, return_attention_weights=True, mode="flat"
+        )
+
+        # Verify attention weights match
+        for axis, (aw_split, aw_flat) in enumerate(zip(atnw_split, atnw_flat)):
+            err = aw_flat - aw_split
+            max_diff = np.abs(err).max()
+            rel_diff = (np.abs(err) / (np.abs(aw_split) + 1e-8)).max()
+            bad = np.abs(err) > 1e-5 * np.abs(aw_split) + 1e-5
+            n_failed = int(bad.sum())
+            assert np.allclose(
+                aw_split, aw_flat, rtol=1e-5, atol=1e-5
+            ), f"axis {axis}: attention weights differ: {max_diff=:.3e}, {rel_diff=:.5f}, {n_failed=}/{aw_split.size}"
+
+        # Verify both modes produce identical results (with tolerance for floating point rounding)
+        for k, v_flat in out_flat.representations.items():
+            v_split = getattr(out_split, k)
+            err = v_flat - v_split
+            max_diff = np.abs(err).max()
+            rel_diff = (np.abs(err) / (np.abs(v_split) + 1e-8)).max()
+            bad = np.abs(err) > 1e-5 * np.abs(v_split) + 1e-5
+            n_failed = int(bad.sum())
+
+            assert np.allclose(
+                v_split, v_flat, rtol=1e-5, atol=1e-5
+            ), f"@{k} split and flat modes differ: {max_diff=:.3e}, {rel_diff=:.5f}, {n_failed=}/{v_split.size}"

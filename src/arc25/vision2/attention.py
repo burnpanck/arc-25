@@ -99,8 +99,9 @@ class AxialAttention(nnx.Module):
         self.use_chirality_rep = use_chirality_rep
         self.rngs = rngs if keep_rngs else None
 
-        head_reps = (symmetry.AxialDirRep,) + (
-            (symmetry.ChiralityRep,) if use_chirality_rep else ()
+        head_reps = (
+            symmetry.AxialDirRep,
+            symmetry.ChiralityRep if use_chirality_rep else symmetry.TrivialRep,
         )
         kw = dict(
             kernel_init=kernel_init,
@@ -110,34 +111,36 @@ class AxialAttention(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
         )
-        for mode, nh in dict(
-            q=num_heads,
-            k=num_groups,
-        ).items():
-            setattr(
-                self,
-                mode,
-                SymDecompLinear(
-                    in_features,
-                    qk_head_width.map_representations(
-                        lambda k, v: v * nh  # noqa: B023
-                    ),
-                    extra_out_reps=head_reps,
-                    use_bias=use_qk_bias,
-                    **kw,
-                ),
-            )
+        # Q has extra dimensions: head_reps + (M, K) where M = num_heads // num_groups
+        M = num_heads // num_groups
+        K = num_groups
+        self.q = SymDecompLinear(
+            in_features,
+            qk_head_width,
+            extra_out_reps=head_reps + (M, K),
+            use_bias=use_qk_bias,
+            **kw,
+        )
+        # K and V have extra dimensions: head_reps + (1, K) for broadcasting against M
+        self.k = SymDecompLinear(
+            in_features,
+            qk_head_width,
+            extra_out_reps=head_reps + (1, K),
+            use_bias=use_qk_bias,
+            **kw,
+        )
         self.v = SymDecompLinear(
             in_features,
-            v_head_width.map_representations(lambda k, v: v * num_groups),
-            extra_out_reps=head_reps,
+            v_head_width,
+            extra_out_reps=head_reps + (1, K),
             use_bias=use_v_bias,
             **kw,
         )
+        # Out has extra input dimensions: head_reps + (M, K)
         self.out = SymDecompLinear(
-            v_head_width.map_representations(lambda k, v: v * num_heads),
+            v_head_width,
             out_features,
-            extra_in_reps=head_reps,
+            extra_in_reps=head_reps + (M, K),
             use_bias=use_out_bias,
             **kw,
         )
@@ -145,11 +148,7 @@ class AxialAttention(nnx.Module):
             lambda k, v: nnx.Param(
                 initializers.truncated_normal(stddev=1, dtype=param_dtype)(
                     rngs.param(),
-                    (
-                        (num_heads // num_groups, num_groups, v // 2, 2)
-                        if per_head_rope_freq
-                        else (v // 2, 2)
-                    ),
+                    ((M, K, v // 2, 2) if per_head_rope_freq else (v // 2, 2)),
                     dtype=param_dtype,
                 )
             ),
@@ -172,6 +171,7 @@ class AxialAttention(nnx.Module):
         rngs: nnx.Rngs | None = None,
         deterministic: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
+        debug: str | None = None,
     ) -> SymDecompBase:
 
         assert self.in_features.validate(inputs), self.in_features.validation_problems(
@@ -179,13 +179,13 @@ class AxialAttention(nnx.Module):
         )
 
         batch = inputs.batch_shape
-        # Bs = batch[:-2]
+        Bs = batch[:-2]
         Y, X = batch[-2:]
+        nB = len(Bs)
         N = self.num_heads
         K = self.num_groups
-        M = N // K
+        M = N // K  # noqa: F841
 
-        S = (2, 2, 2) if self.use_chirality_rep else (2, 2, 1)
         assert (
             "".join(basis.symbol for basis in symmetry.AxialDirRep) == "↓↑→←"
         ), "The following code depends on this order"
@@ -193,26 +193,32 @@ class AxialAttention(nnx.Module):
         qkv = {}
         for m in "qkv":
             lin = getattr(self, m)
-            y = lin(inputs)
+            y = lin(inputs, mode=mode)
+            # After lin: Q has shape (*batch, Y, X, A*D, V, M, K, [F,] H)
+            #            K, V have shape (*batch, Y, X, A*D, V, 1, K, [F,] H)
+            # where A=2 (axial), D=2 (direction), V=1or2 (chirality), M, K (heads)
+            # [F,] is present for space/flavour in split mode, absent for invariant/flat
+            # Reshape to: (*batch_shape, F, H_pairs) where F is dummy if absent
             y = dict(
-                rep=y.rep,
                 **{
                     k: v.reshape(
-                        *v.shape[: len(batch)],  # batch, including X/Y
-                        *S,  # (3) new extra_out_rep
-                        *v.shape[len(y.batch_shape) : -1]
-                        or (
-                            1,
-                        ),  # (1) main representation (flavour/space) if any, adding broadcasting dim otherwise
-                        (M if m == "q" else 1),
-                        K,  # (2) heads in groups
-                        *(
-                            (-1,) if m == "v" else (-1, 2)
-                        ),  # (1/2) head dim (with rope pairs)
+                        *v.shape[: nB + 2],  # (*batch, Y, X)
+                        2,
+                        2,  # (A*D,) -> (A, D)
+                        *v.shape[nB + 3 : nB + 6],  # (V or 1, M or 1, K)
+                        *(v.shape[nB + 6 : -1] or (1,)),  # [F,] or F=1
+                        *((-1, 2) if m in "qk" else (-1,)),  # (H//2, 2) or (H,)
                     )
-                    for k, v in y.representations.items()
+                    for k, v in y.elements.items()
                 },
             )
+            if debug:
+                for k, v in y.items():
+                    print(
+                        f"[{debug}] After reshape {m}.{k}:"
+                        f" {show_dims('yxadvmkfhp' if m!='v' else 'yxadvmkfh',v)},"
+                        f" max={np.abs(v).max():.3e}"
+                    )
             qkv[m] = y
 
         all_v = []
@@ -230,90 +236,125 @@ class AxialAttention(nnx.Module):
                 nsn = -sn
                 # rd will have shape ... Y X M K H 3
                 rd = jnp.moveaxis(jnp.array([cs, sn, nsn]), 0, -1)
-                # idx will have shape 2 2 2
+                # idx will have shape D=2 P=2 Q=2
                 idx = np.r_[0, 2, 1, 0, 0, 1, 2, 0].reshape(2, 2, 2)
-                # r will have shape ... Y X 2 M K H 2 2
+                # r will have shape ... Y X D=2 M K H P=2 Q=2
                 r = jnp.moveaxis(rd[..., idx], -3, -6)
                 rot[k] = r
+            if "data" in qkv["q"]:
+                # This is a FlatSymDecomp; tile and concatenate rotations along H dimension
+                # Flat data shape: (..., F=1, Dd) where Dd = Di + Fs*Ds + Ff*Df
+                # Each rotation has shape: ...Y X D M K H P Q where H is per-representation
+                # Need to tile each representation's rotation and concatenate
+                rot_parts = []
+                for rep_name in FlatSymDecomp.subrep_seq:
+                    r = rot[rep_name]  # Shape: ...Y X D M K H P Q
+
+                    # Determine tiling factor for this representation
+                    tile_factor = dict(
+                        invariant=1,
+                        space=self.qk_head_width.rep.n_space,
+                        flavour=self.qk_head_width.rep.n_flavours,
+                    )[rep_name]
+
+                    # Tile along the H dimension (axis -3)
+                    if tile_factor > 1:
+                        r = jnp.tile(r, [tile_factor] + [1] * 2)
+
+                    rot_parts.append(r)
+
+                # Concatenate along the H dimension (axis -3)
+                rot = dict(data=jnp.concatenate(rot_parts, axis=-3))
             qk = []
             for kk in ["q", "k"]:
                 qk.append(
                     {
                         k: jnp.einsum(
-                            "...yxdvfmkhp,...yxdmkhpq->...yxdvfmkhq",
-                            qkv[kk][k][..., :, :, axis, :, :, :, :, :, :, :],
-                            r,
+                            "...yxdvmkfhp,...yxdmkhpq->...yxdvmkfhq",
+                            v[..., :, :, axis, :, :, :, :, :, :, :],
+                            rot[k],
                         )
-                        for k, r in rot.items()
+                        for k, v in qkv[kk].items()
                     }
                 )
             Q, K = qk
-            #            for k in rot:
-            #                print(f"Q[{k}]: {show_dims(["txdvfmkhp","ytdvfmkhp"][axis], Q[k])} (size {Q[k].size})")
-            #                print(f"K[{k}]: {show_dims(["sxdvfmkhp","ysdvfmkhp"][axis], K[k])} (size {K[k].size})")
 
             logits = sum(
                 jnp.einsum(
                     [
-                        "...txdvfmkhp,...sxdvfmkhp->...tsxdvmk",
-                        "...ytdvfmkhp,...ysdvfmkhp->...ytsdvmk",
+                        "...txdvmkfhp,...sxdvmkfhp->...tsxdvmk",
+                        "...ytdvmkfhp,...ysdvmkfhp->...ytsdvmk",
                     ][axis],
-                    Q[k],
+                    v,
                     K[k],
                 )
-                for k in rot
+                for k, v in Q.items()
             )
-            d = sum(Q[k].shape[-5] * Q[k].shape[-2] * Q[k].shape[-1] for k in rot)
+            # each element brings F*H*P (the last three dims) of coefficients
+            d = sum(int(np.prod(v.shape[-3:])) for v in Q.values())
+            if debug:
+                print(
+                    f"[{debug}] axis={axis}: {d=} ({ {k:v.shape[-3:] for k,v in Q.items()} })"
+                )
             scale = 1 / np.sqrt(d)
-            # print(f"weight: {show_dims(["tsxdvmk","ytsdvmk"][axis], scale)}")
             mask = (
                 grid.mask[..., None, :, :, None, None, None, None]
                 if not axis
                 else grid.mask[..., :, None, :, None, None, None, None]
             )
-            # print(f"gridmask: {show_dims(["tsxdvmk","ytsdvmk"][axis], mask)}")
             weight = jnp.where(mask, self.activation(scale * logits), 0)
             weight = weight / jnp.sqrt(1 + mask.sum(axis=[-6, -5][axis], keepdims=True))
-            # print(f"weight: {show_dims(["tsxdvmk","ytsdvmk"][axis], weight)}")
-            Vrep = qkv["v"]
-            # for k in rot:
-            #    vv = Vrep[k][..., :, :, axis, :, :, :, :, :, :]
-            #    print(f"{k}: {show_dims(["sxdvfmkh","ysdvfmkh"][axis], vv)}")
             V = {
                 k: jnp.einsum(
                     [
-                        "...tsxdvmk,...sxdvfmkh->...txdvfmkh",
-                        "...ytsdvmk,...ysdvfmkh->...ytdvfmkh",
+                        "...tsxdvmk,...sxdvmkfh->...txdvmkfh",
+                        "...ytsdvmk,...ysdvmkfh->...ytdvmkfh",
                     ][axis],
                     weight,
-                    Vrep[k][..., :, :, axis, :, :, :, :, :, :],
+                    v[..., :, :, axis, :, :, :, :, :, :],
                 )[..., :, :, None, :, :, :, :, :, :]
-                for k in rot
+                for k, v in qkv["v"].items()
             }
             all_v.append(V)
             all_aw.append(weight)
 
-        rep = qkv["v"]["rep"]
-        V = SplitSymDecomp(
-            **{
-                k: jnp.concatenate(
-                    [V[k] for V in all_v],
-                    axis=-7,
-                ).reshape(
-                    *batch,
-                    *(4, 2) if self.use_chirality_rep else (4,),
-                    *dict(
-                        invariant=(),
-                        flavour=(rep.n_flavours,),
-                        space=(rep.n_space,),
-                    )[k],
-                    -1,
+        rep = self.v.out_features.rep
+        match set(qkv["v"].keys()):
+            case SplitSymDecomp.element_names:
+                sym_decomp_cls = SplitSymDecomp
+                extra_v_kw = dict(rep=rep)
+            case FlatSymDecomp.element_names:
+                sym_decomp_cls = FlatSymDecomp
+                extra_v_kw = dict(dim=self.v.out_features)
+            case _:
+                raise KeyError(
+                    f"Cannot determine SymDecomp implementation for elements {set(qkv['v'].keys())}"
                 )
-                for k in rot
+        # Concatenate the two axes (horizontal and vertical attention)
+        V_concat = {
+            k: jnp.concatenate([V[k] for V in all_v], axis=-7) for k in qkv["v"]
+        }
+        if debug:
+            for k, v in V_concat.items():
+                print(f"[{debug}] V.{k}: {show_dims('yxadvmkfh',v)}")
+
+        # Remove dummy F dimension if present (F=1), otherwise keep as is
+        V = sym_decomp_cls(
+            **{
+                k: v.reshape(
+                    *v.shape[: nB + 2],  # (*batch, Y, X)
+                    4,  # (A,D) -> (A*D,)
+                    *v.shape[-5:-2],  # (V or 1, M or 1, K)
+                    *(
+                        v.shape[-2:-1] if k not in {"invariant", "data"} else ()
+                    ),  # F only for those which have it
+                    v.shape[-1],  # H
+                )
+                for k, v in V_concat.items()
             },
-            rep=rep,
+            **extra_v_kw,
         )
-        out = self.out(V)
+        out = self.out(V, mode=mode)
         if return_attention_weights:
             return out, all_aw
         return out
@@ -480,11 +521,9 @@ class GlobalAttention(nnx.Module):
         M = N // K
 
         qkv = {}
-        qkvrep = {}
         for m in "qkv":
             lin = getattr(self, m)
             y = lin(dict(q=target).get(m, source), mode=mode)
-            qkvrep[m] = y.rep
             y = dict(
                 **{
                     k: v.reshape(
@@ -532,7 +571,6 @@ class GlobalAttention(nnx.Module):
             for k, v in qkv["v"].items()
         }
 
-        rep = qkvrep["v"]
         V = SplitSymDecomp(
             **{
                 # get rid of that "f" dimension where it doesn't belong
@@ -543,7 +581,7 @@ class GlobalAttention(nnx.Module):
                 )
                 for k, v in V.items()
             },
-            rep=rep,
+            rep=self.v.out_features.rep,
         )
         out = self.out(V, mode=mode)
         if return_attention_weights:

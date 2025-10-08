@@ -26,6 +26,11 @@ from ..symmetry import D4, PermRepBase, SymOpBase
 from .symrep import FlatSymDecomp, SplitSymDecomp, SymDecompBase, SymDecompDims
 
 
+def _rep_size(rep: type[PermRepBase] | int) -> int:
+    """Get the size of a representation (number of basis elements or integer size)."""
+    return rep if isinstance(rep, int) else len(rep)
+
+
 @attrs.frozen
 class AxisSymmetryInfo:
     rep: type[PermRepBase] = attrs.field(repr=lambda v: v.__name__)
@@ -334,8 +339,8 @@ class SymDecompLinear(nnx.Module):
         in_features: SymDecompDims,
         out_features: SymDecompDims,
         *,
-        extra_in_reps: tuple[type[PermRepBase], ...] = (),
-        extra_out_reps: tuple[type[PermRepBase], ...] = (),
+        extra_in_reps: tuple[type[PermRepBase] | int, ...] = (),
+        extra_out_reps: tuple[type[PermRepBase] | int, ...] = (),
         use_bias: bool = True,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
@@ -476,7 +481,7 @@ class SymDecompLinear(nnx.Module):
         if self.extra_in_reps:
             batch = inputs.batch_shape
             assert batch[-len(self.extra_in_reps) :] == tuple(
-                len(rep) for rep in self.extra_in_reps
+                _rep_size(rep) for rep in self.extra_in_reps
             )
 
         mode = first_from(mode, self.mode)
@@ -507,7 +512,7 @@ class SymDecompLinear(nnx.Module):
         if self.extra_out_reps:
             batch = ret.batch_shape
             assert batch[-len(self.extra_out_reps) :] == tuple(
-                len(rep) for rep in self.extra_out_reps
+                _rep_size(rep) for rep in self.extra_out_reps
             )
         return ret
 
@@ -527,8 +532,8 @@ class SymDecompLinear(nnx.Module):
         n_space_in, n_flavours = inf.rep.n_space, inf.rep.n_flavours
         n_space_out, n_flavours_out = outf.rep.n_space, outf.rep.n_flavours
 
-        extra_in_shape = tuple(len(rep) for rep in self.extra_in_reps)
-        extra_out_shape = tuple(len(rep) for rep in self.extra_out_reps)
+        extra_in_shape = tuple(_rep_size(rep) for rep in self.extra_in_reps)
+        extra_out_shape = tuple(_rep_size(rep) for rep in self.extra_out_reps)
         n_extra_in = len(extra_in_shape)
         n_extra_out = len(extra_out_shape)
 
@@ -692,7 +697,7 @@ class SymDecompLinear(nnx.Module):
             outf = self.out_features
             no, nos, nof = outf.invariant, outf.space, outf.flavour  # noqa: F841
             n_space_out, n_flavours_out = outf.rep.n_space, outf.rep.n_flavours
-            extra_out_shape = tuple(len(rep) for rep in self.extra_out_reps)
+            extra_out_shape = tuple(_rep_size(rep) for rep in self.extra_out_reps)
             n_extra_out = len(extra_out_shape)
 
             bias_parts = []
@@ -724,7 +729,7 @@ class SymDecompLinear(nnx.Module):
         # output shape: (*batch, *extra_out, total_out)
 
         # Contract over (*extra_in, total_in) dimensions
-        extra_in_shape = tuple(len(rep) for rep in self.extra_in_reps)
+        extra_in_shape = tuple(_rep_size(rep) for rep in self.extra_in_reps)
         n_extra_in = len(extra_in_shape)
 
         # Calculate contraction axes (must be nonnegative)
@@ -767,11 +772,11 @@ class SymDecompLinear(nnx.Module):
             **dict(zip(r.keys(), self.promote_dtype(r.values(), dtype=dtype))),
         )
         batch = inputs.batch_shape
-        extra_in = tuple(len(rep) for rep in self.extra_in_reps)
+        extra_in = tuple(_rep_size(rep) for rep in self.extra_in_reps)
         if extra_in:
             assert batch[-len(extra_in) :] == extra_in
             batch = batch[: -len(extra_in)]
-        extra_out = tuple(len(rep) for rep in self.extra_out_reps)
+        extra_out = tuple(_rep_size(rep) for rep in self.extra_out_reps)
         xi = inputs.invariant
         xs = inputs.space
         xf = inputs.flavour

@@ -132,6 +132,10 @@ class SplitSymDecomp(SymDecompBase):
     flavour: jt.Float[jt.Array, "... F Cf"]
     rep: RepSpec = attrs.field(default=standard_rep, metadata=dict(static=True))
 
+    element_names: typing.ClassVar[frozenset[str]] = frozenset(
+        {"invariant", "space", "flavour"}
+    )
+
     @classmethod
     def empty(
         cls, dims: SymDecompDims, batch: tuple[int, ...] = (), *, dtype=jnp.float32
@@ -236,6 +240,7 @@ class FlatSymDecomp(SymDecompBase):
     dim: SymDecompDims
 
     subrep_seq: typing.ClassVar[tuple[str, ...]] = ("invariant", "space", "flavour")
+    element_names: typing.ClassVar[frozenset[str]] = frozenset({"data"})
 
     @classmethod
     def empty(
