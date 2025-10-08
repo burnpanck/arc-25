@@ -9,7 +9,7 @@ from ... import symmetry
 from ...symmetry import D4
 from ...vision2.encoder import ARCEncoder
 from ...vision2.fields import CoordinateGrid, Field, FieldDims
-from ...vision2.symrep import SymDecompDims
+from ...vision2.symrep import RepSpec, SymDecompDims
 from .conftest import quant
 
 
@@ -18,7 +18,6 @@ def test_ARCEncoder_symmetry(use_chirality):
     """Test that ARCEncoder preserves D4 symmetry."""
     with jax.experimental.enable_x64():
         # Prepare example encoder with small dimensions
-        from ...vision2.symrep import RepSpec
 
         hidden_size = FieldDims(
             context=SymDecompDims(43, 11, 7),
