@@ -3,7 +3,7 @@
 name = "yde-arc25"
 description = "Yves' attempt to beat the ARC Prize 2025"
 readme = "README.md"
-version = "25.9.1"
+dynamic = ["version"]
 authors = [
     {name = "Yves Delley", email = "pu.y@delley.net"},
 ]
@@ -52,7 +52,7 @@ kaggle = [
 ]
 
 [build-system]
-requires = ["pdm-backend"]
+requires = ["pdm-backend>=2.4"]
 build-backend = "pdm.backend"
 
 [tool.isort]
@@ -69,6 +69,14 @@ exclude = "app/main.py"
 
 [tool.pdm]
 package-dir = "src"
+distribution = true
+
+[tool.pdm.version]
+source = "scm"                 # read from Git/Hg tags
+write_to = "arc25/_version.py"
+write_template = "__version__ = '{}'"
+# Optional: customize output (needs pdm-backend>=2.4):
+version_format = "scripts.version:format_version"
 
 [tool.pdm.build]
 includes = ["src/arc25"]
