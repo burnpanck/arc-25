@@ -50,7 +50,7 @@ Training performance:
 
 ## Vision 2
 
-### Configuration 1
+### Configuration 0
 
 ```python
 width = FieldDims(
@@ -116,3 +116,54 @@ Measurements with a single bucket at 30x30:
 - *4x L4*: global batch size 192, remat=True, bf16, mode="flat": OOM
 - *4x L4*: global batch size 160, remat=True, bf16, mode="flat": OOM
 - *4x L4*: global batch size 144, remat=True, bf16, mode="flat": ~90.0 images/s
+
+### Configuration 1 (with perceiver, still classification)
+
+```python
+width = FieldDims(
+    context = SymDecompDims(
+        space = 2*16,   # 8x2 = 16
+        flavour = 1*16, # 10x1 = 10
+        invariant= 14*16, # 1x14 -> 40*16
+    ),
+    cells = SymDecompDims(
+        space = 2*8,
+        flavour = 1*8,
+        invariant = 22*8, # -> 48*8
+    ),
+    context_tokens = 2,
+)
+
+arc_cls = ARCClassifier(
+    num_classes = 400,
+    num_heads=8,
+    num_groups=2,
+    num_layers=8,
+    num_perceiver_layers=3,
+    num_perceiver_tokens=8,
+    hidden_size=width,
+    swiglu_width_factor=8/3,
+    qk_head_width=SymDecompDims(
+        space = 3 * 8,  # 1x3x8
+        flavour = 1 * 4,  # 10x1x4 = 5x1x8
+        invariant = 4 * 8, # 1*4*8 -> 12x8
+        rep=RepSpec(symmetry.ChiralityRep, 10)
+    ),
+    v_head_width=SymDecompDims(
+        space = 2*4,
+        flavour = 1*4,
+        invariant = 14*4,
+    ),
+    use_chirality_rep=False,
+    per_head_rope_freq=False,
+    dtype=jnp.bfloat16,
+    rngs=nnx.Rngs(42),
+)
+```
+
+Compilation time on 4x L4: 3min 30s
+Measurements with a single bucket at 30x30:
+
+- *4x L4*: global batch size 128, remat=True, bf16, mode="flat": ~ 76.0 images/s
+- *4x L4*: global batch size 128, remat=True, bf16, mode="split": OOM
+- *4x L4*: global batch size 96, remat=True, bf16, mode="split": ~ 57 images/s

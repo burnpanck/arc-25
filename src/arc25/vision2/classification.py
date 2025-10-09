@@ -85,6 +85,8 @@ class ARCClassifier(nnx.Module):
         x: jt.Int[jt.Array, "... Y X"],
         size: jt.Int[jt.Array, "... 2"],
         transform: jt.Int[jt.Array, "..."] | None = None,
+        *,
+        with_stats: bool = False,
         **kw,
     ) -> jt.Float[jt.Array, "... L"]:
         """When `transform` is not None, it is interpreted as an index into
@@ -97,7 +99,11 @@ class ARCClassifier(nnx.Module):
         """
         batch = x.shape[:-2]
 
-        x = self.encoder(x, size, **kw)
+        res = self.encoder(x, size, **kw, with_stats=with_stats)
+        if with_stats:
+            x, stats = res
+        else:
+            x = res
 
         x = x.context
 
@@ -125,4 +131,8 @@ class ARCClassifier(nnx.Module):
         x = self.classifier_activation(x)
 
         # Predict class probabilities based on the CLS token embedding.
-        return self.classifier(x)
+        logits = self.classifier(x)
+
+        if with_stats:
+            return logits, stats
+        return logits

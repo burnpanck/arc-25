@@ -78,6 +78,8 @@ class LayerStack(nnx.Module):
                 rngs=rngs,
             )
 
+        self.num_layers = num_layers
+        self.dtype = dtype
         self.blocks = create_block(rngs)
         self.hidden_size = hidden_size
         self.remat = remat
@@ -93,7 +95,8 @@ class LayerStack(nnx.Module):
         unroll: int | bool | None = None,
         remat: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
-    ) -> Field:
+        with_stats: bool = False,
+    ) -> Field | tuple[Field, dict]:
         assert self.hidden_size.validate(x), self.hidden_size.validation_problems(x)
 
         # Transformer encoder blocks.
@@ -113,22 +116,31 @@ class LayerStack(nnx.Module):
         # and the model is to scan along the axis 0
         # - out_axes marks the output as carry
 
+        def update_stats(stats, i, x):
+            if not with_stats:
+                return stats
+            for pk, proj in x.projections.items():
+                for rk, rep in proj.representations.items():
+                    if not rep.size:
+                        continue
+                    for k, v in dict(
+                        min=rep.min(),
+                        mean=rep.mean(),
+                        std=rep.std(),
+                        max=rep.max(),
+                    ).items():
+                        stats[pk][rk][k] = stats[pk][rk][k].at[i].set(v)
+            return stats
+
         def forward(
-            carry: tuple[Field, nnx.Rngs], block: FieldTransformer
-        ) -> tuple[Field, nnx.Rngs]:
-            x, rngs = carry
+            carry: tuple[int, Field, dict, nnx.Rngs], block: FieldTransformer
+        ) -> tuple[int, Field, dict, nnx.Rngs]:
+            i, x, stats, rngs = carry
             x = block(x, rngs=rngs, deterministic=deterministic, mode=mode)
-            if False:
-                for pk, proj in x.projections.items():
-                    for rk, rep in proj.representations.items():
-                        jax.debug.print(
-                            f"{pk}.{rk}:".ljust(20)
-                            + "{min:.1f} .. ±{std:.1f}.. {max:.1f}",
-                            min=rep.min(),
-                            std=rep.std(),
-                            max=rep.max(),
-                        )
-            return x, rngs
+            i += 1
+            stats = update_stats(stats, i, x)
+            carry = i, x, stats, rngs
+            return carry
 
         remat = nnx.module.first_from(
             remat,
@@ -159,9 +171,22 @@ class LayerStack(nnx.Module):
 as either a __call__ argument or class attribute""",
         )
 
-        carry = (x, rngs)
+        stats = {}
+        if with_stats:
+            for pk, proj in x.projections.items():
+                for rk, rep in proj.representations.items():
+                    if not rep.size:
+                        continue
+                    s = stats.setdefault(pk, {}).setdefault(rk, {})
+                    for k in ["min", "mean", "std", "max"]:
+                        s[k] = jnp.zeros(self.num_layers + 1, self.dtype)
+
+        stats = update_stats(stats, 0, x)
+        carry = (0, x, stats, rngs)
         carry = forward(carry, self.blocks)
-        y, rngs = carry
+        i, y, stats, rngs = carry
+        if with_stats:
+            return y, stats
         return y
 
 
@@ -350,6 +375,7 @@ class ARCEncoder(nnx.Module):
         unroll: int | bool | None = None,
         remat: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
+        with_stats: bool = False,
     ) -> Field:
         """
         Encodes an ARC-style input grid into a `SymDecomp` of dimensions `(..., F, R?, C)`;
@@ -382,9 +408,19 @@ class ARCEncoder(nnx.Module):
             self.dropout, rngs=rngs, deterministic=deterministic
         )
 
-        x = self.main_stack(
-            embedding, rngs=rngs, deterministic=deterministic, mode=mode
+        stats = {}
+        res = self.main_stack(
+            embedding,
+            rngs=rngs,
+            deterministic=deterministic,
+            mode=mode,
+            with_stats=with_stats,
         )
+        if with_stats:
+            x, s = res
+            stats["main"] = s
+        else:
+            x = res
 
         # Apply layer normalization
         y = x.map_representations(lambda v, f: f(v), self.main_norm)
@@ -427,7 +463,14 @@ class ARCEncoder(nnx.Module):
                 context=context,
             )
 
-        y = self.perceiver_stack(y, rngs=rngs, deterministic=deterministic, mode=mode)
+        res = self.perceiver_stack(
+            y, rngs=rngs, deterministic=deterministic, mode=mode, with_stats=with_stats
+        )
+        if with_stats:
+            y, s = res
+            stats["perceiver"] = s
+        else:
+            x = res
 
         # final normalisation
         y = attrs.evolve(
@@ -435,6 +478,8 @@ class ARCEncoder(nnx.Module):
             context=y.context.map_representations(lambda v, f: f(v), self.final_norm),
         )
 
+        if with_stats:
+            return y, stats
         return y
 
     def encode(
