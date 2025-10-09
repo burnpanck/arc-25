@@ -8,18 +8,17 @@ from flax import nnx
 from ... import symmetry
 from ...symmetry import D4
 from ...vision2.fields import CoordinateGrid, Field, FieldDims
-from ...vision2.symrep import SymDecompDims
+from ...vision2.symrep import RepSpec, SymDecompDims
 from ...vision2.transformer import FieldTransformer
 from .conftest import quant, verify_swap
 
 
 @pytest.mark.parametrize("use_chirality", [False, True])
-def test_FieldTransformer_symmetry(use_chirality):
+@pytest.mark.parametrize("perceiver_only", [False, True])
+def test_FieldTransformer_symmetry(use_chirality, perceiver_only):
     """Test that ARCEncoder preserves D4 symmetry."""
     with jax.experimental.enable_x64():
-        # Prepare example encoder with small dimensions
-        from ...vision2.symrep import RepSpec
-
+        # Prepare example transformer layer with small dimensions
         hidden_size = FieldDims(
             context=SymDecompDims(43, 11, 7),
             cells=SymDecompDims(41, 5, 3),
@@ -45,6 +44,7 @@ def test_FieldTransformer_symmetry(use_chirality):
             dtype=np.float64,
             use_chirality_rep=use_chirality,
             dropout_rate=0.0,
+            perceiver_only=perceiver_only,
             rngs=rngs,
         )
 

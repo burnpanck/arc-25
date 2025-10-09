@@ -15,10 +15,154 @@ from flax.typing import (
 from .. import symmetry
 from ..lib import nnx_compat
 from ..lib.misc import first_from
+from .attention import GlobalAttention
 from .fields import CoordinateGrid, Field, FieldDims
 from .linear import SymDecompLinear
 from .symrep import RepSpec, SplitSymDecomp, SymDecompBase, SymDecompDims, standard_rep
 from .transformer import FieldTransformer
+
+
+class LayerStack(nnx.Module):
+    def __init__(
+        self,
+        *,
+        hidden_size: FieldDims,
+        num_heads: int,
+        num_groups: int | None = None,
+        num_layers: int = 12,
+        perceiver_only: bool = False,
+        dtype: Dtype | None = None,
+        param_dtype: Dtype = jnp.float32,
+        precision: PrecisionLike = None,
+        swiglu_width_factor: float | None = None,
+        dropout_rate: float = 0.1,
+        keep_rngs: bool = True,
+        remat: bool | None = True,
+        unroll: int | bool | None = 1,
+        rngs: nnx.Rngs,
+        head_rep: type[symmetry.PermRepBase] = symmetry.TrivialRep,
+        # the following ones do not apply to perceiver_only stacks
+        use_chirality_rep: bool = True,
+        per_head_rope_freq: bool = True,
+        qk_head_width: SymDecompDims | None = None,
+        v_head_width: SymDecompDims | None = None,
+    ):
+        # As Block contains dropout op, we prefer
+        # to split RNG into num_layers of RNGs
+        # using @nnx.split_rngs decorator.
+        # Next, nnx.vmap creates a vectorized version of Block.
+        # in_axes and out_axes define vectorization axis
+        # of the input splitted rngs and the output Block instance.
+        # Both axes should be 0.
+        @nnx.split_rngs(splits=num_layers)
+        @nnx.vmap(in_axes=(0,), out_axes=0)
+        def create_block(rngs: nnx.Rngs):
+            return FieldTransformer(
+                hidden_size=hidden_size,
+                qk_head_width=qk_head_width,
+                v_head_width=v_head_width,
+                swiglu_width_factor=swiglu_width_factor,
+                use_chirality_rep=use_chirality_rep,
+                per_head_rope_freq=per_head_rope_freq,
+                num_heads=num_heads,
+                num_groups=num_groups,
+                dropout_rate=dropout_rate,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                # attention_dtype=attention_dtype,
+                precision=precision,
+                perceiver_only=perceiver_only,
+                head_rep=head_rep,
+                # we can't hold on to the Rngs, as we want to carry it through the scan later
+                keep_rngs=False,
+                rngs=rngs,
+            )
+
+        self.blocks = create_block(rngs)
+        self.hidden_size = hidden_size
+        self.remat = remat
+        self.unroll = unroll
+        self.rngs = rngs if keep_rngs else nnx_compat.data(None)
+
+    def __call__(
+        self,
+        x: Field,
+        *,
+        rngs: nnx.Rngs | None = None,
+        deterministic: bool | None = None,
+        unroll: int | bool | None = None,
+        remat: bool | None = None,
+        mode: typing.Literal["flat", "split"] | None = None,
+    ) -> Field:
+        assert self.hidden_size.validate(x), self.hidden_size.validation_problems(x)
+
+        # Transformer encoder blocks.
+        # Process the embedded patches through the transformer encoder layers.
+
+        # We use nnx.scan to apply sequentially the blocks
+        # on the input, for example with num_layers=3
+        # output = block[0](x)
+        # output = block[1](output)
+        # output = block[2](output)
+        #
+        # In `forward` function defined below:
+        # - x represents the loop carry value
+        # - model is the data to scan along the leading axis
+        # nnx.scan args:
+        # - in_axes marks the inputs: x is marked as carry
+        # and the model is to scan along the axis 0
+        # - out_axes marks the output as carry
+
+        def forward(
+            carry: tuple[Field, nnx.Rngs], block: FieldTransformer
+        ) -> tuple[Field, nnx.Rngs]:
+            x, rngs = carry
+            x = block(x, rngs=rngs, deterministic=deterministic, mode=mode)
+            if False:
+                for pk, proj in x.projections.items():
+                    for rk, rep in proj.representations.items():
+                        jax.debug.print(
+                            f"{pk}.{rk}:".ljust(20)
+                            + "{min:.1f} .. ±{std:.1f}.. {max:.1f}",
+                            min=rep.min(),
+                            std=rep.std(),
+                            max=rep.max(),
+                        )
+            return x, rngs
+
+        remat = nnx.module.first_from(
+            remat,
+            self.remat,
+            error_msg="LayerStack needs `remat`, either in constructor or call",
+        )
+        if remat is not False:
+            forward = nnx.remat(
+                forward,
+                prevent_cse=False,
+                policy=(
+                    jax.checkpoint_policies.checkpoint_dots if remat is True else remat
+                ),
+            )
+        unroll = nnx.module.first_from(
+            unroll,
+            self.unroll,
+            error_msg="LayerStack needs `unroll`, either in constructor or call",
+        )
+        forward = nnx.scan(
+            forward, in_axes=(nnx.Carry, 0), out_axes=nnx.Carry, unroll=unroll
+        )
+
+        rngs = nnx.module.first_from(
+            rngs,
+            self.rngs,
+            error_msg="""No `rngs` argument was provided to LayerStack
+as either a __call__ argument or class attribute""",
+        )
+
+        carry = (x, rngs)
+        carry = forward(carry, self.blocks)
+        y, rngs = carry
+        return y
 
 
 class ARCEncoder(nnx.Module):
@@ -28,6 +172,8 @@ class ARCEncoder(nnx.Module):
         num_heads: int,
         hidden_size: FieldDims,
         num_layers: int = 12,
+        num_perceiver_layers: int = 4,
+        num_perceiver_tokens: int = 24,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
@@ -44,14 +190,39 @@ class ARCEncoder(nnx.Module):
         unroll: int | bool | None = 1,
         rngs: nnx.Rngs,
     ):
+        self.config = dict(
+            num_heads=num_heads,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_perceiver_layers=num_perceiver_layers,
+            num_perceiver_tokens=num_perceiver_tokens,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            precision=precision,
+            qk_head_width=qk_head_width,
+            v_head_width=v_head_width,
+            swiglu_width_factor=swiglu_width_factor,
+            use_chirality_rep=use_chirality_rep,
+            per_head_rope_freq=per_head_rope_freq,
+            head_rep=head_rep,
+            num_groups=num_groups,
+            dropout_rate=dropout_rate,
+            remat=remat,
+            unroll=unroll,
+        )
+
         self.num_layers = num_layers
-        self.dtype = dtype
-        self.param_dtype = param_dtype
-        self.precision = precision
         self.hidden_size = hidden_size
-        self.remat = remat
-        self.unroll = unroll
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
+        self.num_perceiver_layers = num_perceiver_layers
+        self.perceiver_hidden_size = perceiver_hidden_size = attrs.evolve(
+            hidden_size, context_tokens=num_perceiver_tokens
+        )
+        self.dtype = dtype
+        self.rngs = rngs if keep_rngs else nnx_compat.data(None)
+        if False:
+            self.param_dtype = param_dtype
+            self.precision = precision
 
         embedding_dims = dict(
             context=SymDecompDims(
@@ -86,41 +257,38 @@ class ARCEncoder(nnx.Module):
                 param_dtype,
             )
         )
+        attn_kw = dict(
+            num_heads=num_heads,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            precision=precision,
+            head_rep=head_rep,
+            num_groups=num_groups,
+            dropout_rate=dropout_rate,
+            keep_rngs=keep_rngs,
+            rngs=rngs,
+        )
 
-        # As Block contains dropout op, we prefer
-        # to split RNG into num_layers of RNGs
-        # using @nnx.split_rngs decorator.
-        # Next, nnx.vmap creates a vectorized version of Block.
-        # in_axes and out_axes define vectorization axis
-        # of the input splitted rngs and the output Block instance.
-        # Both axes should be 0.
-        @nnx.split_rngs(splits=num_layers)
-        @nnx.vmap(in_axes=(0,), out_axes=0)
-        def create_block(rngs: nnx.Rngs):
-            return FieldTransformer(
-                hidden_size=hidden_size,
-                qk_head_width=qk_head_width,
-                v_head_width=v_head_width,
-                swiglu_width_factor=swiglu_width_factor,
-                use_chirality_rep=use_chirality_rep,
-                per_head_rope_freq=per_head_rope_freq,
-                num_heads=num_heads,
-                num_groups=num_groups,
-                dropout_rate=dropout_rate,
-                dtype=dtype,
-                param_dtype=param_dtype,
-                # attention_dtype=attention_dtype,
-                precision=precision,
-                head_rep=head_rep,
-                # we can't hold on to the Rngs, as we want to carry it through the scan later
-                keep_rngs=False,
-                rngs=rngs,
-            )
+        stack_kw = dict(
+            remat=remat,
+            unroll=unroll,
+            **attn_kw,
+        )
 
-        self.blocks = create_block(rngs)
+        self.main_stack = LayerStack(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            qk_head_width=qk_head_width,
+            v_head_width=v_head_width,
+            swiglu_width_factor=swiglu_width_factor,
+            use_chirality_rep=use_chirality_rep,
+            per_head_rope_freq=per_head_rope_freq,
+            perceiver_only=False,
+            **stack_kw,
+        )
 
         # Layer normalization with `flax.nnx.LayerNorm`.
-        self.final_norm = hidden_size.map_representations(
+        self.main_norm = hidden_size.map_representations(
             lambda k, kk, v: nnx.LayerNorm(
                 v,
                 dtype=dtype,
@@ -129,7 +297,48 @@ class ARCEncoder(nnx.Module):
             )
         )
 
-        self.rngs = rngs if keep_rngs else nnx_compat.data(None)
+        self.perceiver_queries = nnx.Param(
+            default_bias_init(
+                rngs.params(),
+                (
+                    max(
+                        0,
+                        perceiver_hidden_size.context_tokens
+                        - hidden_size.context_tokens,
+                    ),
+                    perceiver_hidden_size.context.invariant,
+                ),
+                param_dtype,
+            )
+        )
+        self.perceiver_init_attn = (
+            GlobalAttention(
+                target_features=attrs.evolve(
+                    perceiver_hidden_size.context, space=0, flavour=0
+                ),
+                source_features=hidden_size.context,
+                out_features=perceiver_hidden_size.context,
+                **attn_kw,
+            )
+            if self.perceiver_queries.size
+            else nnx_compat.data(None)
+        )
+
+        self.perceiver_stack = LayerStack(
+            num_layers=num_perceiver_layers,
+            hidden_size=perceiver_hidden_size,
+            perceiver_only=True,
+            **stack_kw,
+        )
+
+        self.final_norm = perceiver_hidden_size.context.map_representations(
+            lambda k, v: nnx.LayerNorm(
+                v,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+            )
+        )
 
     def __call__(
         self,
@@ -173,74 +382,59 @@ class ARCEncoder(nnx.Module):
             self.dropout, rngs=rngs, deterministic=deterministic
         )
 
-        # Transformer encoder blocks.
-        # Process the embedded patches through the transformer encoder layers.
-
-        # We use nnx.scan to apply sequentially the blocks
-        # on the input, for example with num_layers=3
-        # output = block[0](x)
-        # output = block[1](output)
-        # output = block[2](output)
-        #
-        # In `forward` function defined below:
-        # - x represents the loop carry value
-        # - model is the data to scan along the leading axis
-        # nnx.scan args:
-        # - in_axes marks the inputs: x is marked as carry
-        # and the model is to scan along the axis 0
-        # - out_axes marks the output as carry
-
-        def forward(
-            carry: tuple[Field, nnx.Rngs], block: FieldTransformer
-        ) -> tuple[Field, nnx.Rngs]:
-            x, rngs = carry
-            x = block(x, rngs=rngs, deterministic=deterministic, mode=mode)
-            if False:
-                for pk, proj in x.projections.items():
-                    for rk, rep in proj.representations.items():
-                        jax.debug.print(
-                            f"{pk}.{rk}:".ljust(20)
-                            + "{min:.1f} .. ±{std:.1f}.. {max:.1f}",
-                            min=rep.min(),
-                            std=rep.std(),
-                            max=rep.max(),
-                        )
-            return x, rngs
-
-        remat = nnx.module.first_from(
-            remat,
-            self.remat,
-            error_msg="ARCEncoder needs `remat`, either in constructor or call",
+        x = self.main_stack(
+            embedding, rngs=rngs, deterministic=deterministic, mode=mode
         )
-        if remat is not False:
-            forward = nnx.remat(
-                forward,
-                prevent_cse=False,
-                policy=(
-                    jax.checkpoint_policies.checkpoint_dots if remat is True else remat
-                ),
+
+        # Apply layer normalization
+        y = x.map_representations(lambda v, f: f(v), self.main_norm)
+
+        if self.perceiver_init_attn is not None:
+            n = self.perceiver_queries.shape[0]
+            dtype = self.dtype
+            rep = self.perceiver_hidden_size.context.rep
+            target = SplitSymDecomp(
+                invariant=self.perceiver_queries.astype(dtype),
+                space=jnp.zeros((n, rep.n_space, 0), dtype),
+                flavour=jnp.zeros((n, rep.n_flavours, 0), dtype),
+                rep=rep,
             )
-        unroll = nnx.module.first_from(
-            unroll,
-            self.unroll,
-            error_msg="ARCEncoder needs `unroll`, either in constructor or call",
-        )
-        forward = nnx.scan(
-            forward, in_axes=(nnx.Carry, 0), out_axes=nnx.Carry, unroll=unroll
+            source = y.context
+            ptok = self.perceiver_init_attn(
+                target=target,
+                source=source,
+                rngs=rngs,
+                deterministic=deterministic,
+                mode=mode,
+            )
+            nB = len(y.context.batch_shape) - 1
+            context = y.context.map_elementwise(
+                lambda a, b: jnp.concatenate([a, b], axis=nB), ptok.as_split()
+            )
+            y = attrs.evolve(
+                y,
+                context=context,
+            )
+        else:
+            context = y.context.map_elementwise(
+                lambda a: a[
+                    (slice(None),) * (len(y.context.batch_shape) - 1)
+                    + (slice(self.perceiver_hidden_size.context_tokens),)
+                ]
+            )
+            y = attrs.evolve(
+                y,
+                context=context,
+            )
+
+        y = self.perceiver_stack(y, rngs=rngs, deterministic=deterministic, mode=mode)
+
+        # final normalisation
+        y = attrs.evolve(
+            y,
+            context=y.context.map_representations(lambda v, f: f(v), self.final_norm),
         )
 
-        rngs = nnx.module.first_from(
-            rngs,
-            self.rngs,
-            error_msg="""No `rngs` argument was provided to ARCEncoder
-as either a __call__ argument or class attribute""",
-        )
-
-        carry = (embedding, rngs)
-        carry = forward(carry, self.blocks)
-        x, rngs = carry
-        # Apply final layer normalization
-        y = x.map_representations(lambda v, f: f(v), self.final_norm)
         return y
 
     def encode(

@@ -31,6 +31,8 @@ def test_ARCEncoder_symmetry(use_chirality):
             num_heads=4,
             num_groups=2,
             hidden_size=hidden_size,
+            num_perceiver_tokens=7,
+            num_perceiver_layers=1,
             # qk_head_width only applies to context path
             # Use TrivialRep for space as axial attention already has directional info
             qk_head_width=SymDecompDims(

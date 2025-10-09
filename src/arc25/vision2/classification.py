@@ -24,6 +24,7 @@ class ARCClassifier(nnx.Module):
         *,
         hidden_size: FieldDims,
         num_classes: int = 1000,
+        num_perceiver_tokens: int = 24,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
@@ -38,13 +39,14 @@ class ARCClassifier(nnx.Module):
             hidden_size=hidden_size,
             param_dtype=param_dtype,
             precision=precision,
+            num_perceiver_tokens=num_perceiver_tokens,
             rngs=rngs,
             **kw,
         )
 
         # Classification head (maps the transformer encoder to class probabilities).
         dims = hidden_size.context
-        n_base = min(dims.invariant, 2 * num_classes // hidden_size.context_tokens)
+        n_base = min(dims.invariant, 2 * num_classes // num_perceiver_tokens)
         mult = dict(invariant=1, space=dims.rep.n_space, flavour=dims.rep.n_flavours)
         reduced_dims = {
             k: min(getattr(dims, k), n_base // (v * (2 if k != "invariant" else 1)))
@@ -66,8 +68,7 @@ class ARCClassifier(nnx.Module):
 
         self.classifier_activation = nnx.gelu
         self.classifier = nnx.Linear(
-            hidden_size.context_tokens
-            * sum(v * mult[k] for k, v in reduced_dims.items()),
+            num_perceiver_tokens * sum(v * mult[k] for k, v in reduced_dims.items()),
             num_classes,
             dtype=(
                 jnp.promote_types(dtype, jnp.float32)

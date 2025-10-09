@@ -198,7 +198,7 @@ class AxialAttention(nnx.Module):
             #            K, V have shape (*batch, Y, X, A*D, V, 1, K, [F,] H)
             # where A=2 (axial), D=2 (direction), V=1or2 (chirality), M, K (heads)
             # [F,] is present for space/flavour in split mode, absent for invariant/flat
-            # Reshape to: (*batch_shape, F, H_pairs) where F is dummy if absent
+            # Reshape to: (*batch, Y, X, A, D, V, M, K, F, H_pairs, 2) where F is dummy if absent
             y = dict(
                 **{
                     k: v.reshape(
@@ -449,34 +449,35 @@ class GlobalAttention(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
         )
+        M = num_heads // num_groups
+        K = num_groups
+
         for mode, (inf, nh) in dict(
-            q=(target_features, num_heads),
-            k=(source_features, num_groups),
+            q=(target_features, M),
+            k=(source_features, 1),
         ).items():
             setattr(
                 self,
                 mode,
                 SymDecompLinear(
                     inf,
-                    qk_head_width.map_representations(
-                        lambda k, v: v * nh  # noqa: B023
-                    ),
-                    extra_out_reps=head_reps,
+                    qk_head_width,
+                    extra_out_reps=head_reps + (nh, K),
                     use_bias=use_qk_bias,
                     **kw,
                 ),
             )
         self.v = SymDecompLinear(
             source_features,
-            v_head_width.map_representations(lambda k, v: v * num_groups),
-            extra_out_reps=head_reps,
+            v_head_width,
+            extra_out_reps=head_reps + (1, K),
             use_bias=use_v_bias,
             **kw,
         )
         self.out = SymDecompLinear(
-            v_head_width.map_representations(lambda k, v: v * num_heads),
+            v_head_width,
             out_features,
-            extra_in_reps=head_reps,
+            extra_in_reps=head_reps + (M, K),
             use_bias=use_out_bias,
             **kw,
         )
@@ -501,44 +502,43 @@ class GlobalAttention(nnx.Module):
         assert self.source_features.validate(
             source
         ), self.source_features.validation_problems(source)
-        assert target.batch_shape[:-1] == source.batch_shape[:-1]
+        batch = np.broadcast_shapes(target.batch_shape[:-1], source.batch_shape[:-1])
         if mask is not None:
             # done early, so we get an exeption if shapes mismatch
             mask = jnp.broadcast_to(
                 mask,
-                target.batch_shape[:-1]
+                batch
                 + (
                     target.batch_shape[-1],
                     source.batch_shape[-1],
                 ),
             )
-
-        batch = np.broadcast_shapes(target.batch_shape[:-1], source.batch_shape[:-1])
+        nB = len(batch)
         T = target.batch_shape[-1]  # noqa: F841
         S = source.batch_shape[-1]  # noqa: F841
         N = self.num_heads
         K = self.num_groups
-        M = N // K
+        M = N // K  # noqa: F841
+
+        # insert broadcasting batch dims where needed
+        if n_missing := len(target.batch_shape) - 1 - len(batch):
+            target = target.batch_reshape(*(1,) * n_missing, *target.batch_shape)
+        if n_missing := len(source.batch_shape) - 1 - len(batch):
+            source = source.batch_reshape(*(1,) * n_missing, *source.batch_shape)
 
         qkv = {}
         for m in "qkv":
             lin = getattr(self, m)
             y = lin(dict(q=target).get(m, source), mode=mode)
+            # After lin: Q has shape (*batch, S/T, V, M, K, [F,] H)
+            #            K, V have shape (*batch, S/T, V, 1, K, [F,] H)
+            # where S/T are source/target tokens, V=head_rep, M, K (heads)
+            # [F,] is present for space/flavour in split mode, absent for invariant/flat
+            # Insert dummy F where needed,
             y = dict(
                 **{
-                    k: v.reshape(
-                        *v.shape[
-                            : len(batch) + 2
-                        ],  # batch, including T/S and the newly created head_rep
-                        *v.shape[len(batch) + 2 : -1]
-                        or (
-                            1,
-                        ),  # (1) main representation (flavour/space) if any, adding broadcasting dim otherwise
-                        (M if m == "q" else 1),
-                        K,  # (2) heads in groups
-                        v.shape[-1] // (N if m == "q" else K),  # (1) head dim
-                    )
-                    for k, v in y.representations.items()
+                    k: v[..., None, :] if k in {"invariant", "data"} else v
+                    for k, v in y.elements.items()
                 },
             )
             qkv[m] = y
@@ -546,13 +546,13 @@ class GlobalAttention(nnx.Module):
         Q, K = [qkv[k] for k in ["q", "k"]]
         logits = sum(
             jnp.einsum(
-                "...tdfmkh,...sdfmkh->...tsdmk",
+                "...tvmkfh,...svmkfh->...tsvmk",
                 Q[k],
                 K[k],
             )
             for k in Q
         )
-        d = sum(v.shape[-4] * v.shape[-1] for v in Q.values())
+        d = sum(np.prod(v.shape[-2:]) for v in Q.values())
         scale = 1 / np.sqrt(d)
         logits = scale * logits
         if self.activation is not None:
@@ -564,24 +564,37 @@ class GlobalAttention(nnx.Module):
             weight = jnp.where(lgmsk, logits, 0)
         V = {
             k: jnp.einsum(
-                "...tsdmk,...sdfmkh->...tdfmkh",
+                "...tsvmk,...svmkfh->...tvmkfh",
                 weight,
                 v,
             )
             for k, v in qkv["v"].items()
         }
-
-        V = SplitSymDecomp(
+        match set(qkv["v"].keys()):
+            case SplitSymDecomp.element_names:
+                sym_decomp_cls = SplitSymDecomp
+                extra_v_kw = dict(rep=self.v.out_features.rep)
+            case FlatSymDecomp.element_names:
+                sym_decomp_cls = FlatSymDecomp
+                extra_v_kw = dict(dim=self.v.out_features)
+            case _:
+                raise KeyError(
+                    f"Cannot determine SymDecomp implementation for elements {set(qkv['v'].keys())}"
+                )
+        V = sym_decomp_cls(
             **{
-                # get rid of that "f" dimension where it doesn't belong
-                k: v.reshape(
-                    *v.shape[: len(batch) + 2],  # retain the head_rep dim
-                    *v.shape[-dict(invariant=3).get(k, 4) : -3],
-                    np.prod(v.shape[-3:]),
+                # get rid of that dummy "f" dimension where it doesn't belong
+                k: (
+                    v.reshape(
+                        *v.shape[: nB + 4],
+                        v.shape[-1],
+                    )
+                    if k in {"invariant", "data"}
+                    else v
                 )
                 for k, v in V.items()
             },
-            rep=self.v.out_features.rep,
+            **extra_v_kw,
         )
         out = self.out(V, mode=mode)
         if return_attention_weights:
