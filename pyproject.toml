@@ -40,9 +40,6 @@ vision = [
     "flax>=0.10.7",
     "jaxtyping",
 ]
-jax-cuda = [
-    "jax[cuda12]",
-]
 
 [dependency-groups]
 test = [
