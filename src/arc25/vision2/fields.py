@@ -8,6 +8,7 @@ import numpy as np
 
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
+from ..serialisation import serialisable
 from ..symmetry import D4
 from .symrep import SplitSymDecomp, SymDecompBase, SymDecompDims, standard_rep
 
@@ -161,6 +162,7 @@ class Field(AttrsModel):
         )
 
 
+@serialisable
 @attrs.frozen
 class FieldDims:
     context: SymDecompDims

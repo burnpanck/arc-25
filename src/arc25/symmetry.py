@@ -1,6 +1,7 @@
 import dataclasses
 import enum
 from types import MappingProxyType, SimpleNamespace
+from typing import ClassVar
 
 import numpy as np
 
@@ -85,6 +86,7 @@ class PermRepMeta(enum.EnumMeta):
             scls._element_to_index = MappingProxyType(
                 {v: k for k, v in enumerate(scls)}
             )
+            scls._known_reps.add(scls)
             return scls
         assert isinstance(value, str)
         return cls._symbol_to_element[value]
@@ -218,6 +220,8 @@ class PermRepBase(enum.Enum, metaclass=PermRepMeta):
             elements = Ellipsis
         return ret
 
+
+PermRepBase._known_reps = set()
 
 _box_drawing_rep_symbols = "│─ ╱╲  ╞╡╥╨ ╴╵╶╷ ┌┐└┘      ╒╓╕╖╘╙╛╜"
 _arrow_rep_symbols = "↔︎↕︎ ⤡⤢ ↺↻ ⟲⟳ →←↑↓ ↘︎↗︎↖︎↙︎ ⇄⇆⇅⇵ ⦨⦩⦪⦫⦬⦭⦮⦯"

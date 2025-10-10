@@ -10,9 +10,11 @@ from flax.typing import Dtype
 
 from ..lib.attrs import AttrsModel
 from ..lib.compat import Self
+from ..serialisation import serialisable
 from ..symmetry import D4, FullRep, PermRepBase, SymOpBase
 
 
+@serialisable
 @attrs.frozen
 class RepSpec:
     space: type[PermRepBase]
@@ -24,6 +26,7 @@ class RepSpec:
             takes_self=True,
         ),
         repr=False,
+        metadata=dict(is_cache=True),
     )
 
     def __attrs_post_init__(self):
@@ -70,6 +73,7 @@ class SymDecompBase(abc.ABC, AttrsModel):
         return self.map_elementwise(lambda v: v.reshape(*new_batch_shape, *v.shape[n:]))
 
 
+@serialisable
 @attrs.frozen
 class SymDecompDims:
     invariant: int  # invariant under symmetry operations
