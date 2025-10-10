@@ -95,20 +95,23 @@ class SwiGLU(nnx.Module):
         rngs: nnx.Rngs | None = None,
         deterministic: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
+        with_intermediates: bool = False,
     ) -> SymDecompBase:
-        x = self.up(x, mode=mode)
+        xw = self.up(x, mode=mode)
         reshaped = {
             k: v.reshape(*v.shape[:-1], v.shape[-1] // 2, 2)
-            for k, v in x.elements.items()
+            for k, v in xw.elements.items()
         }
-        if isinstance(x, FlatSymDecomp):
+        if isinstance(xw, FlatSymDecomp):
             # need to update metadata
-            extra = dict(dim=x.dim.map_representations(lambda k, v: v // 2))
+            extra = dict(dim=xw.dim.map_representations(lambda k, v: v // 2))
         else:
             extra = {}
-        u = attrs.evolve(x, **{k: v[..., 0] for k, v in reshaped.items()}, **extra)
-        v = attrs.evolve(x, **{k: v[..., 1] for k, v in reshaped.items()}, **extra)
-        x = u.map_elementwise(lambda u, v: self.activation(u) * v, v)
-        x = x.map_elementwise(self.dropout, rngs=rngs, deterministic=deterministic)
-        x = self.down(x, mode=mode)
+        u = attrs.evolve(xw, **{k: v[..., 0] for k, v in reshaped.items()}, **extra)
+        v = attrs.evolve(xw, **{k: v[..., 1] for k, v in reshaped.items()}, **extra)
+        xa = u.map_elementwise(lambda u, v: self.activation(u) * v, v)
+        xd = xa.map_elementwise(self.dropout, rngs=rngs, deterministic=deterministic)
+        x = self.down(xd, mode=mode)
+        if with_intermediates:
+            return x, dict(wide=xw, u=u, v=v, activated=xa)
         return x

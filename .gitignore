@@ -5,3 +5,5 @@ dist/
 .nicegui/
 .pdm-python
 .python-version
+
+src/arc25/_version.py

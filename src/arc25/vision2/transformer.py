@@ -149,6 +149,7 @@ class FieldTransformer(nnx.Module):
         rngs: nnx.Rngs | None = None,
         deterministic: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
+        with_residuals: bool = False,
     ) -> Field:
         perceiver_only = self.perceiver_only
 
@@ -167,7 +168,8 @@ class FieldTransformer(nnx.Module):
 
         # step 1: self-attention
         ax = x.as_split().map_representations(apply, self.norm1)
-        ax = attrs.evolve(
+        sa_inp = ax
+        sa_res = ax = attrs.evolve(
             ax,
             cells=(
                 self.self_attn.cells(
@@ -184,13 +186,14 @@ class FieldTransformer(nnx.Module):
                 ax.context, mask=None, rngs=rngs, deterministic=deterministic, mode=mode
             ),
         ).as_split()
-        x = add_resid(x, ax)
+        sa_out = x = add_resid(x, ax)
 
         # step 2: cross-attention
         ax = x.map_representations(apply, self.norm2)
+        ca_inp = ax
         cells_flat = ax.cells.batch_reshape(*ax.cells.batch_shape[:-2], -1)
         mask = ax.grid.mask
-        ax = attrs.evolve(
+        ca_res = ax = attrs.evolve(
             ax,
             cells=(
                 self.cross_attn.cells2context(
@@ -213,11 +216,12 @@ class FieldTransformer(nnx.Module):
                 mode=mode,
             ),
         ).as_split()
-        x = add_resid(x, ax)
+        ca_out = x = add_resid(x, ax)
 
         # step 3: swiglu
         ax = x.map_representations(apply, self.norm3)
-        ax = x.map_projections(
+        loc_inp = ax
+        loc_res = ax = x.map_projections(
             lambda v, swiglu: (
                 swiglu(v, rngs=rngs, deterministic=deterministic, mode=mode)
                 if swiglu is not None
@@ -226,5 +230,17 @@ class FieldTransformer(nnx.Module):
             self.swiglu,
         ).as_split()
         x = add_resid(x, ax)
+
+        if with_residuals:
+            return x, dict(
+                sa_inp=sa_inp,
+                sa_res=sa_res,
+                sa_out=sa_out,
+                ca_inp=ca_inp,
+                ca_res=ca_res,
+                ca_out=ca_out,
+                loc_inp=loc_inp,
+                loc_res=loc_res,
+            )
 
         return x
