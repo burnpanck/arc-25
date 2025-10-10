@@ -221,7 +221,7 @@ class FieldTransformer(nnx.Module):
         # step 3: swiglu
         ax = x.map_representations(apply, self.norm3)
         loc_inp = ax
-        loc_res = ax = x.map_projections(
+        loc_res = ax = ax.map_projections(
             lambda v, swiglu: (
                 swiglu(v, rngs=rngs, deterministic=deterministic, mode=mode)
                 if swiglu is not None

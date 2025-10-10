@@ -11,7 +11,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "attrs",
     "anyio",
@@ -20,8 +20,6 @@ dependencies = [
     "scipy>=1.15.3",
     "msgpack>=1.1.1",
     "cbor2>=5.7.0",
-    "typing-extensions; python_version < '3.11'",
-    "strenum; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -48,7 +46,7 @@ test = [
 ]
 kaggle = [
     "kaggle>=1.7.4.5",
-    "asyncclick>=8.2.2.2;python_version>='3.11'",
+    "asyncclick>=8.2.2.2",
 ]
 
 [build-system]

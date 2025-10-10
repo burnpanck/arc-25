@@ -167,3 +167,6 @@ Measurements with a single bucket at 30x30:
 - *4x L4*: global batch size 128, remat=True, bf16, mode="flat": ~ 76.0 images/s
 - *4x L4*: global batch size 128, remat=True, bf16, mode="split": OOM
 - *4x L4*: global batch size 96, remat=True, bf16, mode="split": ~ 57 images/s
+- *TPU v5e-8*: global batch size 128, remat=True, bf16, mode="flat": ~ 158 images/s
+- *TPU v5e-8*: global batch size 192, remat=True, bf16, mode="flat": OOM
+- *TPU v5e-8*: global batch size 160, remat=True, bf16, mode="flat": ~ 136 images/s
