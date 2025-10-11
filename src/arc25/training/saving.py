@@ -29,8 +29,13 @@ def save_model(model: nnx.Module, path: Path, *, config: Any = None):
         pointer = ()
         for path, s in flatstate:  # tqdm.auto.tqdm(flatstate):
             pstr = ".".join(str(v) for v in path)  # noqa: F841
-            assert isinstance(s, jaxlib._jax.ArrayImpl)
-            d = np.asarray(jax.device_get(s))
+            match s:
+                case jaxlib._jax.ArrayImpl():
+                    d = np.asarray(jax.device_get(s))
+                case np.ndarray():
+                    d = s
+                case _:
+                    raise TypeError(type(s).__qualname__)
             neq = 0
             for i, (a, b) in enumerate(zip(pointer, path)):
                 neq = i

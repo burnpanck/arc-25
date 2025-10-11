@@ -14,8 +14,8 @@ from .conftest import quant, verify_swap
 
 
 @pytest.mark.parametrize("use_chirality", [False, True])
-@pytest.mark.parametrize("perceiver_only", [False, True])
-def test_FieldTransformer_symmetry(use_chirality, perceiver_only):
+@pytest.mark.parametrize("style", ["co-attention", "perceiver", "decoder"])
+def test_FieldTransformer_symmetry(use_chirality, style):
     """Test that ARCEncoder preserves D4 symmetry."""
     with jax.experimental.enable_x64():
         # Prepare example transformer layer with small dimensions
@@ -44,7 +44,7 @@ def test_FieldTransformer_symmetry(use_chirality, perceiver_only):
             dtype=np.float64,
             use_chirality_rep=use_chirality,
             dropout_rate=0.0,
-            perceiver_only=perceiver_only,
+            style=style,
             rngs=rngs,
         )
 

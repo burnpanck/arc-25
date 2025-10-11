@@ -80,6 +80,10 @@ class ARCClassifier(nnx.Module):
             rngs=rngs,
         )
 
+    @property
+    def config(self):
+        return self.encoder.config
+
     def __call__(
         self,
         x: jt.Int[jt.Array, "... Y X"],

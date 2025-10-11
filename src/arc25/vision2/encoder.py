@@ -30,7 +30,7 @@ class LayerStack(nnx.Module):
         num_heads: int,
         num_groups: int | None = None,
         num_layers: int = 12,
-        perceiver_only: bool = False,
+        style: typing.Literal["co-attention", "perceiver", "decoder"] = "co-attention",
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
@@ -71,7 +71,7 @@ class LayerStack(nnx.Module):
                 param_dtype=param_dtype,
                 # attention_dtype=attention_dtype,
                 precision=precision,
-                perceiver_only=perceiver_only,
+                style=style,
                 head_rep=head_rep,
                 # we can't hold on to the Rngs, as we want to carry it through the scan later
                 keep_rngs=False,
@@ -308,7 +308,7 @@ class ARCEncoder(nnx.Module):
             swiglu_width_factor=swiglu_width_factor,
             use_chirality_rep=use_chirality_rep,
             per_head_rope_freq=per_head_rope_freq,
-            perceiver_only=False,
+            style="co-attention",
             **stack_kw,
         )
 
@@ -352,7 +352,7 @@ class ARCEncoder(nnx.Module):
         self.perceiver_stack = LayerStack(
             num_layers=num_perceiver_layers,
             hidden_size=perceiver_hidden_size,
-            perceiver_only=True,
+            style="perceiver",
             **stack_kw,
         )
 
@@ -369,6 +369,7 @@ class ARCEncoder(nnx.Module):
         self,
         x: jt.Int[jt.Array, "... Y X"],
         size: jt.Int[jt.Array, "... 2"],
+        mask: jt.Bool[jt.Array, "... Y X"] | None = None,
         *,
         rngs: nnx.Rngs | None = None,
         deterministic: bool | None = None,
@@ -382,7 +383,7 @@ class ARCEncoder(nnx.Module):
         Here, `F = num_colours+1`, where the first flavour is colour-indepenent, and
         the others map to the input colours.
         """
-        pre_embedding = self.encode(x, size)
+        pre_embedding = self.encode(x, size, mask=mask)
 
         # print(f"{pre_embedding.shapes=}")
         embedding = pre_embedding.map_projections(lambda v, f: f(v), self.embedding)
@@ -482,15 +483,62 @@ class ARCEncoder(nnx.Module):
             return y, stats
         return y
 
+    @classmethod
+    def encode_positions(
+        cls, size: jt.Int[jt.Array, "... 2"], grid: CoordinateGrid
+    ) -> tuple[jt.Float[jt.Array, "... Y X R "], symmetry.PermRepBase]:
+        def encd(arr, abso=0, relo=0):
+            # input is (absolute, relative)
+            return jnp.concatenate(
+                [
+                    1 / jnp.maximum(1, 1 + arr[..., :1] + abso),
+                    jnp.clip(arr[..., 1:] + relo, 0, 1),
+                ],
+                axis=-1,
+            )
+
+        batch = np.broadcast_shapes(
+            size.shape[:-1],
+            grid.xpos.shape[:-2],
+            grid.ypos.shape[:-2],
+            grid.mask.shape[:-2],
+        )
+        Y, X = grid.mask.shape[-2:]
+
+        rep = symmetry.AxialDirRep
+        encoded_dir_info = {
+            rep.d: encd(grid.ypos[..., :, None, :]),
+            rep.u: encd(-grid.ypos[..., :, None, :], size[..., None, None, :1] - 1, 1),
+            rep.r: encd(grid.xpos[..., None, :, :]),
+            rep.l: encd(-grid.xpos[..., None, :, :], size[..., None, None, 1:] - 1, 1),
+        }
+        cells_space = jnp.where(
+            grid.mask[..., None, None],
+            jnp.concatenate(
+                [
+                    jnp.broadcast_to(encoded_dir_info[basis], batch + (Y, X, 2))[
+                        ..., :, :, None, :
+                    ]
+                    for basis in rep
+                ],
+                axis=-2,
+            ),
+            0,
+        )
+        return cells_space, rep
+
     def encode(
-        self, x: jt.Int[jt.Array, "... Y X"], size: jt.Int[jt.Array, "... 2"]
+        self,
+        x: jt.Int[jt.Array, "... Y X"],
+        size: jt.Int[jt.Array, "... 2"],
+        mask: jt.Bool[jt.Array, "... Y X"] | None = None,
     ) -> Field:
         batch = x.shape[:-2]
         Y, X = shape = x.shape[-2:]  # noqa: F841
         hs = self.hidden_size
         T = hs.context_tokens
 
-        grid = CoordinateGrid.for_batch(Y, X, size)
+        grid = CoordinateGrid.for_batch(Y, X, size, mask=mask)
 
         dtype = self.dtype or jnp.float32
 
@@ -540,45 +588,13 @@ class ARCEncoder(nnx.Module):
             0,
         )
 
-        def encd(arr, abso=0, relo=0):
-            # input is (absolute, relative)
-            return jnp.concatenate(
-                [
-                    1 / jnp.maximum(1, 1 + arr[..., :1] + abso),
-                    jnp.clip(arr[..., 1:] + relo, 0, 1),
-                ],
-                axis=-1,
-            )
-
-        encoded_dir_info = {
-            symmetry.AxialDirRep.d: encd(grid.ypos[..., :, None, :]),
-            symmetry.AxialDirRep.u: encd(
-                -grid.ypos[..., :, None, :], size[..., None, None, :1] - 1, 1
-            ),
-            symmetry.AxialDirRep.r: encd(grid.xpos[..., None, :, :]),
-            symmetry.AxialDirRep.l: encd(
-                -grid.xpos[..., None, :, :], size[..., None, None, 1:] - 1, 1
-            ),
-        }
-        cells_space = jnp.where(
-            grid.mask[..., None, None],
-            jnp.concatenate(
-                [
-                    jnp.broadcast_to(encoded_dir_info[basis], batch + (Y, X, 2))[
-                        ..., :, :, None, :
-                    ]
-                    for basis in symmetry.AxialDirRep
-                ],
-                axis=-2,
-            ),
-            0,
-        )
+        cells_space, cells_space_rep = self.encode_positions(size, grid)
 
         cells = SplitSymDecomp(
             invariant=cells_invariant,
             flavour=cells_flavour,
             space=cells_space,
-            rep=RepSpec(symmetry.AxialDirRep, hs.cells.n_flavours),
+            rep=RepSpec(cells_space_rep, hs.cells.n_flavours),
         )
         # print(f"{context.shapes=} {cells.shapes=}")
         return Field(

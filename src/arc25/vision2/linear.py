@@ -22,6 +22,7 @@ from jax import lax
 from ..lib import nnx_compat
 from ..lib.compat import Self
 from ..lib.misc import first_from
+from ..serialisation import serialisable
 from ..symmetry import D4, PermRepBase, SymOpBase
 from .symrep import FlatSymDecomp, SplitSymDecomp, SymDecompBase, SymDecompDims
 
@@ -31,12 +32,14 @@ def _rep_size(rep: type[PermRepBase] | int) -> int:
     return rep if isinstance(rep, int) else len(rep)
 
 
+@serialisable
 @attrs.frozen
 class AxisSymmetryInfo:
     rep: type[PermRepBase] = attrs.field(repr=lambda v: v.__name__)
     covariant: bool
 
 
+@serialisable
 @attrs.frozen
 class SymmetryMappingSpec:
     symmetry_group: type[SymOpBase]

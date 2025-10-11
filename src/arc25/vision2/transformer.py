@@ -39,10 +39,20 @@ class FieldTransformer(nnx.Module):
         dropout_rate: float = 0.0,
         normalise_qk: bool = False,  # True to stabilise learning in ViT-22B; see paper http://arxiv.org/abs/2302.05442
         keep_rngs: bool = True,
-        perceiver_only: bool = False,
+        style: typing.Literal["co-attention", "perceiver", "decoder"] = "co-attention",
         rngs: nnx.Rngs,
     ) -> None:
-        self.perceiver_only = perceiver_only
+        match style:
+            case "co-attention":
+                active_towers = {"context", "cells"}
+            case "perceiver":
+                active_towers = {"context"}
+            case "decoder":
+                active_towers = {"cells"}
+            case _:
+                raise KeyError(style)
+        active_towers = frozenset(active_towers)
+        self.active_towers = active_towers
 
         def norms(features: FieldDims = hidden_size, **kw):
             return features.map_representations(
@@ -50,7 +60,7 @@ class FieldTransformer(nnx.Module):
                     nnx.LayerNorm(
                         v, dtype=dtype, param_dtype=param_dtype, rngs=rngs, **kw
                     )
-                    if k == "context" or not perceiver_only
+                    if k in active_towers
                     else None
                 ),
                 cls=nnx_compat.Dict,
@@ -94,12 +104,16 @@ class FieldTransformer(nnx.Module):
                     keep_rngs=keep_rngs,
                     rngs=rngs,
                 )
-                if not perceiver_only
+                if "cells" in active_towers
                 else None
             ),
-            context=GlobalAttention(
-                in_features=hidden_size.context,
-                **global_attn_kw,
+            context=(
+                GlobalAttention(
+                    in_features=hidden_size.context,
+                    **global_attn_kw,
+                )
+                if "context" in active_towers
+                else None
             ),
         )
 
@@ -111,13 +125,17 @@ class FieldTransformer(nnx.Module):
                     source_features=hidden_size.context,
                     **global_attn_kw,
                 )
-                if not perceiver_only
+                if "cells" in active_towers
                 else None
             ),
-            context2cells=GlobalAttention(
-                target_features=hidden_size.context,
-                source_features=hidden_size.cells,
-                **global_attn_kw,
+            context2cells=(
+                GlobalAttention(
+                    target_features=hidden_size.context,
+                    source_features=hidden_size.cells,
+                    **global_attn_kw,
+                )
+                if "context" in active_towers
+                else None
             ),
         )
 
@@ -135,7 +153,7 @@ class FieldTransformer(nnx.Module):
                         keep_rngs=keep_rngs,
                         rngs=rngs,
                     )
-                    if k == "context" or not perceiver_only
+                    if k in active_towers
                     else None
                 )
                 for k, v in hidden_size.projections.items()
@@ -151,7 +169,7 @@ class FieldTransformer(nnx.Module):
         mode: typing.Literal["flat", "split"] | None = None,
         with_residuals: bool = False,
     ) -> Field:
-        perceiver_only = self.perceiver_only
+        active_towers = self.active_towers
 
         def apply(inp, fun, *other):
             return fun(inp, *other) if fun is not None else inp
@@ -162,7 +180,7 @@ class FieldTransformer(nnx.Module):
                 **{
                     k: v.map_elementwise(lambda a, b: a + b, getattr(ax, k))
                     for k, v in x.projections.items()
-                    if k == "context" or not perceiver_only
+                    if k in active_towers
                 },
             )
 
@@ -179,11 +197,19 @@ class FieldTransformer(nnx.Module):
                     deterministic=deterministic,
                     mode=mode,
                 )
-                if not perceiver_only
+                if "cells" in active_towers
                 else ax.cells
             ),
-            context=self.self_attn.context(
-                ax.context, mask=None, rngs=rngs, deterministic=deterministic, mode=mode
+            context=(
+                self.self_attn.context(
+                    ax.context,
+                    mask=None,
+                    rngs=rngs,
+                    deterministic=deterministic,
+                    mode=mode,
+                )
+                if "context" in active_towers
+                else ax.context
             ),
         ).as_split()
         sa_out = x = add_resid(x, ax)
@@ -204,16 +230,20 @@ class FieldTransformer(nnx.Module):
                     deterministic=deterministic,
                     mode=mode,
                 ).batch_reshape(*ax.cells.batch_shape)
-                if not perceiver_only
+                if "cells" in active_towers
                 else ax.cells
             ),
-            context=self.cross_attn.context2cells(
-                target=ax.context,
-                source=cells_flat,
-                mask=mask.reshape(*mask.shape[:-2], 1, -1),
-                rngs=rngs,
-                deterministic=deterministic,
-                mode=mode,
+            context=(
+                self.cross_attn.context2cells(
+                    target=ax.context,
+                    source=cells_flat,
+                    mask=mask.reshape(*mask.shape[:-2], 1, -1),
+                    rngs=rngs,
+                    deterministic=deterministic,
+                    mode=mode,
+                )
+                if "context" in active_towers
+                else ax.context
             ),
         ).as_split()
         ca_out = x = add_resid(x, ax)

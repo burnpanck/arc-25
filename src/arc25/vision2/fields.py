@@ -50,10 +50,10 @@ class CoordinateGrid(AttrsModel):
         y0, x0 = jnp.moveaxis(start, -1, 0)[..., None]
         xpos = np.arange(W)
         ypos = np.arange(H)
-        if mask is None:
-            ym = (y0 <= ypos) & (ypos < y0 + h)
-            xm = (x0 <= xpos) & (xpos < x0 + w)
-            mask = ym[..., :, None] & xm[..., None, :]
+        ym = (y0 <= ypos) & (ypos < y0 + h)
+        xm = (x0 <= xpos) & (xpos < x0 + w)
+        base_mask = ym[..., :, None] & xm[..., None, :]
+        mask = base_mask if mask is None else base_mask & mask
         xpos = jnp.concatenate(
             [
                 jnp.tile(xpos, batch + (1,))[..., None],
