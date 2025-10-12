@@ -170,3 +170,13 @@ Measurements with a single bucket at 30x30:
 - *TPU v5e-8*: global batch size 128, remat=True, bf16, mode="flat": ~ 158 images/s
 - *TPU v5e-8*: global batch size 192, remat=True, bf16, mode="flat": OOM
 - *TPU v5e-8*: global batch size 160, remat=True, bf16, mode="flat": ~ 136 images/s
+
+
+### MAE 1
+
+Compilation time on TPU: ~6 min
+Measurements with a single bucket at 30x30:
+
+- *TPU v5e-8*: global batch size 128, remat=True, bf16, mode="flat": OOM
+- *TPU v5e-8*: global batch size 96, remat=True, bf16, mode="flat": ~79 images/s
+- *TPU v5e-8*: global batch size 64, remat=True, bf16, mode="flat": ~69 images/s
