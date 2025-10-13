@@ -247,6 +247,8 @@ class TrainState(nnx.Module):
     def _apply_update(self, grads, stats, total_weight, learning_rate):
         """Apply accumulated gradients (pmap'd, with pmean)."""
         # aggregate gradients and stats across devices
+        print(f"Apply update; {total_weight=} {learning_rate=}")
+
         grads = jax.lax.psum(grads, axis_name="data")
         stats = jax.lax.psum(stats, axis_name="data")
 
@@ -270,6 +272,7 @@ class TrainState(nnx.Module):
     )
     def _compute_grads(self, minibatch_dict, kw):
         """Compute gradients for one minibatch (pmap'd, no update)."""
+        print(f"Compute grads; {minibatch_dict['images'].shape}")
 
         def loss_fn(model):
             return self.loss_fn(model, minibatch_dict, **dict(kw))
@@ -412,6 +415,11 @@ class MAETrainer:
         """
         start_weight = None
         for batch_data in self.collator.generate():
+            print(
+                f"Batch for step {self.step} has {len(batch_data.minibatches)} minibatches"
+            )
+            for mb in batch_data.minibatches:
+                print(mb.images.shape)
             # Check if we've reached max examples
             if self.step >= self.total_steps:
                 break
@@ -457,6 +465,7 @@ class MAETrainer:
             # Update tracking
             self.step += 1
             self.examples_seen += batch_data.total_examples
+            print(f"Completed step {self.step} ({self.examples_seen=})")
 
             # Add tracking info to stats (these are scalars, not device arrays)
             stats.update(
