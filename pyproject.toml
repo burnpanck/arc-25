@@ -60,9 +60,10 @@ known_first_party = "arc25"
 [tool.flake8]
 max-line-length = 120
 extend-select = "B950"
+# F541: f-string is missing placeholders - putting and f before a string and forgetting to include placeholder is usually not a bug, but just consistency
 # F722: syntax error in forward annotation - clashes with jaxtyping
 # B023: Function definition does not bind loop variable - we use local functions all the time; that's fine as long as they aren't leaked out of the loop
-extend-ignore = "E203,E501,E701,E731,F401,F403,F405,F722,B023"
+extend-ignore = "E203,E501,E701,E731,F401,F403,F405,F541,F722,B023"
 exclude = "app/main.py"
 
 [tool.pdm]

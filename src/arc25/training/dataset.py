@@ -1,3 +1,4 @@
+import dataclasses
 import lzma
 import typing
 from pathlib import Path
@@ -24,6 +25,7 @@ class ImageExample:
 @attrs.frozen
 class ImagesDataset:
     examples: tuple[ImageExample, ...]
+    challenges: frozenset[str]
     max_size: tuple[int, int] = (30, 30)
 
     @classmethod
@@ -48,6 +50,7 @@ class ImagesDataset:
                     )
         return cls(
             examples=tuple(examples),
+            challenges=frozenset(src_data),
             max_size=tuple(int(v) for v in max_size),
         )
 
@@ -56,13 +59,67 @@ class ImagesDataset:
             max_size = self.max_size
 
         ret = np.zeros(tuple(max_size), int)
-        for im in self.images:
+        for im in self.examples:
             vv = im.image
             if any(s > m for s, m in zip(vv.shape, max_size)):
                 continue
             h, w = vv.shape
             ret[h - 1, w - 1] += 1
         return ret
+
+    def split_by_challenge(
+        self, rgen: np.random.Generator, n_min: int = 0, fraction: float = 0
+    ) -> tuple[Self, Self]:
+        """Split dataset by (challenge, example_idx) pairs.
+
+        For each challenge, ensures at least max(n_min, fraction * total_pairs) I/O pairs
+        go to the first split, with the rest going to the second split.
+
+        Args:
+            rgen: Random number generator for shuffling
+            n_min: Minimum number of I/O pairs per challenge in first split
+            fraction: Minimum fraction of I/O pairs per challenge in first split
+
+        Returns:
+            Tuple of (first_split, second_split) datasets
+        """
+        from collections import defaultdict
+
+        # Group examples by (challenge, example_idx)
+        by_pair = defaultdict(list)
+        for ex in self.examples:
+            by_pair[ex.challenge, ex.example_idx].append(ex)
+
+        # Group pairs by challenge
+        by_challenge = defaultdict(list)
+        for (challenge, _example_idx), examples in by_pair.items():
+            by_challenge[challenge].append(examples)
+
+        # Split examples
+        ret = ([], [])
+
+        for pairs in by_challenge.values():
+            # Shuffle pairs for this challenge
+            pairs_shuffled = list(pairs)
+            rgen.shuffle(pairs_shuffled)
+
+            # Calculate how many pairs go to first split
+            total_pairs = len(pairs_shuffled)
+            n_first = max(n_min, int(np.ceil(fraction * total_pairs)))
+            n_first = min(n_first, total_pairs)
+
+            # Assign to splits
+            for target, part in zip(ret, [examples[:n_first], examples[n_first:]]):
+                target.extend(part)
+
+        return tuple(
+            type(self)(
+                examples=tuple(ex),
+                challenges=self.challenges,
+                max_size=self.max_size,
+            )
+            for ex in ret
+        )
 
 
 @attrs.frozen
@@ -76,22 +133,26 @@ class MiniBatchData:
     transpose: jt.Bool[np.ndarray, " B"]
     weight: jt.Float[np.ndarray, " B"]
 
+    @property
+    def n_examples(self) -> int:
+        return len(self.images)
+
 
 @attrs.frozen(kw_only=True)
 class BucketedDataset:
     buckets: MappingProxyType[tuple[int, int], MiniBatchData]
-    allow_transpose: bool = True
     challenges: tuple[str, ...]
+    allow_transpose: bool = True
 
     @classmethod
     def make(
         cls,
         dataset: ImagesDataset,
         bucket_shapes: set[tuple[int, int]],
-        challenges: tuple[str, ...],
         allow_transpose: bool = True,
     ) -> Self:
         # Create challenge_to_label mapping
+        challenges = tuple(sorted(dataset.challenges))
         challenge_to_label = {ch: i for i, ch in enumerate(challenges)}
 
         # Group examples by bucket
@@ -148,18 +209,18 @@ class BucketedDataset:
                 h, w = img.shape
                 if allow_transpose and h > w:
                     h, w = w, h
-                    img = attrs.evolve(img, _data=img._data.T)
+                    img = dataclasses.replace(img, _data=img._data.T)
                     transposed = True
                 else:
                     transposed = False
 
-                images[i, :h, :w] = img
+                images[i, :h, :w] = img._data
                 masks[i, :h, :w] = True
                 sizes[i] = [h, w]
 
                 challenge_label = challenge_to_label[ex.challenge]
-                example_type_label = 0 if ex.example_type == "input" else 1
-                labels[i] = [challenge_label, ex.example_idx, example_type_label]
+                example_type_label = ["input", "output"].index(ex.example_type)
+                labels[i] = (challenge_label, ex.example_idx, example_type_label)
 
                 transpose_flags[i] = transposed
 
@@ -190,7 +251,7 @@ class MinibatchSizeFunction:
     # measured in terms of reference images
     reference_minibatch_size: int | float
     reference_image_size: int | float = 30
-    # the memory cost is estimated as propportional to `base_cost + image_area` in units of cells
+    # the memory cost is estimated as proportional to `base_cost + image_area` in units of cells
     base_cost: int | float = 30
     # the result is a multiple of the granularity
     granularity: int = 1
@@ -206,7 +267,7 @@ class MinibatchSizeFunction:
 @attrs.frozen
 class BatchSpec:
     # measured in terms of reference images
-    batch_weight: int | float
+    target_batch_weight: int | float
     reference_image_size: int | float = 30
     #
     area_weight_exponent: float = 0
@@ -219,24 +280,24 @@ class BatchSpec:
 
 @attrs.mutable
 class BucketState:
-    bucket_shape: tuple[int, int] = attrs.field(frozen=True)
-    examples: MiniBatchData = attrs.field(frozen=True)
-    minibatch_size: int = attrs.field(frozen=True)
+    bucket_shape: tuple[int, int] = attrs.field(on_setattr=attrs.setters.frozen)
+    examples: MiniBatchData = attrs.field(on_setattr=attrs.setters.frozen)
+    minibatch_size: int = attrs.field(on_setattr=attrs.setters.frozen)
 
     # the remaining number of examples from this bucket, this epoch; can be negative
     # if we already used a number of examples from the next epoch to fill a batch
     remaining: int = attrs.field(
-        default=attrs.Factory(lambda self: len(self.examples), takes_self=True)
+        default=attrs.Factory(lambda self: self.examples.n_examples, takes_self=True)
     )
     # contains indices into `examples`, with `shuffle_buffer[:remaining]` still available
     shuffle_buffer: np.ndarray = attrs.field(
         default=attrs.Factory(
-            lambda self: np.arange(len(self.examples), dtype=int), takes_self=True
+            lambda self: np.arange(self.examples.n_examples, dtype=int), takes_self=True
         )
     )
 
     def sample(self, rng: np.random.Generator) -> MiniBatchData:
-        N = len(self.examples)
+        N = self.examples.n_examples
         rem = self.remaining
         nB = self.minibatch_size
         buf = self.shuffle_buffer
@@ -271,25 +332,32 @@ class BatchData:
     epoch: int
     # fractional epoch progress
     epoch_progress: float
+    # accumulated example weight prior to this batch
+    accumulated_weight: float
 
     # should roughly be equal to `batch_size`
     total_weight: float
+    total_examples: int
     minibatches: tuple[MiniBatchData, ...]
 
 
 @attrs.mutable
 class BucketedCollator:
-    dataset: BucketedDataset = attrs.field(frozen=True)
-    batch_spec: BatchSpec = attrs.field(frozen=True)
-    buckets: MappingProxyType[tuple[int, int], BucketState] = attrs.field(frozen=True)
-    seed: int = attrs.field(frozen=True)
+    dataset: BucketedDataset = attrs.field(on_setattr=attrs.setters.frozen)
+    batch_spec: BatchSpec = attrs.field(on_setattr=attrs.setters.frozen)
+    buckets: MappingProxyType[tuple[int, int], BucketState] = attrs.field(
+        on_setattr=attrs.setters.frozen
+    )
+    seed: int = attrs.field(on_setattr=attrs.setters.frozen)
     # epoch length in number of examples
-    total_examples: int = attrs.field(frozen=True)
-    total_example_weight: float = attrs.field(frozen=True)
+    total_examples: int = attrs.field(on_setattr=attrs.setters.frozen)
+    total_example_weight: float = attrs.field(on_setattr=attrs.setters.frozen)
     # global step count
     step: int = 0
     # global epoch count
     epoch: int = 0
+    # global accumulated weight
+    accumulated_weight: float = 0
     # example count within the epoch; can go slightly above total_examples due to minibatch completion
     example_in_epoch: int = 0
     # cumulated example_weight within the epoch; can go slightly above total_example_weight due to minibatch completion
@@ -297,7 +365,7 @@ class BucketedCollator:
 
     rng: np.random.Generator = attrs.field(
         default=attrs.Factory(
-            lambda self: np.random.default_gen(self.seed), takes_self=True
+            lambda self: np.random.default_rng(self.seed), takes_self=True
         )
     )
 
@@ -353,18 +421,14 @@ class BucketedCollator:
         )
 
     def generate(self) -> typing.Iterator[BatchData]:
-        def make_batch_info():
-            # Record state at the start of this batch
-            return dict(
-                step=self.step,
-                epoch=self.epoch,
-                epoch_progress=self.weight_in_epoch / self.total_example_weight,
-            )
-
-        target_batch_weight = self.batch_spec.batch_weight
-        batch_info = make_batch_info()
+        target_batch_weight = self.batch_spec.target_batch_weight
         minibatches = []
         total_weight = 0.0
+        total_examples = 0
+
+        # Capture epoch info at start of batch
+        start_epoch = self.epoch
+
         while True:
             # Check if we need to start a new epoch
             if not any(bucket.remaining > 0 for bucket in self.buckets.values()):
@@ -395,34 +459,43 @@ class BucketedCollator:
 
             # Sum the weights in the minibatch
             minibatch_weight = float(minibatch.weight.sum())
+            n_examples = len(minibatch.images)
+            assert n_examples == bucket.minibatch_size
 
             # Check if that minibatch belongs to this or the next batch
             if (
-                total_weight + minibatch_weight
-            ) * total_weight > target_batch_weight**2:
-                assert minibatches
+                minibatches
+                and (total_weight + minibatch_weight) * total_weight
+                > target_batch_weight**2
+            ):
+                # Update counters for the batch we're about to yield
+                self.example_in_epoch += total_examples
+                self.weight_in_epoch += total_weight
+                self.accumulated_weight += total_weight
+                self.step += 1
 
                 # Prepare batch data
+                # step and accumulated_weight reflect state AFTER this batch
+                # epoch and epoch_progress reflect state at START of this batch
                 batch_data = BatchData(
-                    **batch_info,
+                    step=self.step,
+                    epoch=start_epoch,
+                    epoch_progress=self.weight_in_epoch / self.total_example_weight,
+                    accumulated_weight=self.accumulated_weight,
                     total_weight=total_weight,
+                    total_examples=total_examples,
                     minibatches=tuple(minibatches),
                 )
 
-                # Increment step counter
-                self.step += 1
-
                 yield batch_data
 
-                # prepare next batch
-                batch_info = make_batch_info()
+                # Prepare next batch - capture new epoch info
+                start_epoch = self.epoch
                 minibatches = []
                 total_weight = 0.0
+                total_examples = 0
 
             # Add to batch
             minibatches.append(minibatch)
             total_weight += minibatch_weight
-
-            # Update counters
-            self.example_in_epoch += len(minibatch.images)
-            self.weight_in_epoch += minibatch_weight
+            total_examples += n_examples

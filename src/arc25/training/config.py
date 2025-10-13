@@ -13,8 +13,10 @@ class ImageTrainConfigBase:
     # this is the minibatch-size used for full-size (30x30) examples;
     # smaller examples may use larger minibatches
     minibatch_size: int = 128
+    # the memory cost is estimated as proportional to `base_cell_cost + image_area` in units of cells
+    base_cell_cost: int = 10
 
-    ref_batch: int = 1024  # all learning rates refer to this batch size
+    ref_batch: int = 256  # all learning rates refer to this batch size
 
     # Optimiser
     betas: tuple[float, float] = (0.9, 0.95)
@@ -23,7 +25,7 @@ class ImageTrainConfigBase:
     grad_clip_norm: float = 1.0
     # Schedule
     learning_rate: float = 3e-4
-    max_num_examples: float = 1000
+    max_num_ref_batches: float = 128
     max_num_epochs: float = 1
     # optimizer steps are counted in batch_size increments
     warmup_steps: float = 64
@@ -31,3 +33,5 @@ class ImageTrainConfigBase:
 
     # implementation
     mode: Literal["split", "flat"] | None = "flat"
+    unroll: int | None = None
+    remat: bool = True
