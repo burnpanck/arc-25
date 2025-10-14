@@ -14,15 +14,15 @@ from flax import nnx
 from ..serialisation import deserialise, serialise
 
 
-def save_model(model: nnx.Module, path: Path, *, config: Any = None):
+def save_model(model: nnx.Module, path: Path, *, metadata: dict | None = None):
     with lzma.open(path, "wb") as fh:
 
         def write(*data):
             serialised = msgpack.dumps(tuple(data))
             fh.write(serialised)
 
-        if config is not None:
-            write("C", serialise(config))
+        if metadata is not None:
+            write("M", serialise(metadata))
 
         graphdef, flatstate = nnx.graph.flatten(nnx.pure(nnx.state(model, nnx.Param)))
         write("G", pickle.dumps(graphdef))
@@ -47,7 +47,7 @@ def save_model(model: nnx.Module, path: Path, *, config: Any = None):
 
 
 def load_model(path: Path) -> SimpleNamespace:
-    config = None
+    metadata = {}
     state = {}
     graphdef = None
 
@@ -58,9 +58,12 @@ def load_model(path: Path) -> SimpleNamespace:
             code, args = data[0], data[1:]
 
             match code:
-                case "C":
-                    (config,) = args
-                    config = deserialise(config)
+                case "C" | "M":
+                    (m,) = args
+                    m = deserialise(m)
+                    if code == "C":
+                        m = dict(config=m)
+                    metadata.update(m)
                 case "G":
                     graphdef = pickle.loads(*args)
                 case "A":
@@ -73,4 +76,6 @@ def load_model(path: Path) -> SimpleNamespace:
 
     state = nnx.statelib.FlatState.from_sorted_keys_values(state.keys(), state.values())
     state = nnx.merge(graphdef, state)
-    return SimpleNamespace(config=config, state=state)
+    return SimpleNamespace(
+        metadata=metadata, config=metadata.pop("config", None), state=state
+    )

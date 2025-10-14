@@ -69,10 +69,10 @@ def test_saving():
         tdir = Path(tdir)
         model_file = tdir / "test.msgpack.xz"
 
-        saving.save_model(arc_cls, model_file, config=arc_cls.encoder.config)
+        saving.save_model(arc_cls, model_file, metadata=dict(config=arc_cls.config))
         loaded = saving.load_model(model_file)
 
-        assert arc_cls.encoder.config == loaded.config
+        assert arc_cls.config == loaded.config
 
         if flax_version >= (0, 12):
             expected = dict(nnx.flatten(nnx.pure(nnx.state(arc_cls, nnx.Param)))[1])

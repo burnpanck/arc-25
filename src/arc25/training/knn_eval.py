@@ -50,22 +50,28 @@ class KNNEvaluator:
         similarity = embeddings @ embeddings.T
         # Mask out self-similarity (set diagonal to -inf for leave-one-out)
         n_examples = len(embeddings)
-        similarity = similarity - np.eye(n_examples) * np.inf
+        similarity = np.where(np.eye(n_examples, dtype=bool), -np.inf, similarity)
 
         # compute nearest neighbours
         nearest_indices = np.argsort(-similarity, axis=-1)[:, : max(self.k_values)]
         neighbor_labels = labels[nearest_indices]
-        same_class = neighbor_labels == labels[:, None]
-        n_same_class = np.cumsum(same_class, axis=-1)
+        is_same = neighbor_labels == labels[:, None, :]
+        is_same[..., 1] &= is_same[..., 0]
+        n_match = np.cumsum(is_same, axis=-1)
 
         # Compute k-NN accuracy for each k value
-        results = {}
+        res_challenge = {}
+        res_candt = {}
         for k in self.k_values:
-            correct = n_same_class[:, k] > k // 2
-            accuracy = np.mean(correct)
-            results[k] = accuracy
+            correct = n_match[:, k - 1, :] > k // 2
+            achal, acandt = np.mean(correct, axis=0)
+            res_challenge[k] = achal
+            res_candt[k] = acandt
 
-        return results
+        return dict(
+            challenge=res_challenge,
+            candt=res_candt,
+        )
 
     @staticmethod
     @nnx.pmap(
@@ -74,6 +80,8 @@ class KNNEvaluator:
         static_broadcasted_argnums=3,
     )
     def _encode(encoder, images, sizes, mode):
+        print(f"Tracing KNNEvaluator._encode for shape {images.shape}")
+
         embeddings = encoder(
             images,
             sizes,
@@ -138,7 +146,9 @@ class KNNEvaluator:
                 # Extract batch
                 batch_images = minibatch_data.images[batch]
                 batch_sizes = minibatch_data.sizes[batch]
-                batch_labels = minibatch_data.labels[batch, 0]  # Challenge ID
+                batch_labels = minibatch_data.labels[batch, :][
+                    ..., [0, 2]
+                ]  # (Challenge ID, Image Type)
 
                 # Encode batch
                 embeddings = self._encode(
@@ -148,9 +158,10 @@ class KNNEvaluator:
                     mode,
                 )
                 embeddings = embeddings.reshape(-1, embeddings.shape[-1])
+                batch_labels = batch_labels.reshape(-1, 2)
 
                 all_embeddings.append(jax.copy_to_host_async(embeddings))
-                all_challenge_labels.append(batch_labels.ravel())
+                all_challenge_labels.append(batch_labels)
 
         # Concatenate all batches
         embeddings = np.concatenate(all_embeddings, axis=0)

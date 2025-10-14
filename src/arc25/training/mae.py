@@ -1,6 +1,8 @@
+import datetime
 import time
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import attrs
@@ -20,7 +22,9 @@ from .dataset import (
     MiniBatchData,
     MinibatchSizeFunction,
 )
+from .knn_eval import KNNEvaluator
 from .learning_rate import scale_by_kwarg
+from .saving import save_model
 
 
 @dataclass(frozen=True)
@@ -29,8 +33,8 @@ class MAETaskConfig(ImageTrainConfigBase):
 
     mask_ratio: float = 0.25
 
-    # inline validation in batch_size optimizer steps
-    knn_validation_steps: int = 32
+    # inline validation in ref_batch/batch_size optimizer steps
+    knn_validation_every_ref_batch: float = 32
 
 
 class TrainState(nnx.Module):
@@ -297,6 +301,9 @@ class MAETrainer:
 
     total_steps: int = attrs.field(on_setattr=attrs.setters.frozen)
 
+    # k-NN evaluation
+    knn_evaluator: KNNEvaluator | None = None
+
     # Training progress tracking
     step: int = 0
     examples_seen: int = 0
@@ -312,6 +319,8 @@ class MAETrainer:
         collator: BucketedCollator,
         num_devices: int = 1,
         *,
+        eval_dataset: BucketedDataset | None = None,
+        minibatch_size_fn: MinibatchSizeFunction | None = None,
         lr_schedule: typing.Callable | None = None,
         rngs: nnx.Rngs,
     ) -> typing.Self:
@@ -343,6 +352,19 @@ class MAETrainer:
                 alpha=0.001,
             )
 
+        # Create k-NN evaluator if eval_dataset provided
+        knn_evaluator = None
+        if eval_dataset is not None:
+            if minibatch_size_fn is None:
+                raise ValueError(
+                    "minibatch_size_fn required when eval_dataset is provided"
+                )
+            knn_evaluator = KNNEvaluator(
+                dataset=eval_dataset,
+                batch_size=minibatch_size_fn,
+                seed=config.seed,
+            )
+
         return cls(
             config=config,
             train_state=train_state,
@@ -350,6 +372,7 @@ class MAETrainer:
             lr_schedule=lr_schedule,
             num_devices=num_devices,
             total_steps=total_steps,
+            knn_evaluator=knn_evaluator,
         )
 
     def prepare_mae_batch(
@@ -482,8 +505,11 @@ class MAETrainer:
         model: MaskedAutoencoder,
         dataset: BucketedDataset,
         *,
+        eval_dataset: BucketedDataset | None = None,
+        checkpoint_dir: Path | str | None = None,
         lr_schedule: typing.Callable | None = None,
         wandb_run=None,
+        run_name: str | None = None,
         num_devices: int | None = None,
     ):
         """Main training entry point with progress tracking and logging.
@@ -491,8 +517,10 @@ class MAETrainer:
         Args:
             config: Training configuration
             model: Model to train
-            dataset: Bucketed dataset
-            run_name: Name for this training run
+            dataset: Bucketed training dataset
+            eval_dataset: Optional bucketed evaluation dataset for k-NN validation
+            checkpoint_dir: Optional directory for saving checkpoints
+            lr_schedule: Optional custom learning rate schedule
             wandb_run: Optional wandb run object for logging
             num_devices: Number of devices (default: all available)
 
@@ -500,6 +528,16 @@ class MAETrainer:
             Tuple of (trainer, stats_list) where stats_list contains all training statistics
         """
         import tqdm.auto
+
+        if run_name is None:
+            now = datetime.datetime.now().astimezone(datetime.timezone.utc)
+            run_name = f"{now:%Y%m%d-%H%M}"
+
+        # Setup checkpoint directory
+        if checkpoint_dir is not None:
+            checkpoint_dir = Path(checkpoint_dir)
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            chkp_pfx = f"{run_name}-chkp"
 
         # Detect available devices
         if num_devices is None:
@@ -536,14 +574,37 @@ class MAETrainer:
             model=model,
             collator=collator,
             num_devices=num_devices,
+            eval_dataset=eval_dataset,
+            minibatch_size_fn=minibatch_size_fn,
             rngs=rngs,
             lr_schedule=lr_schedule,
         )
 
+        import arc25
+
+        base_metadata = dict(
+            config=dict(
+                trainer=config,
+                model=model.config,
+            ),
+            code_version=arc25.__version__,
+        )
+
         print(f"--- MAE Training ---")
         print(f"Devices: {num_devices} × {jax.devices()[0].device_kind}")
-        print(f"Target batch weight: {batch_spec.target_batch_weight}")
+        print(f"Training batch size: {config.batch_size} (1 step)")
+        print(
+            f"Reference step size: {config.ref_batch} (~{config.ref_batch/config.batch_size:.2f} steps)"
+        )
         print(f"Total steps: {int(trainer.total_steps)}")
+        if trainer.knn_evaluator is not None:
+            print(
+                f"k-NN evaluation: every {config.knn_validation_every_ref_batch} reference steps"
+            )
+        if checkpoint_dir is not None:
+            print(
+                f"Checkpoints: every {config.checkpoint_every_steps} steps → {checkpoint_dir}/{chkp_pfx}-XXXXXX.msgpack.xz"
+            )
         print("----------------------------\n")
 
         # Training loop with timing and logging
@@ -557,27 +618,35 @@ class MAETrainer:
         # For latency hiding: keep previous step's stats and JIT flag
         pending_stats = None
         pending_is_jit_step = False
+
+        # tracking
+        last_eval = None
         all_stats = []
 
         def process_stats(stats_dev, was_jit_step):
             """Process stats from device, compute metrics, log and display."""
-            nonlocal jit_weight, jit_time
+            nonlocal jit_weight, jit_time, last_eval
 
             # Get stats from device (blocks if needed)
             stats = jax.device_get(stats_dev)
             elapsed_time = time.monotonic() - start_time
 
+            training_step = stats["training_step"]
+            training_progress = stats["accumulated_weight"] / config.ref_batch
+            prev_progress = (
+                all_stats[-1]["accumulated_weight"] / config.ref_batch
+                if all_stats
+                else 0
+            )
+            step_progress = training_progress - prev_progress
+
             # If this step triggered JIT, count its time as JIT time
             if was_jit_step:
-                step_weight = stats["accumulated_weight"]
-                step_time = elapsed_time
-                if all_stats:
-                    # Delta since last recorded step
-                    prev_stats = all_stats[-1]
-                    step_weight -= prev_stats["accumulated_weight"]
-                    step_time -= prev_stats["elapsed_time"]
+                step_time = elapsed_time - (
+                    all_stats[-1]["elapsed_time"] if all_stats else 0
+                )
 
-                jit_weight += step_weight
+                jit_weight += step_progress
                 jit_time += step_time
 
             # Compute throughput metrics (excluding JIT time)
@@ -595,22 +664,70 @@ class MAETrainer:
             # Store stats
             all_stats.append(stats)
 
+            # k-NN evaluation (periodic)
+            if (
+                trainer.knn_evaluator is not None
+                and training_progress // config.knn_validation_every_ref_batch
+                > prev_progress // config.knn_validation_every_ref_batch
+            ):
+                print(f"\n[Step {training_step}] Running k-NN evaluation...")
+                eval_start = time.monotonic()
+                last_eval = knn_results = trainer.knn_evaluator.evaluate(
+                    trainer.train_state.model.encoder,
+                    mode=config.mode,
+                    with_progress=True,
+                )
+                eval_time = time.monotonic() - eval_start
+
+                # Print results
+                print(f"k-NN evaluation completed in {eval_time:.1f}s:")
+                for kk, vv in knn_results.items():
+                    for k, v in sorted(vv.items()):
+                        print(f" {kk:9s} k={k:2d}: {v:.4f}")
+
+                # Add to stats for wandb logging (nested dict for grouped plotting)
+                stats["knn"] = knn_results
+                stats["knn_eval_time"] = eval_time
+
+            # Checkpointing (periodic)
+            if (
+                checkpoint_dir is not None
+                and not training_step % config.checkpoint_every_steps
+            ):
+                checkpoint_path = (
+                    checkpoint_dir / f"{chkp_pfx}-{training_step:06d}.msgpack.xz"
+                )
+                print(
+                    f"[Step {training_step}] Saving checkpoint to {checkpoint_path.name}..."
+                )
+                checkpoint_start = time.monotonic()
+                save_model(
+                    trainer.train_state,
+                    checkpoint_path,
+                    metadata=dict(
+                        **base_metadata, stats=dict(last_knn=last_eval, **stats)
+                    ),
+                )
+                checkpoint_time = time.monotonic() - checkpoint_start
+                print(f"Checkpoint saved in {checkpoint_time:.1f}s")
+                stats["checkpoint_time"] = checkpoint_time
+
             # Update progress bar
             pbar.update(1)
             pbar.set_postfix(
+                rstep=f"{training_progress:.1f}",
                 loss=f"{stats['loss']:.3f}",
                 acc=f"{stats['accuracy']:.3f}",
                 wps=f"{weight_per_sec:.1f}",
                 lr=f"{stats['learning_rate']:.2e}",
                 ep=f"{stats['epoch']+stats['epoch_progress']:.2f}",
-                nmb=f"{stats['minibatches']:d}",
             )
 
             # Log to wandb
             if wandb_run is not None:
-                wandb_run.log(stats, step=stats["training_step"])
+                wandb_run.log(stats, step=training_step)
 
-        with tqdm.auto.tqdm(total=trainer.total_steps, desc="Training") as pbar:
+        with tqdm.auto.tqdm(total=int(trainer.total_steps), desc="Training") as pbar:
             try:
                 for stats_dev, is_jit_step in trainer.train():
                     # If we have pending stats from previous step, process them now
@@ -630,6 +747,21 @@ class MAETrainer:
                 print("\nTraining interrupted by user")
                 if pending_stats is not None:
                     process_stats(pending_stats, pending_is_jit_step)
+
+        # Save final checkpoint
+        if checkpoint_dir is not None and all_stats:
+            stats = all_stats[-1]
+            training_step = stats["training_step"]
+            checkpoint_path = (
+                checkpoint_dir / f"{chkp_pfx}-{training_step:06d}-final.msgpack.xz"
+            )
+            print(f"\nSaving final checkpoint to {checkpoint_path.name}...")
+            save_model(
+                trainer.train_state,
+                checkpoint_path,
+                metadata=dict(**base_metadata, stats=stats),
+            )
+            print(f"Final checkpoint saved")
 
         elapsed_time = time.monotonic() - start_time
         print("\n--- Training Finished ---")
