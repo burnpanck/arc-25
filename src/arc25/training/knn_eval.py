@@ -57,7 +57,7 @@ class KNNEvaluator:
         neighbor_labels = labels[nearest_indices]
         is_same = neighbor_labels == labels[:, None, :]
         is_same[..., 1] &= is_same[..., 0]
-        n_match = np.cumsum(is_same, axis=-1)
+        n_match = np.cumsum(is_same, axis=1)
 
         # Compute k-NN accuracy for each k value
         res_challenge = {}

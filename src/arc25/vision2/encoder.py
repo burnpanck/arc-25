@@ -538,7 +538,9 @@ class ARCEncoder(nnx.Module):
         hs = self.hidden_size
         T = hs.context_tokens
 
-        grid = CoordinateGrid.for_batch(Y, X, size, mask=mask)
+        grid = CoordinateGrid.for_batch(Y, X, size)
+
+        mask = grid.mask if mask is None else grid.mask & mask
 
         dtype = self.dtype or jnp.float32
 
@@ -546,14 +548,14 @@ class ARCEncoder(nnx.Module):
         # print(f"{x.shape=} {grid.mask.shape=}")
 
         colour_idx = np.r_[: hs.rep.n_flavours]
-        presence = (x == colour_idx) & grid.mask[..., None]
+        presence = (x == colour_idx) & mask[..., None]
         count = presence.sum((-3, -2)).astype(dtype)
-        prevalence = count / (
-            1 + grid.mask.astype(dtype).sum((-2, -1))[..., None]
-        ).astype(dtype)
+        prevalence = count / (1 + mask.astype(dtype).sum((-2, -1))[..., None]).astype(
+            dtype
+        )
         intensity = 1 / (1 + count)
         # print(
-        #    f"{presence.shape=} {count.shape=} {grid.mask.shape=} {prevalence.shape=} {intensity.shape=}"
+        #    f"{presence.shape=} {count.shape=} {grid.mask.shape=} {mask.shape=} {prevalence.shape=} {intensity.shape=}"
         # )
         # size comes in as (height, width)
         axl = [symmetry.AxisRep.v, symmetry.AxisRep.h]
@@ -576,7 +578,7 @@ class ARCEncoder(nnx.Module):
 
         cells_flavour = presence[..., :, :, :, None].astype(dtype)
         cells_invariant = jnp.where(
-            grid.mask[..., None],
+            mask[..., None],
             jnp.concatenate(
                 [
                     jnp.take_along_axis(prevalence[..., None, None, :], x, axis=-1),

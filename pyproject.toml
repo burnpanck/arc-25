@@ -79,8 +79,7 @@ version_format = "scripts.version:format_version"
 
 [tool.pdm.resolution]
 # tensorstore is currently unavailable on python 3.14
-# unfortunately, multi-config lockfiles don't like being exluded in one version but not the other.
-excludes = ["tensorstore; python_version >= '3.14'"]
+excludes = ["tensorstore"]
 
 [tool.pdm.build]
 includes = ["src/arc25"]

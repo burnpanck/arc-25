@@ -31,7 +31,11 @@ from .saving import save_model
 class MAETaskConfig(ImageTrainConfigBase):
     """Configuration for the training script."""
 
-    mask_ratio: float = 0.25
+    test_ratio: float = 0.4
+    # fraction of test cells that are *not* masked
+    nonmask_fraction: float = 0.2
+    # fraction of non-masked cells that are randomised
+    randomise_fraction: float = 0.5
 
     # inline validation in ref_batch/batch_size optimizer steps
     knn_validation_every_ref_batch: float = 32
@@ -389,7 +393,9 @@ class MAETrainer:
             Tuple of dicts with added input_mask and prediction_mask fields
         """
         prepared = []
-        mask_ratio = self.config.mask_ratio
+        test_ratio = self.config.test_ratio
+        nonmask_fraction = self.config.nonmask_fraction
+        randomise_fraction = self.config.randomise_fraction
         rng = self.collator.rng
 
         for minibatch in minibatches:
@@ -403,10 +409,24 @@ class MAETrainer:
             # Generate random input mask using collator's numpy RNG
             # Each visible cell has (1 - mask_ratio) chance of being in input
             random_vals = rng.uniform(size=images.shape)
-            input_mask = (random_vals > mask_ratio) & masks
+            prediction_mask = (random_vals < test_ratio) & masks
+            unmasked_prediction = masks & (random_vals < nonmask_fraction * test_ratio)
+            input_mask = unmasked_prediction | (masks & ~prediction_mask)
+            changeup_mask = masks & (
+                random_vals < randomise_fraction * nonmask_fraction * test_ratio
+            )
 
-            # Prediction mask is inverse of input mask (predict masked cells)
-            prediction_mask = masks & ~input_mask
+            mb_dict["images"] = np.where(
+                changeup_mask,
+                (
+                    images
+                    + rng.integers(
+                        low=1, high=10, size=images.shape, dtype=images.dtype
+                    )
+                )
+                % 10,
+                images,
+            )
 
             # Add masks to dict
             mb_dict["input_mask"] = input_mask
@@ -612,8 +632,8 @@ class MAETrainer:
         start_time = time.monotonic()
 
         # Timing tracking (exclude JIT compilation time)
-        jit_weight = 0.0
-        jit_time = 0.0
+        excluded_weight = 0.0
+        excluded_time = 0.0
 
         # For latency hiding: keep previous step's stats and JIT flag
         pending_stats = None
@@ -625,7 +645,7 @@ class MAETrainer:
 
         def process_stats(stats_dev, was_jit_step):
             """Process stats from device, compute metrics, log and display."""
-            nonlocal jit_weight, jit_time, last_eval
+            nonlocal excluded_weight, excluded_time, last_eval
 
             # Get stats from device (blocks if needed)
             stats = jax.device_get(stats_dev)
@@ -646,14 +666,14 @@ class MAETrainer:
                     all_stats[-1]["elapsed_time"] if all_stats else 0
                 )
 
-                jit_weight += step_progress
-                jit_time += step_time
+                excluded_weight += step_progress
+                excluded_time += step_time
 
             # Compute throughput metrics (excluding JIT time)
             weight = stats["accumulated_weight"]
             weight_per_sec = (
-                (weight - jit_weight) / max(elapsed_time - jit_time, 1e-6)
-                if elapsed_time > jit_time + 1
+                (weight - excluded_weight) / max(elapsed_time - excluded_time, 1e-6)
+                if elapsed_time > excluded_time + 1
                 else weight / max(elapsed_time, 1e-6)
             )
 
@@ -678,12 +698,16 @@ class MAETrainer:
                     with_progress=True,
                 )
                 eval_time = time.monotonic() - eval_start
+                excluded_time += eval_time
 
                 # Print results
-                print(f"k-NN evaluation completed in {eval_time:.1f}s:")
-                for kk, vv in knn_results.items():
-                    for k, v in sorted(vv.items()):
-                        print(f" {kk:9s} k={k:2d}: {v:.4f}")
+                print(
+                    f"k-NN evaluation completed in {eval_time:.1f}s: "
+                    + " ".join(
+                        f"{kk}: [{','.join(f'{k}={v:.3f}' for k,v in sorted(vv.items()))}]"
+                        for kk, vv in knn_results.items()
+                    )
+                )
 
                 # Add to stats for wandb logging (nested dict for grouped plotting)
                 stats["knn"] = knn_results
@@ -709,6 +733,7 @@ class MAETrainer:
                     ),
                 )
                 checkpoint_time = time.monotonic() - checkpoint_start
+                excluded_time += checkpoint_time
                 print(f"Checkpoint saved in {checkpoint_time:.1f}s")
                 stats["checkpoint_time"] = checkpoint_time
 
@@ -766,8 +791,9 @@ class MAETrainer:
         elapsed_time = time.monotonic() - start_time
         print("\n--- Training Finished ---")
         print(f"Total time: {elapsed_time:.1f}s")
-        print(
-            f"Average throughput: {(all_stats[-1]['accumulated_weight'] - jit_weight) / (elapsed_time - jit_time):.1f} weight/s"
+        wps = (all_stats[-1]["accumulated_weight"] - excluded_weight) / (
+            elapsed_time - excluded_time
         )
+        print(f"Average throughput: {wps:.1f} weight/s")
 
         return trainer, all_stats

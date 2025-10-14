@@ -20,7 +20,7 @@ _cmap = mpl.colors.ListedColormap([c.value for c in Color])
 _norm = mpl.colors.Normalize(vmin=0, vmax=9)
 
 
-def show_image(img: AnyImage, *, ax=None):
+def show_image(img: AnyImage, *, ax=None, **kw):
     if ax is None:
         ax = plt.gca()
     match img:
@@ -38,6 +38,7 @@ def show_image(img: AnyImage, *, ax=None):
         norm=_norm,
         ec="gray",
         lw=0.1,
+        **kw,
     )
     ax.yaxis.set_inverted(True)
     ax.xaxis.set_visible(False)

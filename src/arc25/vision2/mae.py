@@ -143,22 +143,22 @@ class MaskedAutoencoder(nnx.Module):
             **kw,
         )
         res = self.encoder(x, size, mask=mask, **enc_kw, with_stats=with_stats)
+
         if with_stats:
             encoded, encoder_stats = res
         else:
             encoded = res
+        grid = encoded.grid
+        mask = grid.mask if mask is None else grid.mask & mask
 
         dtype = encoded.cells.invariant.dtype
         n_flavours = encoded.cells.rep.n_flavours
 
-        # no more mask here!
-        new_grid = CoordinateGrid.for_batch(Y, X, size, dtype=dtype)
-
         # TODO: we could probably share this one with the original call within self.encoder above.
         # the only difference is in the mask.
-        pos_enc, pos_enc_rep = self.encoder.encode_positions(size, new_grid)
+        pos_enc, pos_enc_rep = self.encoder.encode_positions(size, grid)
         mask_enc = SplitSymDecomp(
-            invariant=(new_grid.mask & ~encoded.grid.mask).astype(dtype)[..., None],
+            invariant=(grid.mask & ~mask).astype(dtype)[..., None],
             flavour=jnp.zeros(batch + (Y, X, n_flavours, 0), dtype),
             space=pos_enc.astype(dtype),
             rep=RepSpec(pos_enc_rep, n_flavours),
@@ -167,7 +167,7 @@ class MaskedAutoencoder(nnx.Module):
         y = Field(
             context=encoded.context,
             cells=self.mask_embedding(mask_enc, **lin_kw),
-            grid=new_grid,
+            grid=grid,
         ).as_split()
 
         res = self.decoder(y, **enc_kw, with_stats=with_stats)
