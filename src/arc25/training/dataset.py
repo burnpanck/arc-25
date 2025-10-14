@@ -86,27 +86,28 @@ class ImagesDataset:
         from collections import defaultdict
 
         # Group examples by (challenge, example_idx)
-        by_pair = defaultdict(list)
+        pairs = defaultdict(list)
         for ex in self.examples:
-            by_pair[ex.challenge, ex.example_idx].append(ex)
+            pairs[ex.challenge, ex.example_idx].append(ex)
 
         # Group pairs by challenge
         by_challenge = defaultdict(list)
-        for (challenge, _example_idx), examples in by_pair.items():
-            by_challenge[challenge].append(examples)
+        for (challenge, _example_idx), pair in pairs.items():
+            by_challenge[challenge].append(pair)
 
         # Split examples
         ret = ([], [])
 
         for pairs in by_challenge.values():
             # Shuffle pairs for this challenge
-            pairs_shuffled = list(pairs)
-            rgen.shuffle(pairs_shuffled)
+            pairs_shuffled = np.array(pairs, object)
+            rgen.shuffle(pairs_shuffled, axis=0)
+            examples = pairs_shuffled.ravel()
 
             # Calculate how many pairs go to first split
-            total_pairs = len(pairs_shuffled)
-            n_first = max(n_min, int(np.ceil(fraction * total_pairs)))
-            n_first = min(n_first, total_pairs)
+            n_examples = len(examples)
+            n_first = max(n_min, int(np.ceil(fraction * n_examples)))
+            n_first = min(n_first, n_examples // 2)
 
             # Assign to splits
             for target, part in zip(ret, [examples[:n_first], examples[n_first:]]):

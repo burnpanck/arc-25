@@ -14,6 +14,7 @@ class ImageTrainConfigBase:
     # smaller examples may use larger minibatches
     minibatch_size: int = 128
     # the memory cost is estimated as proportional to `base_cell_cost + image_area` in units of cells
+    reference_image_size: int = 15
     base_cell_cost: int = 10
 
     ref_batch: int = 256  # all learning rates refer to this batch size
