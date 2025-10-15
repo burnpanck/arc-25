@@ -15,6 +15,7 @@ from ..lib import nnx_compat
 from ..symmetry import PermRepBase
 from .attention import AxialAttention, GlobalAttention
 from .fields import Field, FieldDims
+from .layernorm import SymDecompLayerNorm
 from .linear import SymDecompDims
 from .swiglu import SwiGLU
 
@@ -40,6 +41,7 @@ class FieldTransformer(nnx.Module):
         normalise_qk: bool = False,  # True to stabilise learning in ViT-22B; see paper http://arxiv.org/abs/2302.05442
         keep_rngs: bool = True,
         style: typing.Literal["co-attention", "perceiver", "decoder"] = "co-attention",
+        norm: typing.Literal["nnx", "custom"] = "nnx",
         rngs: nnx.Rngs,
     ) -> None:
         match style:
@@ -53,18 +55,36 @@ class FieldTransformer(nnx.Module):
                 raise KeyError(style)
         active_towers = frozenset(active_towers)
         self.active_towers = active_towers
+        self.norm_style = norm
 
         def norms(features: FieldDims = hidden_size, **kw):
-            return features.map_representations(
-                lambda k, kk, v: (
-                    nnx.LayerNorm(
-                        v, dtype=dtype, param_dtype=param_dtype, rngs=rngs, **kw
+            match norm:
+                case "custom":
+                    # New behavior: one SymDecompLayerNorm per projection
+                    return features.map_projections(
+                        lambda k, v: (
+                            SymDecompLayerNorm(
+                                v, dtype=dtype, param_dtype=param_dtype, rngs=rngs, **kw
+                            )
+                            if k in active_towers
+                            else None
+                        ),
+                        cls=nnx_compat.Dict,
                     )
-                    if k in active_towers
-                    else None
-                ),
-                cls=nnx_compat.Dict,
-            )
+                case "nnx":
+                    # Old behavior: one nnx.LayerNorm per representation per projection
+                    return features.map_representations(
+                        lambda k, kk, v: (
+                            nnx.LayerNorm(
+                                v, dtype=dtype, param_dtype=param_dtype, rngs=rngs, **kw
+                            )
+                            if k in active_towers
+                            else None
+                        ),
+                        cls=nnx_compat.Dict,
+                    )
+                case _:
+                    raise KeyError(f"Unknown norm style: {norm!r}")
 
         global_attn_kw = dict(
             num_heads=num_heads,
@@ -174,6 +194,24 @@ class FieldTransformer(nnx.Module):
         def apply(inp, fun, *other):
             return fun(inp, *other) if fun is not None else inp
 
+        def apply_norms(x: Field, norms) -> Field:
+            match self.norm_style:
+                case "custom":
+                    # New behavior: apply per-projection norms
+                    return attrs.evolve(
+                        x,
+                        **{
+                            k: apply(getattr(x, k), norm, mode=mode)
+                            for k, norm in norms.items()
+                            if k in active_towers
+                        },
+                    )
+                case "nnx":
+                    # Old behavior: apply per-representation norms
+                    return x.map_representations(apply, norms)
+                case _:
+                    raise KeyError(f"Unknown norm style: {self.norm_style!r}")
+
         def add_resid(x, ax):
             return attrs.evolve(
                 x,
@@ -185,7 +223,7 @@ class FieldTransformer(nnx.Module):
             )
 
         # step 1: self-attention
-        ax = x.as_split().map_representations(apply, self.norm1)
+        ax = apply_norms(x, self.norm1)
         sa_inp = ax
         sa_res = ax = attrs.evolve(
             ax,
@@ -215,7 +253,7 @@ class FieldTransformer(nnx.Module):
         sa_out = x = add_resid(x, ax)
 
         # step 2: cross-attention
-        ax = x.map_representations(apply, self.norm2)
+        ax = apply_norms(x, self.norm2)
         ca_inp = ax
         cells_flat = ax.cells.batch_reshape(*ax.cells.batch_shape[:-2], -1)
         mask = ax.grid.mask
@@ -249,7 +287,7 @@ class FieldTransformer(nnx.Module):
         ca_out = x = add_resid(x, ax)
 
         # step 3: swiglu
-        ax = x.map_representations(apply, self.norm3)
+        ax = apply_norms(x, self.norm3)
         loc_inp = ax
         loc_res = ax = ax.map_projections(
             lambda v, swiglu: (

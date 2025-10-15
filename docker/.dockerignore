@@ -1,0 +1,3 @@
+# Exclude large/unnecessary subdirectories from symlinked data/
+data/external/
+data/models/
