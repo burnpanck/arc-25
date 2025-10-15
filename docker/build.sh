@@ -12,6 +12,9 @@ GCP_PROJECT_ID=${GCP_PROJECT_ID:-arc-prize-2025}
 GCP_REGION=${GCP_REGION:-us-central1}
 GCP_REPOSITORY=${GCP_REPOSITORY:-arc25}
 
+# Platform for cross-compilation (default to amd64 for cloud deployment)
+PLATFORM=${PLATFORM:-linux/amd64}
+
 if [[ "$ACCELERATOR" != "gpu" && "$ACCELERATOR" != "tpu" ]]; then
     echo "Usage: $0 [gpu|tpu] [image_name] [image_tag] [push]"
     echo "Example: $0 gpu arc25 latest true"
@@ -20,6 +23,7 @@ if [[ "$ACCELERATOR" != "gpu" && "$ACCELERATOR" != "tpu" ]]; then
     echo "  GCP_PROJECT_ID=<project>              - GCP project ID (default: arc-prize-2025)"
     echo "  GCP_REGION=<region>                   - Artifact Registry region (default: us-central1)"
     echo "  GCP_REPOSITORY=<repo>                 - Artifact Registry repository (default: arc25)"
+    echo "  PLATFORM=<platform>                   - Target platform (default: linux/amd64)"
     exit 1
 fi
 
@@ -40,17 +44,18 @@ pdm export --prod --no-hashes -o "$DOCKER_DIR/requirements.txt"
 
 # Build wheel
 echo "Building wheel..."
-pdm build --format wheel --dest "$DOCKER_DIR"
-
-# Create symlinks in docker/ for build context
-echo "Creating symlinks..."
-cd "$DOCKER_DIR"
+pdm build --no-sdist --dest "$DOCKER_DIR/dist"
 
 # Build Docker image
-echo "Building Docker image..."
-docker build \
+cd "$DOCKER_DIR"
+echo "Building Docker image for platform ${PLATFORM}..."
+echo "Note: Local builds use basic x86-64 for QEMU compatibility (no AVX optimizations)"
+docker buildx build \
+    --platform "${PLATFORM}" \
     --build-arg ACCELERATOR="$ACCELERATOR" \
     --build-arg PYTHON_VERSION=3.13 \
+    --build-arg PYTHON_CFLAGS="-march=x86-64 -mtune=generic" \
+    --load \
     -t "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" \
     -t "${IMAGE_NAME}:${ACCELERATOR}" \
     .

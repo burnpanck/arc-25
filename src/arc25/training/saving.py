@@ -54,7 +54,7 @@ def load_model(path: Path) -> SimpleNamespace:
     with lzma.open(path, "rb") as fh:
         path = ()
 
-        for data in msgpack.Unpacker(fh, raw=False):
+        for data in msgpack.Unpacker(fh, raw=False, strict_map_key=False):
             code, args = data[0], data[1:]
 
             match code:

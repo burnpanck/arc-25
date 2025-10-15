@@ -97,7 +97,7 @@ def deserialise(data):
         assert not data
         return cls
     if cls is np.ndarray:
-        return np.frombuffer(data["data"], dtype=data["dtype"]).reshape(*data["shape"])
+        return np.frombuffer(data["data"], dtype=data["dtype"]).reshape(data["shape"])
     elif issubclass(cls, enum.Enum):
         return cls[data["name"]]
     else:

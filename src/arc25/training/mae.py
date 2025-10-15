@@ -12,6 +12,7 @@ import numpy as np
 import optax
 from flax import nnx
 
+from ..serialisation import serialisable
 from ..vision2.mae import MaskedAutoencoder
 from .config import ImageTrainConfigBase
 from .dataset import (
@@ -27,6 +28,7 @@ from .learning_rate import scale_by_kwarg
 from .saving import save_model
 
 
+@serialisable
 @dataclass(frozen=True)
 class MAETaskConfig(ImageTrainConfigBase):
     """Configuration for the training script."""
