@@ -14,7 +14,8 @@ from .conftest import quant
 
 
 @pytest.mark.parametrize("use_chirality", [False, True])
-def test_ARCEncoder_symmetry(use_chirality):
+@pytest.mark.parametrize("norm_per", ["basis-nnx", "all"])
+def test_ARCEncoder_symmetry(use_chirality, norm_per):
     """Test that ARCEncoder preserves D4 symmetry."""
     with jax.experimental.enable_x64():
         # Prepare example encoder with small dimensions
@@ -46,6 +47,7 @@ def test_ARCEncoder_symmetry(use_chirality):
             v_head_width=SymDecompDims(13, 5, 3),
             dtype=np.float64,
             use_chirality_rep=use_chirality,
+            norm_per=norm_per,
             dropout_rate=0.0,
             rngs=rngs,
         )
@@ -58,7 +60,14 @@ def test_ARCEncoder_symmetry(use_chirality):
 
         # Encode the input
         enc = encoder.encode(inp, size)
-        out = encoder(inp, size, deterministic=True, unroll=False, remat=False)
+        out, attn = encoder(
+            inp,
+            size,
+            deterministic=True,
+            unroll=False,
+            remat=False,
+            with_attention_maps=True,
+        )
 
         # Verify symmetry preservation for all D4 operations
         for op in D4:

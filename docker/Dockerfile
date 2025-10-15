@@ -4,7 +4,7 @@ ARG PYTHON_VERSION=3.13
 # Base images for different accelerators
 FROM nvcr.io/nvidia/cuda-dl-base:25.09-cuda13.0-devel-ubuntu24.04 AS base-gpu
 ENV ACCELERATOR=gpu
-ENV JAX_EXTRAS=cuda13
+ENV JAX_EXTRAS=cuda13-local
 
 FROM us-central1-docker.pkg.dev/tpu-pytorch-releases/docker/xla:r2.8.1_3.13_tpuvm AS base-tpu
 ENV ACCELERATOR=tpu

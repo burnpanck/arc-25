@@ -68,10 +68,19 @@ jobs:
       - name: Install (from lock) + test extras
         run: pdm install --frozen-lockfile -G test,kaggle,vision
 
+      - name: Cache JAX compilation cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/jax
+          key: jax-cache-${{ runner.os }}-py${{ matrix.python-version }}
+          restore-keys: |
+            jax-cache-${{ runner.os }}-py${{ matrix.python-version }}
+
       - name: Run pytest
         run: pdm run pytest
         env:
           PYTHONWARNINGS: default
+          JAX_COMPILATION_CACHE_DIR: ~/.cache/jax
 
   upload-training-data:
     runs-on: ubuntu-latest

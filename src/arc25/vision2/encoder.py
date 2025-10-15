@@ -1,4 +1,5 @@
 import typing
+from types import SimpleNamespace
 
 import attrs
 import jax
@@ -19,7 +20,7 @@ from .attention import GlobalAttention
 from .fields import CoordinateGrid, Field, FieldDims
 from .linear import SymDecompLinear
 from .symrep import RepSpec, SplitSymDecomp, SymDecompBase, SymDecompDims, standard_rep
-from .transformer import FieldTransformer
+from .transformer import FieldTransformer, apply_norms, make_norms
 
 
 class LayerStack(nnx.Module):
@@ -44,6 +45,7 @@ class LayerStack(nnx.Module):
         # the following ones do not apply to perceiver_only stacks
         use_chirality_rep: bool = True,
         per_head_rope_freq: bool = True,
+        norm_per: typing.Literal["basis-nnx", "all", "rep", "basis"] = "all",
         qk_head_width: SymDecompDims | None = None,
         v_head_width: SymDecompDims | None = None,
     ):
@@ -73,6 +75,7 @@ class LayerStack(nnx.Module):
                 precision=precision,
                 style=style,
                 head_rep=head_rep,
+                norm_per=norm_per,
                 # we can't hold on to the Rngs, as we want to carry it through the scan later
                 keep_rngs=False,
                 rngs=rngs,
@@ -96,6 +99,7 @@ class LayerStack(nnx.Module):
         remat: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
         with_stats: bool = False,
+        with_attention_maps: bool = False,
     ) -> Field | tuple[Field, dict]:
         assert self.hidden_size.validate(x), self.hidden_size.validation_problems(x)
 
@@ -116,30 +120,46 @@ class LayerStack(nnx.Module):
         # and the model is to scan along the axis 0
         # - out_axes marks the output as carry
 
-        def update_stats(stats, i, x):
-            if not with_stats:
-                return stats
-            for pk, proj in x.projections.items():
-                for rk, rep in proj.representations.items():
-                    if not rep.size:
-                        continue
-                    for k, v in dict(
-                        min=rep.min(),
-                        mean=rep.mean(),
-                        std=rep.std(),
-                        max=rep.max(),
-                    ).items():
-                        stats[pk][rk][k] = stats[pk][rk][k].at[i].set(v)
-            return stats
+        def update_intermediates(intermediates, i, x, layer_attn_maps=None):
+            if with_stats:
+                stats = intermediates["stats"]
+                for pk, proj in x.projections.items():
+                    for rk, rep in proj.representations.items():
+                        if not rep.size:
+                            continue
+                        for k, v in dict(
+                            min=rep.min(),
+                            mean=rep.mean(),
+                            std=rep.std(),
+                            max=rep.max(),
+                        ).items():
+                            stats[pk][rk][k] = stats[pk][rk][k].at[i].set(v)
+            if with_attention_maps and layer_attn_maps is not None:
+                attn_maps = intermediates["attention_maps"]
+                for k, v in layer_attn_maps.items():
+                    for kk, vv in v.items():
+                        attn_maps[k][kk] = attn_maps[k][kk].at[i - 1].set(vv)
+            return intermediates
 
         def forward(
             carry: tuple[int, Field, dict, nnx.Rngs], block: FieldTransformer
         ) -> tuple[int, Field, dict, nnx.Rngs]:
-            i, x, stats, rngs = carry
-            x = block(x, rngs=rngs, deterministic=deterministic, mode=mode)
+            i, x, intermediates, rngs = carry
+            res = block(
+                x,
+                rngs=rngs,
+                deterministic=deterministic,
+                mode=mode,
+                with_attention_maps=with_attention_maps,
+            )
+            layer_attn_maps = None
+            if with_attention_maps:
+                x, layer_attn_maps = res
+            else:
+                x = res
             i += 1
-            stats = update_stats(stats, i, x)
-            carry = i, x, stats, rngs
+            intermediates = update_intermediates(intermediates, i, x, layer_attn_maps)
+            carry = i, x, intermediates, rngs
             return carry
 
         remat = nnx.module.first_from(
@@ -171,8 +191,9 @@ class LayerStack(nnx.Module):
 as either a __call__ argument or class attribute""",
         )
 
-        stats = {}
+        intermediates = {}
         if with_stats:
+            stats = {}
             for pk, proj in x.projections.items():
                 for rk, rep in proj.representations.items():
                     if not rep.size:
@@ -180,13 +201,35 @@ as either a __call__ argument or class attribute""",
                     s = stats.setdefault(pk, {}).setdefault(rk, {})
                     for k in ["min", "mean", "std", "max"]:
                         s[k] = jnp.zeros(self.num_layers + 1, self.dtype)
+            intermediates["stats"] = stats
 
-        stats = update_stats(stats, 0, x)
-        carry = (0, x, stats, rngs)
+        if with_attention_maps:
+            # Run first block to determine attention map shapes
+            first_block = jax.tree.map(lambda x: x[0], self.blocks)
+            _, first_attn_maps = first_block(
+                x,
+                rngs=rngs,
+                deterministic=deterministic,
+                mode=mode,
+                with_attention_maps=True,
+            )
+            # Pre-allocate arrays with shape (num_layers, *attention_map_shape)
+            attn_maps = {
+                k: {
+                    kk: jnp.zeros((self.num_layers,) + vv.shape, vv.dtype)
+                    for kk, vv in v.items()
+                }
+                for k, v in first_attn_maps.items()
+            }
+            intermediates["attention_maps"] = attn_maps
+
+        intermediates = update_intermediates(intermediates, 0, x)
+        carry = (0, x, intermediates, rngs)
         carry = forward(carry, self.blocks)
-        i, y, stats, rngs = carry
-        if with_stats:
-            return y, stats
+        i, y, intermediates, rngs = carry
+
+        if with_stats or with_attention_maps:
+            return y, intermediates
         return y
 
 
@@ -195,6 +238,7 @@ class ARCEncoder(nnx.Module):
         self,
         *,
         num_heads: int,
+        num_groups: int | None = None,
         hidden_size: FieldDims,
         num_layers: int = 12,
         num_perceiver_layers: int = 4,
@@ -208,7 +252,7 @@ class ARCEncoder(nnx.Module):
         use_chirality_rep: bool = True,
         per_head_rope_freq: bool = True,
         head_rep: type[symmetry.PermRepBase] = symmetry.TrivialRep,
-        num_groups: int | None = None,
+        norm_per: typing.Literal["basis-nnx", "all", "rep", "basis"] = "all",
         dropout_rate: float = 0.1,
         keep_rngs: bool = True,
         remat: bool | None = True,
@@ -237,6 +281,8 @@ class ARCEncoder(nnx.Module):
         )
 
         self.num_layers = num_layers
+        self.norm_per = norm_per = norm_per
+
         self.hidden_size = hidden_size
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
         self.num_perceiver_layers = num_perceiver_layers
@@ -309,17 +355,16 @@ class ARCEncoder(nnx.Module):
             use_chirality_rep=use_chirality_rep,
             per_head_rope_freq=per_head_rope_freq,
             style="co-attention",
+            norm_per=norm_per,
             **stack_kw,
         )
 
-        # Layer normalization with `flax.nnx.LayerNorm`.
-        self.main_norm = hidden_size.map_representations(
-            lambda k, kk, v: nnx.LayerNorm(
-                v,
-                dtype=dtype,
-                param_dtype=param_dtype,
-                rngs=rngs,
-            )
+        self.main_norm = make_norms(
+            hidden_size,
+            norm_per=norm_per,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
         )
 
         self.perceiver_queries = nnx.Param(
@@ -353,17 +398,18 @@ class ARCEncoder(nnx.Module):
             num_layers=num_perceiver_layers,
             hidden_size=perceiver_hidden_size,
             style="perceiver",
+            norm_per=norm_per,
             **stack_kw,
         )
 
-        self.final_norm = perceiver_hidden_size.context.map_representations(
-            lambda k, v: nnx.LayerNorm(
-                v,
-                dtype=dtype,
-                param_dtype=param_dtype,
-                rngs=rngs,
-            )
-        )
+        self.final_norm = make_norms(
+            perceiver_hidden_size,
+            norm_per=norm_per,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            active_towers={"context"},
+        )["context"]
 
     def __call__(
         self,
@@ -377,6 +423,7 @@ class ARCEncoder(nnx.Module):
         remat: bool | None = None,
         mode: typing.Literal["flat", "split"] | None = None,
         with_stats: bool = False,
+        with_attention_maps: bool = False,
     ) -> Field:
         """
         Encodes an ARC-style input grid into a `SymDecomp` of dimensions `(..., F, R?, C)`;
@@ -409,22 +456,29 @@ class ARCEncoder(nnx.Module):
             self.dropout, rngs=rngs, deterministic=deterministic
         )
 
-        stats = {}
+        intermediates = {}
         res = self.main_stack(
             embedding,
             rngs=rngs,
             deterministic=deterministic,
             mode=mode,
             with_stats=with_stats,
+            with_attention_maps=with_attention_maps,
         )
-        if with_stats:
-            x, s = res
-            stats["main"] = s
+        if with_stats or with_attention_maps:
+            x, inter = res
+            intermediates["main"] = inter
         else:
             x = res
 
         # Apply layer normalization
-        y = x.map_representations(lambda v, f: f(v), self.main_norm)
+        y = apply_norms(
+            x,
+            self.main_norm,
+            norm_per=self.norm_per,
+            active_towers={"context", "cells"},
+            mode=mode,
+        )
 
         if self.perceiver_init_attn is not None:
             n = self.perceiver_queries.shape[0]
@@ -465,22 +519,37 @@ class ARCEncoder(nnx.Module):
             )
 
         res = self.perceiver_stack(
-            y, rngs=rngs, deterministic=deterministic, mode=mode, with_stats=with_stats
+            y,
+            rngs=rngs,
+            deterministic=deterministic,
+            mode=mode,
+            with_stats=with_stats,
+            with_attention_maps=with_attention_maps,
         )
-        if with_stats:
-            y, s = res
-            stats["perceiver"] = s
+        if with_stats or with_attention_maps:
+            y, inter = res
+            intermediates["perceiver"] = inter
         else:
-            x = res
+            y = res
 
         # final normalisation
-        y = attrs.evolve(
+        y = apply_norms(
             y,
-            context=y.context.map_representations(lambda v, f: f(v), self.final_norm),
+            (
+                SimpleNamespace(
+                    cells=SimpleNamespace(invariant=None, space=None, flavour=None),
+                    context=self.final_norm,
+                )
+                if self.norm_per == "basis-nnx"
+                else dict(context=self.final_norm)
+            ),
+            norm_per=self.norm_per,
+            active_towers={"context"},
+            mode=mode,
         )
 
-        if with_stats:
-            return y, stats
+        if intermediates:
+            return y, intermediates
         return y
 
     @classmethod

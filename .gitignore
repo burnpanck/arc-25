@@ -7,3 +7,6 @@ dist/
 .python-version
 
 src/arc25/_version.py
+
+docker/requirements.txt
+docker/*.whl

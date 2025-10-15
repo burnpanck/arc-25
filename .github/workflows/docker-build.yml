@@ -1,0 +1,118 @@
+name: Build and Push Docker Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      accelerator:
+        description: 'Accelerator type'
+        required: true
+        type: choice
+        options:
+          - gpu
+          - tpu
+          - both
+        default: 'gpu'
+      push:
+        description: 'Push to Artifact Registry'
+        required: true
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker/**'
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'pdm.lock'
+
+env:
+  GCP_PROJECT_ID: arc-prize-2025
+  GCP_REGION: us-central1
+  GCP_REPOSITORY: arc25
+  IMAGE_NAME: arc25
+
+jobs:
+  build:
+    name: Build ${{ matrix.accelerator }} image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        accelerator: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.accelerator == 'both' && fromJSON('["gpu", "tpu"]') || fromJSON(format('["{0}"]', github.event.inputs.accelerator))) || fromJSON('["gpu"]') }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Google Cloud
+        if: ${{ (github.event_name == 'push' || github.event.inputs.push == 'true') }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        if: ${{ (github.event_name == 'push' || github.event.inputs.push == 'true') }}
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up PDM
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: '3.13'
+          cache: true
+
+      - name: Export dependencies
+        run: |
+          pdm export --prod --no-hashes -o docker/requirements.txt
+
+      - name: Build wheel
+        run: |
+          pdm build --no-sdist --dest docker/dist
+
+      - name: Generate image tags
+        id: tags
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMAGE_TAG="${TIMESTAMP}-${SHORT_SHA}"
+
+          ARTIFACT_REGISTRY_URL="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_REPOSITORY }}"
+
+          TAGS="${{ env.IMAGE_NAME }}:${IMAGE_TAG}-${{ matrix.accelerator }}"
+          TAGS="${TAGS},${{ env.IMAGE_NAME }}:${{ matrix.accelerator }}"
+
+          if [[ "${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}" == "true" ]]; then
+            TAGS="${TAGS},${ARTIFACT_REGISTRY_URL}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}-${{ matrix.accelerator }}"
+            TAGS="${TAGS},${ARTIFACT_REGISTRY_URL}/${{ env.IMAGE_NAME }}:${{ matrix.accelerator }}"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: docker
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            ACCELERATOR=${{ matrix.accelerator }}
+            PYTHON_VERSION=3.13
+          push: ${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image info
+        run: |
+          echo "Built image: ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.image_tag }}-${{ matrix.accelerator }}"
+          if [[ "${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}" == "true" ]]; then
+            echo "Pushed to: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.image_tag }}-${{ matrix.accelerator }}"
+          fi

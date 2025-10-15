@@ -15,8 +15,11 @@ from .conftest import quant, verify_swap
 
 @pytest.mark.parametrize("use_chirality", [False, True])
 @pytest.mark.parametrize("style", ["co-attention", "perceiver", "decoder"])
-def test_FieldTransformer_symmetry(use_chirality, style):
-    """Test that ARCEncoder preserves D4 symmetry."""
+@pytest.mark.parametrize("norm_per", ["basis-nnx", "all", "rep", "basis"])
+@pytest.mark.parametrize("with_attention_maps", [True])
+def test_FieldTransformer_symmetry(use_chirality, style, norm_per, with_attention_maps):
+    """Test that FieldTransformer preserves D4 symmetry."""
+    global_head_rep = symmetry.FullRep
     with jax.experimental.enable_x64():
         # Prepare example transformer layer with small dimensions
         hidden_size = FieldDims(
@@ -41,8 +44,10 @@ def test_FieldTransformer_symmetry(use_chirality, style):
                 ),
             ),
             v_head_width=SymDecompDims(13, 5, 3),
+            head_rep=global_head_rep,
             dtype=np.float64,
             use_chirality_rep=use_chirality,
+            norm_per=norm_per,
             dropout_rate=0.0,
             style=style,
             rngs=rngs,
@@ -70,18 +75,26 @@ def test_FieldTransformer_symmetry(use_chirality, style):
         feat = fix_grid(feat)
 
         # process the input
-        out = layer(feat, deterministic=True)
+        res = layer(feat, deterministic=True, with_attention_maps=with_attention_maps)
+        if with_attention_maps:
+            out, intermediates = res
+        else:
+            out = res
 
         # Verify symmetry preservation for all D4 operations
         for op in D4:
             # Get transformation indices for space representations
-            rtfo = symmetry.transform_coeff_in_basis(op, symmetry.FullRep)
+            rtfo_full = symmetry.transform_coeff_in_basis(op, symmetry.FullRep)
+            rtfo_axial = symmetry.transform_coeff_in_basis(op, symmetry.AxialDirRep)
+            extra_rep = symmetry.ChiralityRep if use_chirality else symmetry.TrivialRep
+            rtfo_extra = symmetry.transform_coeff_in_basis(op, extra_rep)
+            rtfo_global = symmetry.transform_coeff_in_basis(op, global_head_rep)
 
             def tfo_field(obj: Field) -> Field:
                 tmp = attrs.evolve(
                     obj,
                     **{
-                        k: attrs.evolve(v, space=v.space[..., rtfo, :])
+                        k: attrs.evolve(v, space=v.space[..., rtfo_full, :])
                         for k, v in obj.projections.items()
                     },
                 )
@@ -98,7 +111,13 @@ def test_FieldTransformer_symmetry(use_chirality, style):
             tinp = tfo_field(feat)
 
             # process transformed input
-            tout = layer(tinp, deterministic=True)
+            tres = layer(
+                tinp, deterministic=True, with_attention_maps=with_attention_maps
+            )
+            if with_attention_maps:
+                tout, trafo_intermediates = tres
+            else:
+                tout = tres
 
             # Transform the original output to get expected result
             expected = tfo_field(out)
@@ -118,3 +137,41 @@ def test_FieldTransformer_symmetry(use_chirality, style):
                         a, v, rtol=1e-4, atol=1e-3
                     ), f"{op} {proj_name}.{k}: {max_diff=:.3e}, {rel_diff=:.5f}, {n_failed=}/{v.size}"
                     print(f"{op} {proj_name}.{k}: {max_diff=:.3e}, {rel_diff=:.5f}")
+
+            # Verify attention maps respect symmetry if requested
+            if with_attention_maps:
+                for k in ["sa_maps", "ca_maps"]:
+                    v = intermediates[k]
+                    for kk, vv in v.items():
+                        transformed_attn_map = trafo_intermediates[k][kk]
+                        expected_map = vv
+
+                        if kk == "cells":
+                            # Self-attention (cells->cells): Shape: ...yxdv (batch, spatial, directional, extra_rep)
+                            # Cross-attention (context->cells): Shape: ...yxv (batch, spatial, global_head_rep)
+                            expected_map = symmetry.transform_image(
+                                op, expected_map, ydim=len(Bs) + 0, xdim=len(Bs) + 1
+                            )
+                        if k == "sa_maps" and kk == "cells":
+                            # Shape: ...dv (batch, ..., directional, extra_rep)
+                            assert expected_map.shape[-2:] == (
+                                len(rtfo_axial),
+                                len(rtfo_extra),
+                            )
+                            expected_map = expected_map[..., rtfo_axial, :]
+                            expected_map = expected_map[..., rtfo_extra]
+                        else:
+                            # Shape: ...dv (batch, ..., global_head_rep)
+                            assert expected_map.shape[-1] == len(rtfo_global)
+                            expected_map = expected_map[..., rtfo_global]
+
+                        max_diff = np.abs(transformed_attn_map - expected_map).max()
+                        rel_diff = (
+                            np.abs(transformed_attn_map - expected_map)
+                            / (np.abs(expected_map) + 1e-8)
+                        ).max()
+
+                        assert np.allclose(
+                            transformed_attn_map, expected_map, rtol=1e-4, atol=1e-3
+                        ), f"{op} attn {k}.{kk}: {max_diff=:.3e}, {rel_diff=:.5f}"
+                        print(f"{op} attn {k}.{kk}: {max_diff=:.3e}, {rel_diff=:.5f}")

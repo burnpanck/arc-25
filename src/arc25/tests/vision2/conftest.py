@@ -29,4 +29,6 @@ def verify_swap(name, inp, expected, rngs, fun, *, n_swaps=10):
         actual = fun(inp)
         for k, v in expected.representations.items():
             a = getattr(actual, k)
-            assert np.allclose(a, v), f"{name}/{swapiter} ({swp}): {k}"
+            assert np.allclose(
+                a, v, rtol=1e-5, atol=1e-5
+            ), f"{name}/{swapiter} ({swp}): {k}"

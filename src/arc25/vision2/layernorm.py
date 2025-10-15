@@ -1,4 +1,5 @@
 import typing
+from dataclasses import dataclass
 
 import attrs
 import jax
@@ -12,6 +13,14 @@ from ..lib import nnx_compat
 from ..lib.compat import Self
 from ..lib.misc import first_from
 from .symrep import FlatSymDecomp, SplitSymDecomp, SymDecompBase, SymDecompDims
+
+
+@dataclass
+class ScaleBias(nnx.Pytree):
+    """Container for scale and bias parameters."""
+
+    scale: nnx.Param | None
+    bias: nnx.Param | None
 
 
 class SymDecompLayerNorm(nnx.Module):
@@ -33,81 +42,90 @@ class SymDecompLayerNorm(nnx.Module):
         use_scale: bool = True,
         bias_init: Initializer = nnx.initializers.zeros,
         scale_init: Initializer = nnx.initializers.ones,
+        norm_per: typing.Literal["all", "rep", "basis"] = "all",
         mode: typing.Literal["flat", "split"] | None = None,
+        use_fast_variance: bool = True,
         rngs: rnglib.Rngs,
     ):
+
         self.features = features
         self.epsilon = epsilon
         self.dtype = dtype
         self.param_dtype = param_dtype
         self.use_bias = use_bias
         self.use_scale = use_scale
+        self.norm_per = norm_per
+        self.use_fast_variance = use_fast_variance
         self.mode = mode
 
         # Create scale and bias parameters for each representation
-        def make_param(init_fn, shape, name_suffix: str):
-            if (
-                not shape
-                or (name_suffix == "scale" and not use_scale)
-                or (name_suffix == "bias" and not use_bias)
-            ):
-                return None
-            return nnx.Param(init_fn(rngs.params(), shape, param_dtype))
-
         # Invariant: shape (invariant,)
-        self.scale_invariant = make_param(
-            scale_init, (features.invariant,) if features.invariant else (), "scale"
-        )
-        self.bias_invariant = make_param(
-            bias_init, (features.invariant,) if features.invariant else (), "bias"
-        )
-
         # Space: shape (space,) - shared across all space basis elements to preserve D4 equivariance
-        self.scale_space = make_param(
-            scale_init,
-            (features.space,) if features.space else (),
-            "scale",
-        )
-        self.bias_space = make_param(
-            bias_init,
-            (features.space,) if features.space else (),
-            "bias",
-        )
-
         # Flavour: shape (flavour,) - shared across all flavours to preserve flavour permutation symmetry
-        self.scale_flavour = make_param(
-            scale_init,
-            (features.flavour,) if features.flavour else (),
-            "scale",
-        )
-        self.bias_flavour = make_param(
-            bias_init,
-            (features.flavour,) if features.flavour else (),
-            "bias",
+        self.params = nnx_compat.Dict(
+            {
+                k: ScaleBias(
+                    scale=(
+                        nnx.Param(scale_init(rngs.params(), (v,), param_dtype))
+                        if use_scale
+                        else None
+                    ),
+                    bias=(
+                        nnx.Param(bias_init(rngs.params(), (v,), param_dtype))
+                        if use_bias
+                        else None
+                    ),
+                )
+                for k, v in dict(
+                    invariant=features.invariant,
+                    space=features.space,
+                    flavour=features.flavour,
+                ).items()
+            }
         )
 
-    def _normalize(
+    def _compute_stats(
         self,
         x: jt.Array,
+        n_reduction_axes: int = 1,
+    ) -> tuple[jt.Array, jt.Array]:
+        dtype = jnp.result_type(x) if self.dtype is None else self.dtype
+        # promote x to at least float32, this avoids half precision computation
+        # but preserves double or complex floating points
+        dtype = jnp.promote_types(dtype, jnp.float32)
+        x = jnp.asarray(x, dtype)
+        axes = tuple(range(-n_reduction_axes, 0))
+        mu = x.mean(axis=axes, keepdims=True)
+        if self.use_fast_variance:
+            mu2 = jax.lax.square(x).mean(axis=axes, keepdims=True)
+            # mean2 - jax.lax.square(mean) is not guaranteed to be non-negative due
+            # to floating point round-off errors.
+            var = jnp.maximum(0.0, mu2 - jax.lax.square(mu))
+        else:
+            var = jax.lax.square(x - mu).mean(axis=axes, keepdims=True)
+        return mu, var
+
+    def _normalise(
+        self,
+        x: jt.Array,
+        *,
+        mean: jt.Array,
+        var: jt.Array,
         scale: jt.Array | None,
         bias: jt.Array | None,
-        reduction_axes: tuple[int, ...],
-    ) -> jt.Array:
-        """Normalize array over specified axes with optional scale and bias."""
-        # Compute statistics
-        mean = jnp.mean(x, axis=reduction_axes, keepdims=True)
-        var = jnp.var(x, axis=reduction_axes, keepdims=True)
-
-        # Normalize
-        x = (x - mean) * jax.lax.rsqrt(var + self.epsilon)
-
-        # Apply scale and bias
+    ):
+        y = x - mean
+        args = [x]
+        mul = jax.lax.rsqrt(var + self.epsilon)
         if scale is not None:
-            x = x * scale
+            mul *= scale
+            args.append(scale)
+        y *= mul
         if bias is not None:
-            x = x + bias
-
-        return x
+            y += bias
+            args.append(bias)
+        dtype = nnx.nn.dtypes.canonicalize_dtype(*args, dtype=self.dtype)
+        return jnp.asarray(y, dtype)
 
     def __call__(
         self,
@@ -138,170 +156,76 @@ class SymDecompLayerNorm(nnx.Module):
                         f"Unsupported symmetry decomposition {type(x).__name__}"
                     )
 
+        if self.norm_per == "all":
+            # TODO: this one may have an efficient implementation even in "split" mode
+            ret = self._apply_flat(x.as_flat())
+        else:
+            ret = self._apply_split(x.as_split())
+
         match mode:
             case "flat":
-                return self._apply_flat(x.as_flat())
+                return ret.as_flat()
             case "split":
-                return self._apply_split(x.as_split())
+                return ret.as_split()
             case _:
                 raise KeyError(f"Unsupported mode {mode!r}")
 
     def _apply_split(self, x: SplitSymDecomp) -> SplitSymDecomp:
         """Apply normalization in split representation mode."""
+
         # Get dtype for computation
-        dtype = self.dtype or x.invariant.dtype
-
-        # Normalize each representation separately
-        # Invariant: normalize over last axis (channel dimension)
-        invariant = (
-            self._normalize(
-                x.invariant.astype(dtype),
-                (
-                    self.scale_invariant.value
-                    if self.scale_invariant is not None
-                    else None
-                ),
-                self.bias_invariant.value if self.bias_invariant is not None else None,
-                reduction_axes=(-1,),
+        def normalise(x, params: ScaleBias, n_potential_reduction_axes: int):
+            n_reduction_axes = min(
+                n_potential_reduction_axes,
+                dict(
+                    rep=2,
+                    basis=1,
+                )[self.norm_per],
             )
-            if self.features.invariant
-            else x.invariant
-        )
-
-        # Space: normalize over last two axes (n_space, space)
-        # Scale and bias have shape (space,), need to broadcast across n_space
-        space_scale = None
-        space_bias = None
-        if self.features.space:
-            if self.scale_space is not None:
-                space_scale = self.scale_space.value[None, :]  # (1, space)
-            if self.bias_space is not None:
-                space_bias = self.bias_space.value[None, :]  # (1, space)
-            space = self._normalize(
-                x.space.astype(dtype),
-                space_scale,
-                space_bias,
-                reduction_axes=(-2, -1),
+            mean, var = self._compute_stats(
+                x=x,
+                n_reduction_axes=n_reduction_axes,
             )
-        else:
-            space = x.space
-
-        # Flavour: normalize over last two axes (n_flavours, flavour)
-        # Scale and bias have shape (flavour,), need to broadcast across n_flavours
-        flavour_scale = None
-        flavour_bias = None
-        if self.features.flavour:
-            if self.scale_flavour is not None:
-                flavour_scale = self.scale_flavour.value[None, :]  # (1, flavour)
-            if self.bias_flavour is not None:
-                flavour_bias = self.bias_flavour.value[None, :]  # (1, flavour)
-            flavour = self._normalize(
-                x.flavour.astype(dtype),
-                flavour_scale,
-                flavour_bias,
-                reduction_axes=(-2, -1),
+            return self._normalise(
+                x, mean=mean, var=var, scale=params.scale, bias=params.bias
             )
-        else:
-            flavour = x.flavour
 
-        return SplitSymDecomp(
-            invariant=invariant,
-            space=space,
-            flavour=flavour,
-            rep=x.rep,
+        return attrs.evolve(
+            x,
+            **{
+                k: normalise(v, self.params[k], dict(invariant=1).get(k, 2))
+                for k, v in x.representations.items()
+            },
         )
 
     def _apply_flat(self, x: FlatSymDecomp) -> FlatSymDecomp:
         """Apply normalization efficiently in flat representation mode."""
-        # Get dtype for computation
-        dtype = self.dtype or x.data.dtype
-        data = x.data.astype(dtype)
-
-        # Compute slice boundaries for each representation
-        # Order: invariant, space, flavour (see FlatSymDecomp.subrep_seq)
-        feat = self.features
-        n_inv = feat.invariant
-        n_space = feat.n_space * feat.space
-        n_flavour = feat.n_flavours * feat.flavour
-
-        # Split data into representations
-        batch_shape = x.batch_shape
-        inv_data = data[..., :n_inv] if n_inv else None
-        space_data = data[..., n_inv : n_inv + n_space] if n_space else None
-        flavour_data = (
-            data[..., n_inv + n_space : n_inv + n_space + n_flavour]
-            if n_flavour
-            else None
+        assert self.norm_per == "all"
+        mean, var = self._compute_stats(
+            x=x.data,
+            n_reduction_axes=1,
         )
+        rep = self.features.rep
+        scale = [] if self.use_scale else None
+        bias = [] if self.use_bias else None
+        for k in FlatSymDecomp.subrep_seq:
+            for kk, vv in dict(scale=scale, bias=bias).items():
+                v = getattr(self.params[k], kk)
+                if v is None:
+                    continue
+                n = dict(
+                    space=rep.n_space,
+                    flavour=rep.n_flavours,
+                ).get(k)
+                if n is not None:
+                    v = jnp.tile(v, n)
+                vv.append(v)
+        if scale:
+            scale = jnp.concatenate(scale)
+        if bias:
+            bias = jnp.concatenate(bias)
 
-        parts = []
-
-        # Normalize invariant
-        if inv_data is not None:
-            inv_norm = self._normalize(
-                inv_data,
-                (
-                    self.scale_invariant.value.reshape(-1)
-                    if self.scale_invariant is not None
-                    else None
-                ),
-                (
-                    self.bias_invariant.value.reshape(-1)
-                    if self.bias_invariant is not None
-                    else None
-                ),
-                reduction_axes=(-1,),
-            )
-            parts.append(inv_norm)
-
-        # Normalize space
-        if space_data is not None:
-            # Reshape to expose (n_space, space) structure for normalization
-            space_reshaped = space_data.reshape(*batch_shape, feat.n_space, feat.space)
-            # Scale and bias have shape (space,), need to broadcast across n_space
-            space_scale = None
-            space_bias = None
-            if self.scale_space is not None:
-                space_scale = self.scale_space.value[None, :]  # (1, space)
-            if self.bias_space is not None:
-                space_bias = self.bias_space.value[None, :]  # (1, space)
-
-            space_norm = self._normalize(
-                space_reshaped,
-                space_scale,
-                space_bias,
-                reduction_axes=(-2, -1),
-            )
-            # Flatten back
-            space_norm = space_norm.reshape(*batch_shape, n_space)
-            parts.append(space_norm)
-
-        # Normalize flavour
-        if flavour_data is not None:
-            # Reshape to expose (n_flavours, flavour) structure for normalization
-            flavour_reshaped = flavour_data.reshape(
-                *batch_shape, feat.n_flavours, feat.flavour
-            )
-            # Scale and bias have shape (flavour,), need to broadcast across n_flavours
-            flavour_scale = None
-            flavour_bias = None
-            if self.scale_flavour is not None:
-                # Expand to (1, flavour) for broadcasting
-                flavour_scale = self.scale_flavour.value[None, :]
-            if self.bias_flavour is not None:
-                flavour_bias = self.bias_flavour.value[None, :]
-
-            flavour_norm = self._normalize(
-                flavour_reshaped,
-                flavour_scale,
-                flavour_bias,
-                reduction_axes=(-2, -1),
-            )
-            # Flatten back
-            flavour_norm = flavour_norm.reshape(*batch_shape, n_flavour)
-            parts.append(flavour_norm)
-
-        # Concatenate all parts back together
-        normalized_data = jnp.concatenate(parts, axis=-1) if parts else data
-
-        return FlatSymDecomp(data=normalized_data, dim=feat)
+        return attrs.evolve(
+            x,
+            data=self._normalise(x.data, mean=mean, var=var, scale=scale, bias=bias),
+        )
