@@ -44,7 +44,9 @@ class LayerStack(nnx.Module):
         head_rep: type[symmetry.PermRepBase] = symmetry.TrivialRep,
         # the following ones do not apply to perceiver_only stacks
         use_chirality_rep: bool = True,
-        per_head_rope_freq: bool = True,
+        rope_freq_scaling: typing.Literal["linear-freqs", "linear-k"] = "linear-freqs",
+        learnable_rope_freqs: typing.Literal["per-head", "tied", "none"] | None = None,
+        per_head_rope_freq: bool | None = None,
         norm_per: typing.Literal["basis-nnx", "all", "rep", "basis"] = "all",
         qk_head_width: SymDecompDims | None = None,
         v_head_width: SymDecompDims | None = None,
@@ -65,6 +67,8 @@ class LayerStack(nnx.Module):
                 v_head_width=v_head_width,
                 swiglu_width_factor=swiglu_width_factor,
                 use_chirality_rep=use_chirality_rep,
+                rope_freq_scaling=rope_freq_scaling,
+                learnable_rope_freqs=learnable_rope_freqs,
                 per_head_rope_freq=per_head_rope_freq,
                 num_heads=num_heads,
                 num_groups=num_groups,
@@ -265,9 +269,11 @@ class ARCEncoder(nnx.Module):
         v_head_width: SymDecompDims | None = None,
         swiglu_width_factor: float | None = None,
         use_chirality_rep: bool = True,
-        per_head_rope_freq: bool = True,
-        head_rep: type[symmetry.PermRepBase] = symmetry.TrivialRep,
+        rope_freq_scaling: typing.Literal["linear-freqs", "linear-k"] = "linear-freqs",
+        learnable_rope_freqs: typing.Literal["per-head", "tied", "none"] | None = None,
+        per_head_rope_freq: bool | None = None,
         norm_per: typing.Literal["basis-nnx", "all", "rep", "basis"] = "all",
+        head_rep: type[symmetry.PermRepBase] = symmetry.TrivialRep,
         dropout_rate: float = 0.1,
         keep_rngs: bool = True,
         remat: bool | None = True,
@@ -287,7 +293,10 @@ class ARCEncoder(nnx.Module):
             v_head_width=v_head_width,
             swiglu_width_factor=swiglu_width_factor,
             use_chirality_rep=use_chirality_rep,
+            rope_freq_scaling=rope_freq_scaling,
+            learnable_rope_freqs=learnable_rope_freqs,
             per_head_rope_freq=per_head_rope_freq,
+            norm_per=norm_per,
             head_rep=head_rep,
             num_groups=num_groups,
             dropout_rate=dropout_rate,
@@ -336,8 +345,9 @@ class ARCEncoder(nnx.Module):
             ),
             cls=nnx_compat.Dict,
         )
+        token_init = jax.nn.initializers.truncated_normal(stddev=0.02)
         self.context_tokens = nnx.Param(
-            default_bias_init(
+            token_init(
                 rngs.params(),
                 (hidden_size.context_tokens, hidden_size.context.invariant),
                 param_dtype,
@@ -356,8 +366,10 @@ class ARCEncoder(nnx.Module):
         )
 
         stack_kw = dict(
+            norm_per=norm_per,
             remat=remat,
             unroll=unroll,
+            swiglu_width_factor=swiglu_width_factor,
             **attn_kw,
         )
 
@@ -366,11 +378,11 @@ class ARCEncoder(nnx.Module):
             hidden_size=hidden_size,
             qk_head_width=qk_head_width,
             v_head_width=v_head_width,
-            swiglu_width_factor=swiglu_width_factor,
             use_chirality_rep=use_chirality_rep,
+            rope_freq_scaling=rope_freq_scaling,
+            learnable_rope_freqs=learnable_rope_freqs,
             per_head_rope_freq=per_head_rope_freq,
             style="co-attention",
-            norm_per=norm_per,
             **stack_kw,
         )
 
@@ -383,7 +395,7 @@ class ARCEncoder(nnx.Module):
         )
 
         self.perceiver_queries = nnx.Param(
-            default_bias_init(
+            token_init(
                 rngs.params(),
                 (
                     max(
@@ -413,7 +425,6 @@ class ARCEncoder(nnx.Module):
             num_layers=num_perceiver_layers,
             hidden_size=perceiver_hidden_size,
             style="perceiver",
-            norm_per=norm_per,
             **stack_kw,
         )
 
@@ -515,7 +526,7 @@ class ARCEncoder(nnx.Module):
             )
             nB = len(y.context.batch_shape) - 1
             context = y.context.map_elementwise(
-                lambda a, b: jnp.concatenate([a, b], axis=nB), ptok.as_split()
+                lambda a, b: jnp.concatenate([a, b], axis=nB), ptok
             )
             y = attrs.evolve(
                 y,

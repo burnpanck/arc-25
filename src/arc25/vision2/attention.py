@@ -53,7 +53,7 @@ class AxialAttention(nnx.Module):
         use_v_bias: bool | None = None,
         use_out_bias: bool | None = None,
         use_chirality_rep: bool = True,
-        rope_freq_scaling: typing.Literal["linear-freqs", "linear-k"] = "linear-k",
+        rope_freq_scaling: typing.Literal["linear-freqs", "linear-k"] = "linear-freqs",
         learnable_rope_freqs: typing.Literal["per-head", "tied", "none"] | None = None,
         per_head_rope_freq: bool | None = None,
         # attention_fn: Callable[..., Array] = dot_product_attention,
@@ -169,11 +169,19 @@ class AxialAttention(nnx.Module):
             if learnable_rope_freqs != "none"
             else nnx_compat.data(None)
         )
-        self.rope_freq_scaling = qk_head_width.map_representations(
-            lambda k, v: np.pi
+        rope_freq_scaling = {
+            "linear-freqs": lambda k, v: np.pi
+            * np.array(
+                [np.linspace(0, 1, v // 2 + 1)[1:], np.linspace(1, 10, v // 2)],
+                dtype=dtype,
+            ).T,
+            "linear-k": lambda k, v: np.pi
             / np.array(
                 [np.linspace(1, 30, v // 2), np.linspace(0.1, 1, v // 2)], dtype=dtype
             ).T,
+        }[rope_freq_scaling]
+        self.rope_freq_scaling = qk_head_width.map_representations(
+            rope_freq_scaling,
             cls=nnx_compat.Dict,
         )
 
@@ -242,11 +250,16 @@ class AxialAttention(nnx.Module):
             [grid.ypos[..., :, None, :], grid.xpos[..., None, :, :]]
         ):
             rot = {}
-            for k, v in self.rope_freq_params.items():
-                # M K H 2
-                freq = v * self.rope_freq_scaling[k]
-                # ... Y X M K H 2
-                phi = (freq * pos[..., :, :, None, None, None, :]).sum(-1)
+            for k, freq in self.rope_freq_scaling.items():
+                # freq: M K H 2
+                if self.rope_freq_params is not None:
+                    freq = freq * self.rope_freq_params[k]
+                    # pos: ... Y X 2
+                    phi = (freq * pos[..., :, :, None, None, None, :]).sum(-1)
+                else:
+                    # pos: ... Y X 2
+                    phi = freq[..., 0] * pos[..., :, :, None, None, None, 0]
+                # phi: ... Y/X M K H
                 cs, sn = jnp.cos(phi), jnp.sin(phi)
                 nsn = -sn
                 # rd will have shape ... Y X M K H 3
