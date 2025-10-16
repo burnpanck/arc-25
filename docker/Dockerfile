@@ -59,6 +59,9 @@ RUN FULL_VERSION=$(pyenv install --list | grep -E "^\s*${PYTHON_VERSION}\.[0-9]+
     pyenv global ${FULL_VERSION} && \
     pyenv rehash
 
+# Install Jupyter for Vertex AI Workbench
+RUN pip install --no-cache-dir jupyter jupyterlab
+
 # Install Python dependencies (this layer changes rarely)
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir "jax[${JAX_EXTRAS}]" -r /tmp/requirements.txt && rm /tmp/requirements.txt
@@ -70,9 +73,6 @@ RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 # Copy data and notebooks (optional - comment out if not needed or causing issues)
 # COPY data/ /app/data/
 # COPY notebooks/ /app/notebooks/
-
-# Install Jupyter for Vertex AI Workbench
-RUN pip install --no-cache-dir jupyter jupyterlab
 
 # Expose Jupyter port
 EXPOSE 8080

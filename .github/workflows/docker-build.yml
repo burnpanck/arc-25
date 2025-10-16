@@ -51,14 +51,14 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Authenticate to Google Cloud
-        if: ${{ (github.event_name == 'push' || github.event.inputs.push == 'true') }}
+        if: ${{ false && (github.event_name == 'push' || github.event.inputs.push == 'true') }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Configure Docker for Artifact Registry
-        if: ${{ (github.event_name == 'push' || github.event.inputs.push == 'true') }}
+        if: ${{ false && (github.event_name == 'push' || github.event.inputs.push == 'true') }}
         run: |
           gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 

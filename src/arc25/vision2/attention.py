@@ -53,7 +53,9 @@ class AxialAttention(nnx.Module):
         use_v_bias: bool | None = None,
         use_out_bias: bool | None = None,
         use_chirality_rep: bool = True,
-        per_head_rope_freq: bool = True,
+        rope_freq_scaling: typing.Literal["linear-freqs", "linear-k"] = "linear-k",
+        learnable_rope_freqs: typing.Literal["per-head", "tied", "none"] | None = None,
+        per_head_rope_freq: bool | None = None,
         # attention_fn: Callable[..., Array] = dot_product_attention,
         normalise_qk: bool = False,
         normalise_pre_out: bool = False,
@@ -71,6 +73,12 @@ class AxialAttention(nnx.Module):
         use_qk_bias = first_from(use_qk_bias, use_bias, False)
         use_v_bias = first_from(use_v_bias, use_bias, True)
         use_out_bias = first_from(use_out_bias, use_bias, False)
+
+        assert learnable_rope_freqs is None or per_head_rope_freq is None
+        if per_head_rope_freq is not None:
+            learnable_rope_freqs = "per-head" if per_head_rope_freq else "tied"
+        if learnable_rope_freqs is None:
+            learnable_rope_freqs = "none"
 
         if normalise_qk or normalise_pre_out:
             raise NotImplementedError()
@@ -95,7 +103,7 @@ class AxialAttention(nnx.Module):
             self.use_qk_bias = use_qk_bias
             self.use_v_bias = use_v_bias
             self.use_out_bias = use_out_bias
-            self.per_head_rope_freq = per_head_rope_freq
+            self.learnable_rope_freqs = learnable_rope_freqs
         self.use_chirality_rep = use_chirality_rep
         self.rngs = rngs if keep_rngs else None
 
@@ -144,15 +152,22 @@ class AxialAttention(nnx.Module):
             use_bias=use_out_bias,
             **kw,
         )
-        self.rope_freq_params = qk_head_width.map_representations(
-            lambda k, v: nnx.Param(
-                initializers.truncated_normal(stddev=1, dtype=param_dtype)(
-                    rngs.param(),
-                    ((M, K, v // 2, 2) if per_head_rope_freq else (v // 2, 2)),
-                    dtype=param_dtype,
-                )
-            ),
-            cls=nnx_compat.Dict,
+        self.rope_freq_params = (
+            qk_head_width.map_representations(
+                lambda k, v: nnx.Param(
+                    initializers.truncated_normal(stddev=1, dtype=param_dtype)(
+                        rngs.param(),
+                        {
+                            "per-head": (M, K, v // 2, 2),
+                            "tied": (v // 2, 2),
+                        }[learnable_rope_freqs],
+                        dtype=param_dtype,
+                    )
+                ),
+                cls=nnx_compat.Dict,
+            )
+            if learnable_rope_freqs != "none"
+            else nnx_compat.data(None)
         )
         self.rope_freq_scaling = qk_head_width.map_representations(
             lambda k, v: np.pi

@@ -343,10 +343,10 @@ class FieldTransformer(nnx.Module):
                 context_out, attn = res
                 # context2cells_attn_weight has shape ...tsvmk
                 # where t=context tokens, s=cell tokens
-                # Aggregate over t (context query tokens), m, k (heads) to get ...sv
-                attn = attn.mean(axis=(-5, -2, -1))
-                # then, unflatten to get back the cell array
-                ca_maps["cells"] = attn.reshape(*ax.cells.batch_shape, attn.shape[-1])
+                # Aggregate over  m, k (heads) and transpose to get ...stv
+                attn = jnp.moveaxis(attn.mean(axis=(-2, -1)), -3, -2)
+                # then, unflatten `s` to get back the cell array
+                ca_maps["cells"] = attn.reshape(*ax.cells.batch_shape, *attn.shape[-2:])
             else:
                 context_out = res
         else:

@@ -121,6 +121,7 @@ class MaskedAutoencoder(nnx.Module):
         mask: jt.Bool[jt.Array, "... Y X"],
         *,
         with_stats: bool = False,
+        with_attention_maps: bool = False,
         deterministic: bool | None = None,
         rngs: nnx.Rngs | None = None,
         unroll: int | bool | None = None,
@@ -142,9 +143,16 @@ class MaskedAutoencoder(nnx.Module):
             **lin_kw,
             **kw,
         )
-        res = self.encoder(x, size, mask=mask, **enc_kw, with_stats=with_stats)
+        res = self.encoder(
+            x,
+            size,
+            mask=mask,
+            **enc_kw,
+            with_stats=with_stats,
+            with_attention_maps=with_attention_maps,
+        )
 
-        if with_stats:
+        if with_stats or with_attention_maps:
             encoded, encoder_stats = res
         else:
             encoded = res
@@ -170,8 +178,10 @@ class MaskedAutoencoder(nnx.Module):
             grid=grid,
         ).as_split()
 
-        res = self.decoder(y, **enc_kw, with_stats=with_stats)
-        if with_stats:
+        res = self.decoder(
+            y, **enc_kw, with_stats=with_stats, with_attention_maps=with_attention_maps
+        )
+        if with_stats or with_attention_maps:
             decoded, decoder_stats = res
         else:
             decoded = res
@@ -183,7 +193,7 @@ class MaskedAutoencoder(nnx.Module):
 
         logits = z.reshape(z.shape[:-1])
 
-        if with_stats:
+        if with_stats or with_attention_maps:
             stats = dict(encoder=encoder_stats, decoder=decoder_stats)
             return logits, stats
         return logits

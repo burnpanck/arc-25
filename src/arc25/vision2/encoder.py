@@ -121,6 +121,7 @@ class LayerStack(nnx.Module):
         # - out_axes marks the output as carry
 
         def update_intermediates(intermediates, i, x, layer_attn_maps=None):
+            all_batch = (slice(None),) * len(batch_shape)
             if with_stats:
                 stats = intermediates["stats"]
                 for pk, proj in x.projections.items():
@@ -133,12 +134,16 @@ class LayerStack(nnx.Module):
                             std=rep.std(),
                             max=rep.max(),
                         ).items():
-                            stats[pk][rk][k] = stats[pk][rk][k].at[i].set(v)
+                            stats[pk][rk][k] = (
+                                stats[pk][rk][k].at[all_batch + (i,)].set(v)
+                            )
             if with_attention_maps and layer_attn_maps is not None:
                 attn_maps = intermediates["attention_maps"]
                 for k, v in layer_attn_maps.items():
                     for kk, vv in v.items():
-                        attn_maps[k][kk] = attn_maps[k][kk].at[i - 1].set(vv)
+                        attn_maps[k][kk] = (
+                            attn_maps[k][kk].at[all_batch + (i - 1,)].set(vv)
+                        )
             return intermediates
 
         def forward(
@@ -191,6 +196,11 @@ class LayerStack(nnx.Module):
 as either a __call__ argument or class attribute""",
         )
 
+        batch_shape = np.broadcast_shapes(
+            x.cells.batch_shape[:-2],
+            x.context.batch_shape[:-1],
+        )
+
         intermediates = {}
         if with_stats:
             stats = {}
@@ -200,7 +210,9 @@ as either a __call__ argument or class attribute""",
                         continue
                     s = stats.setdefault(pk, {}).setdefault(rk, {})
                     for k in ["min", "mean", "std", "max"]:
-                        s[k] = jnp.zeros(self.num_layers + 1, self.dtype)
+                        s[k] = jnp.zeros(
+                            batch_shape + (self.num_layers + 1,), self.dtype
+                        )
             intermediates["stats"] = stats
 
         if with_attention_maps:
@@ -213,10 +225,13 @@ as either a __call__ argument or class attribute""",
                 mode=mode,
                 with_attention_maps=True,
             )
-            # Pre-allocate arrays with shape (num_layers, *attention_map_shape)
+            # Pre-allocate arrays with shape (*batch, num_layers, ...)
             attn_maps = {
                 k: {
-                    kk: jnp.zeros((self.num_layers,) + vv.shape, vv.dtype)
+                    kk: jnp.zeros(
+                        batch_shape + (self.num_layers,) + vv.shape[len(batch_shape) :],
+                        vv.dtype,
+                    )
                     for kk, vv in v.items()
                 }
                 for k, v in first_attn_maps.items()
