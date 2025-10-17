@@ -20,7 +20,7 @@ from .conftest import quant, verify_swap
 def test_FieldTransformer_symmetry(use_chirality, style, norm_per, with_attention_maps):
     """Test that FieldTransformer preserves D4 symmetry."""
     global_head_rep = symmetry.FullRep
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # Prepare example transformer layer with small dimensions
         hidden_size = FieldDims(
             context=SymDecompDims(43, 11, 7),

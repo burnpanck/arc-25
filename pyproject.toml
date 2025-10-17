@@ -34,8 +34,8 @@ huggingface = [
     "transformers>=4.55.0",
 ]
 vision = [
-    "jax>=0.6.2",
-    "flax>=0.10.7",
+    "jax>=0.7.2",
+    "flax>=0.12",
     "jaxtyping",
 ]
 

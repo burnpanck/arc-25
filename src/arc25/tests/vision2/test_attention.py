@@ -13,7 +13,7 @@ from .conftest import quant, verify_swap
 
 
 def test_RoPE():
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # prepare an example attention module with prime dimensions
         inpf = SymDecompDims(17, 11, 5)
         outf = SymDecompDims(19, 13, 7)
@@ -118,7 +118,7 @@ def test_RoPE():
 
 @pytest.mark.parametrize("use_chirality", [False, True])
 def test_AxialAttention(use_chirality):
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # prepare an example attention module with prime dimensions
         inpf = SymDecompDims(17, 11, 5)
         outf = SymDecompDims(19, 13, 7)
@@ -313,7 +313,7 @@ def test_AxialAttention(use_chirality):
 @pytest.mark.parametrize("use_chirality", [False, True])
 def test_AxialAttention_flat_vs_split(use_chirality):
     """Test that flat and split modes produce identical results."""
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # prepare an example attention module with prime dimensions
         inpf = SymDecompDims(17, 11, 5)
         outf = SymDecompDims(19, 13, 7)
@@ -393,7 +393,7 @@ def test_AxialAttention_flat_vs_split(use_chirality):
 
 @pytest.mark.parametrize("head_rep", [symmetry.TrivialRep, symmetry.FullRep])
 def test_GlobalAttention(head_rep):
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # prepare an example attention module with prime dimensions
         srcf = SymDecompDims(17, 11, 5)
         tgtf = SymDecompDims(18, 12, 6)
@@ -531,7 +531,7 @@ def test_GlobalAttention(head_rep):
 
 @pytest.mark.parametrize("head_rep", [symmetry.TrivialRep, symmetry.FullRep])
 def test_GlobalAttention_flat_vs_split(head_rep):
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # prepare an example attention module with prime dimensions
         srcf = SymDecompDims(17, 11, 5)
         tgtf = SymDecompDims(18, 12, 6)

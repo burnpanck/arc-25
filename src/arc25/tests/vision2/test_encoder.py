@@ -17,7 +17,7 @@ from .conftest import quant
 @pytest.mark.parametrize("norm_per", ["basis-nnx", "all"])
 def test_ARCEncoder_symmetry(use_chirality, norm_per):
     """Test that ARCEncoder preserves D4 symmetry."""
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # Prepare example encoder with small dimensions
 
         hidden_size = FieldDims(

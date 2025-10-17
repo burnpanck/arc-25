@@ -59,7 +59,7 @@ from .conftest import quant
 )
 def test_MaskedAutoencoder_symmetry(config, with_attention_map):
     """Test that ARCEncoder preserves D4 symmetry."""
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # Prepare example encoder with small dimensions
 
         use_chirality = config["use_chirality_rep"]

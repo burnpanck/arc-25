@@ -16,7 +16,7 @@ from .conftest import quant
 @pytest.mark.parametrize("use_chirality", [False, True])
 def test_ARCClassifier_symmetry(use_chirality):
     """Test that ARCClassifier preserves D4 symmetry."""
-    with jax.experimental.enable_x64():
+    with jax.enable_x64():
         # Prepare example encoder with small dimensions
 
         hidden_size = FieldDims(
