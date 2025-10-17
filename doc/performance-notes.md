@@ -180,3 +180,15 @@ Measurements with a single bucket at 30x30:
 - *TPU v5e-8*: global batch size 128, remat=True, bf16, mode="flat": OOM
 - *TPU v5e-8*: global batch size 96, remat=True, bf16, mode="flat": ~79 images/s
 - *TPU v5e-8*: global batch size 64, remat=True, bf16, mode="flat": ~69 images/s
+
+
+### MAE 2; `tiny` config
+
+Batch size calculated using a reference size of 15, base cost of 10.
+Observed compilation time on 4x L4: 750 seconds (somehow, we got four traces).
+
+- *4x L4*: Batchsize scaling  256, only 30x30, bf16, mode="flat":  ~73 wps
+- *4x L4*: Batchsize scaling  512, only 30x30, bf16, mode="flat":  ~83 wps
+- *4x L4*: Batchsize scaling 1024, only 30x30, bf16, mode="flat": OOM
+- *4x L4*: Batchsize scaling  768, only 30x30, bf16, mode="flat": OOM
+- *4x L4*: Batchsize scaling  512, only 12x12, bf16, mode="flat": ~170 wps

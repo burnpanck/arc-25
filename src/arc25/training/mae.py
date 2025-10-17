@@ -235,8 +235,8 @@ class TrainState(nnx.Module):
             accumulated_grads, accumulated_stats, total_weight, learning_rate
         )
 
-        # Initiate async to-host transfer; if you schedule more work before doing `jax.device_get`,
-        # then this won't synchronise with the devices, thus ensuring high throughput.
+        # Initiate async to-host transfer; this won't synchronise with the devices.
+        # if you schedule more work before doing `jax.device_get`, the devices can remain fully utilised.
         stats = jax.tree.map(
             lambda x: jax.copy_to_host_async(x), stats_dev
         )  # non-blocking

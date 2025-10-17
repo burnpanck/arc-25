@@ -37,6 +37,7 @@ jobs:
   build:
     name: Build ${{ matrix.accelerator }} image
     runs-on: ubuntu-latest
+    if: false  # we still need to fix this
     permissions:
       contents: read
       id-token: write

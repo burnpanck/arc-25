@@ -9,7 +9,7 @@ PUSH_TO_GCP=${4:-false}
 
 # GCP configuration with defaults
 GCP_PROJECT_ID=${GCP_PROJECT_ID:-arc-prize-2025}
-GCP_REGION=${GCP_REGION:-us-central1}
+GCP_REGION=${GCP_REGION:-europe-west4}
 GCP_REPOSITORY=${GCP_REPOSITORY:-arc25}
 
 # Platform for cross-compilation (default to amd64 for cloud deployment)
@@ -21,7 +21,7 @@ if [[ "$ACCELERATOR" != "gpu" && "$ACCELERATOR" != "tpu" ]]; then
     echo ""
     echo "Environment variables:"
     echo "  GCP_PROJECT_ID=<project>              - GCP project ID (default: arc-prize-2025)"
-    echo "  GCP_REGION=<region>                   - Artifact Registry region (default: us-central1)"
+    echo "  GCP_REGION=<region>                   - Artifact Registry region (default: europe-west4)"
     echo "  GCP_REPOSITORY=<repo>                 - Artifact Registry repository (default: arc25)"
     echo "  PLATFORM=<platform>                   - Target platform (default: linux/amd64)"
     exit 1

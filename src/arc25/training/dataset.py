@@ -438,7 +438,7 @@ class BucketedCollator:
                 self.example_in_epoch -= self.total_examples
                 self.weight_in_epoch -= self.total_example_weight
                 for bucket in self.buckets.values():
-                    N = len(bucket.examples)
+                    N = len(bucket.examples.images)
                     bucket.remaining += N
 
             # Select a bucket with probability proportional to remaining images
