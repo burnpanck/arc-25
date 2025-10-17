@@ -18,7 +18,14 @@ from .encoder import ARCEncoder, LayerStack
 from .fields import CoordinateGrid, Field, FieldDims
 from .layernorm import SymDecompLayerNorm
 from .linear import SymDecompLinear
-from .symrep import RepSpec, SplitSymDecomp, SymDecompBase, SymDecompDims, standard_rep
+from .symrep import (
+    FlatSymDecomp,
+    RepSpec,
+    SplitSymDecomp,
+    SymDecompBase,
+    SymDecompDims,
+    standard_rep,
+)
 from .transformer import FieldTransformer
 
 
@@ -250,11 +257,18 @@ class MaskedAutoencoder(nnx.Module):
             encoded, encoder_stats = res
         else:
             encoded = res
+
         grid = encoded.grid
         mask = grid.mask if mask is None else grid.mask & mask
 
         ecrep = encoded.cells.rep
-        dtype = encoded.cells.invariant.dtype
+        match encoded.cells:
+            case FlatSymDecomp():
+                dtype = encoded.cells.data.dtype
+            case SplitSymDecomp():
+                dtype = encoded.cells.invariant.dtype
+            case _:
+                raise TypeError(type(encoded.cells).__name__)
         n_flavours = ecrep.n_flavours
 
         # TODO: we could probably share this one with the original call within self.encoder above.
@@ -275,22 +289,23 @@ class MaskedAutoencoder(nnx.Module):
                 )
                 y_cells = self.mask_embedding(mask_enc, **lin_kw)
             case "backbone+semantic":
+                split_cells = encoded.cells.as_split()
                 in_field = attrs.evolve(
-                    encoded.cells,
+                    split_cells,
                     invariant=jnp.where(
                         mask[..., None],
                         self.mask_token.astype(dtype),
-                        encoded.cells.invariant,
+                        split_cells.invariant,
                     ),
                     flavour=jnp.where(
                         mask[..., None, None],
                         0.0,
-                        encoded.cells.flavour,
+                        split_cells.flavour,
                     ),
                     space=jnp.where(
                         mask[..., None, None],
                         0.0,
-                        encoded.cells.space,
+                        split_cells.space,
                     ),
                 )
                 pos_emb = self.pos_embedding(pos_enc, **lin_kw)
@@ -319,7 +334,7 @@ class MaskedAutoencoder(nnx.Module):
             context=encoded.context,
             cells=y_cells,
             grid=grid,
-        ).as_split()
+        )
 
         res = self.decoder(
             y, **enc_kw, with_stats=with_stats, with_attention_maps=with_attention_maps

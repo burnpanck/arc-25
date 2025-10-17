@@ -26,6 +26,7 @@ on:
       - 'pyproject.toml'
       - 'pdm.lock'
 
+
 env:
   GCP_PROJECT_ID: arc-prize-2025
   GCP_REGION: us-central1

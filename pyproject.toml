@@ -81,6 +81,11 @@ version_format = "scripts.version:format_version"
 # tensorstore is currently unavailable on python 3.14
 excludes = ["tensorstore"]
 
+[tool.pdm.resolution.overrides]
+# override to use upstream branch https://github.com/google/flax/compare/fix-py314-kw-only-dataclasses
+# allowing us to test on python 3.14.
+flax = "git+https://github.com/google/flax.git@6622efcf2782de71b89e62b2943f526c82bd2f74"
+
 [tool.pdm.build]
 includes = ["src/arc25"]
 

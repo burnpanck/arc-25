@@ -247,6 +247,10 @@ class FlatSymDecomp(SymDecompBase):
     subrep_seq: typing.ClassVar[tuple[str, ...]] = ("invariant", "space", "flavour")
     element_names: typing.ClassVar[frozenset[str]] = frozenset({"data"})
 
+    @property
+    def rep(self) -> RepSpec:
+        return self.dim.rep
+
     @classmethod
     def empty(
         cls, dims: SymDecompDims, batch: tuple[int, ...] = (), *, dtype=np.float32
