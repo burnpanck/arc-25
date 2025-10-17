@@ -295,7 +295,7 @@ class FieldTransformer(nnx.Module):
         else:
             context_out = ax.context
 
-        sa_res = ax = attrs.evolve(ax, cells=cells_out, context=context_out).as_split()
+        sa_res = ax = attrs.evolve(ax, cells=cells_out, context=context_out)
         sa_out = x = add_resid(x, ax)
 
         # step 2: cross-attention
@@ -356,7 +356,7 @@ class FieldTransformer(nnx.Module):
         else:
             context_out = ax.context
 
-        ca_res = ax = attrs.evolve(ax, cells=cells_out, context=context_out).as_split()
+        ca_res = ax = attrs.evolve(ax, cells=cells_out, context=context_out)
         ca_out = x = add_resid(x, ax)
 
         # step 3: swiglu
@@ -375,7 +375,7 @@ class FieldTransformer(nnx.Module):
                 else v
             ),
             self.swiglu,
-        ).as_split()
+        )
         x = add_resid(x, ax)
 
         intermediates = dict()

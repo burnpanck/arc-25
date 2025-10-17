@@ -1,4 +1,5 @@
 import typing
+from types import MappingProxyType, SimpleNamespace
 
 import attrs
 import jax
@@ -343,3 +344,133 @@ class MaskedAutoencoder(nnx.Module):
             stats = dict(encoder=encoder_stats, decoder=decoder_stats)
             return logits, stats
         return logits
+
+
+_modern_config_base = dict(
+    norm_per="all",
+    rope_freq_scaling="linear-freqs",
+    learnable_rope_freqs="none",
+    decoder_cell_infusion="backbone+semantic",
+    use_chirality_rep=False,
+    head_rep=symmetry.TrivialRep,
+    with_final_norm=True,
+)
+
+
+def decomp_32a(n):
+    """n*32 total width, split as 8×(1×n) + 10×(1×n) + 14×n."""
+    return SymDecompDims(
+        space=1 * n,
+        flavour=1 * n,
+        invariant=14 * n,
+    )
+
+
+def decomp_48a(n):
+    """n*48 total width, split as 8×(2×n) + 10×(1×n) + 22×n."""
+    return SymDecompDims(
+        space=2 * n,
+        flavour=1 * n,
+        invariant=22 * n,
+    )
+
+
+def decomp_64a(n):
+    """n*64 total width, split as 8×(3×n) + 10×(2×n) + 20×n."""
+    return SymDecompDims(
+        space=3 * n,
+        flavour=2 * n,
+        invariant=20 * n,
+    )
+
+
+def decomp_qk_32a_chiral(n):
+    """n*32 total width, split as 2×(3×n) + 10×(2×n) + 6×n."""
+    return SymDecompDims(
+        space=4 * n,
+        flavour=1 * n,
+        invariant=14 * n,
+        rep=RepSpec(symmetry.ChiralityRep, 10),
+    )
+
+
+configs = MappingProxyType(
+    dict(
+        legacy=dict(
+            num_heads=8,
+            num_groups=2,
+            num_layers=8,
+            num_perceiver_layers=3,
+            num_perceiver_tokens=8,
+            num_decoder_layers=4,
+            hidden_size=FieldDims(
+                context=SymDecompDims(
+                    space=2 * 16,  # 8x2 = 16
+                    flavour=1 * 16,  # 10x1 = 10
+                    invariant=14 * 16,  # 1x14 -> 40*16
+                ),
+                cells=SymDecompDims(
+                    space=2 * 8,
+                    flavour=1 * 8,
+                    invariant=22 * 8,  # -> 48*8
+                ),
+                context_tokens=2,
+            ),
+            swiglu_width_factor=8 / 3,
+            qk_head_width=SymDecompDims(
+                space=3 * 8,  # 1x3x8
+                flavour=1 * 4,  # 10x1x4 = 5x1x8
+                invariant=4 * 8,  # 1*4*8 -> 12x8
+                rep=RepSpec(symmetry.ChiralityRep, 10),
+            ),
+            v_head_width=SymDecompDims(
+                space=2 * 4,
+                flavour=1 * 4,
+                invariant=14 * 4,
+            ),
+            norm_per="basis-nnx",
+            rope_freq_scaling="linear-k",
+            learnable_rope_freqs="tied",
+            decoder_cell_infusion="legacy",
+            use_chirality_rep=False,
+            head_rep=symmetry.TrivialRep,
+            with_final_norm=False,
+        ),
+        tiny=dict(
+            num_heads=4,
+            num_groups=1,
+            num_layers=8,
+            hidden_size=FieldDims(
+                context=decomp_64a(16),  # 64x8 = 512
+                cells=decomp_48a(8),  # 48x8 = 384
+                context_tokens=2,
+            ),
+            qk_head_width=decomp_qk_32a_chiral(8),  # 32x8 = 256
+            v_head_width=decomp_64a(4),  # 64x4 = 256
+            num_perceiver_layers=3,
+            num_perceiver_tokens=8,
+            num_decoder_layers=3,
+            decoder_cell_width=decomp_64a(4),  # 64x4 = 256
+            swiglu_width_factor=2,
+            **_modern_config_base,
+        ),
+        small=dict(
+            num_heads=8,
+            num_groups=2,
+            num_layers=12,
+            hidden_size=FieldDims(
+                context=decomp_64a(12),  # 64x12 = 768
+                cells=decomp_64a(8),  # 64x8 = 512
+                context_tokens=2,
+            ),
+            qk_head_width=decomp_qk_32a_chiral(16),  # 32x16 = 512
+            v_head_width=decomp_64a(8),  # 64x8 = 512
+            num_perceiver_layers=4,
+            num_perceiver_tokens=16,
+            num_decoder_layers=4,
+            decoder_cell_width=decomp_64a(8),  # 64x8 = 512
+            swiglu_width_factor=2.5,
+            **_modern_config_base,
+        ),
+    )
+)
