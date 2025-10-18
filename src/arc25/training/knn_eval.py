@@ -125,7 +125,12 @@ class KNNEvaluator:
                 for bucket_shape, minibatch_data in self.dataset.buckets.items():
                     n_examples = minibatch_data.n_examples
                     batch_size = self.batch_size(int(np.prod(bucket_shape)))
+                    assert batch_size > 0
+                    assert not batch_size % num_devices
                     n_batches_tot += n_examples // batch_size
+                    if (n_examples - n_examples % num_devices) % batch_size:
+                        # there are extra examples remaining; these will get their own batch size
+                        n_batches_tot += 1
 
                 import tqdm.auto
 
@@ -145,11 +150,15 @@ class KNNEvaluator:
                 assert not batch_size % num_devices
                 n_batches = n_examples // batch_size
                 assert n_batches > 0
-                batches = rgen.choice(
-                    n_examples,
-                    size=(n_batches, num_devices, batch_size // num_devices),
-                    replace=False,
-                    shuffle=False,
+                seq = rgen.permutation(n_examples)
+                n_rem = (n_examples - n_examples % num_devices) % batch_size
+                if n_rem:
+                    batches = [seq[:n_rem].reshape(num_devices, -1)]
+                    seq = seq[n_rem:]
+                else:
+                    batches = []
+                batches.extend(
+                    seq[: n_batches * batch_size].reshape(n_batches, num_devices, -1)
                 )
 
                 pbar.set_postfix(

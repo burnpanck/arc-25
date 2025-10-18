@@ -43,7 +43,7 @@ jobs:
         experimental: [false]
         include:
           - python-version: "3.14"
-            experimental: true
+            experimental: false
 
     continue-on-error: ${{ matrix.experimental }}
 

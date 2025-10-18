@@ -8,21 +8,22 @@ IMAGE_TAG=${3:-latest}
 PUSH_TO_GCP=${4:-false}
 
 # GCP configuration with defaults
-GCP_PROJECT_ID=${GCP_PROJECT_ID:-arc-prize-2025}
+GCP_PROJECT_ID=${GCP_PROJECT_ID:-deep-time-358505}
 GCP_REGION=${GCP_REGION:-europe-west4}
-GCP_REPOSITORY=${GCP_REPOSITORY:-arc25}
+GCP_REPOSITORY=${GCP_REPOSITORY:-arc-agi}
 
 # Platform for cross-compilation (default to amd64 for cloud deployment)
 PLATFORM=${PLATFORM:-linux/amd64}
 
-if [[ "$ACCELERATOR" != "gpu" && "$ACCELERATOR" != "tpu" ]]; then
-    echo "Usage: $0 [gpu|tpu] [image_name] [image_tag] [push]"
+if [[ "$ACCELERATOR" != "gpu" && "$ACCELERATOR" != "tpu" && "$ACCELERATOR" != "workbench" ]]; then
+    echo "Usage: $0 [gpu|tpu|workbench] [image_name] [image_tag] [push]"
     echo "Example: $0 gpu arc25 latest true"
+    echo "Example: $0 workbench arc25-workbench latest true"
     echo ""
     echo "Environment variables:"
-    echo "  GCP_PROJECT_ID=<project>              - GCP project ID (default: arc-prize-2025)"
+    echo "  GCP_PROJECT_ID=<project>              - GCP project ID (default: deep-time-358505)"
     echo "  GCP_REGION=<region>                   - Artifact Registry region (default: europe-west4)"
-    echo "  GCP_REPOSITORY=<repo>                 - Artifact Registry repository (default: arc25)"
+    echo "  GCP_REPOSITORY=<repo>                 - Artifact Registry repository (default: arc-agi)"
     echo "  PLATFORM=<platform>                   - Target platform (default: linux/amd64)"
     exit 1
 fi
@@ -48,52 +49,80 @@ pdm build --no-sdist --dest "$DOCKER_DIR/dist"
 
 # Build Docker image
 cd "$DOCKER_DIR"
-echo "Building Docker image for platform ${PLATFORM}..."
-echo "Note: Local builds use basic x86-64 for QEMU compatibility (no AVX optimizations)"
-docker buildx build \
-    --platform "${PLATFORM}" \
-    --build-arg ACCELERATOR="$ACCELERATOR" \
-    --build-arg PYTHON_VERSION=3.13 \
-    --build-arg PYTHON_CFLAGS="-march=x86-64 -mtune=generic" \
-    --load \
-    -t "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" \
-    -t "${IMAGE_NAME}:${ACCELERATOR}" \
-    .
 
-# Clean up generated files and symlinks (but NOT Dockerfile or build.sh!)
-echo "Cleaning up..."
-rm -f requirements.txt
-rm -f *.whl
+# Select dockerfile and build args based on accelerator
+if [[ "$ACCELERATOR" == "workbench" ]]; then
+    DOCKERFILE="vertex-ai-workbench.dockerfile"
+    BUILD_ARGS="--build-arg PYTHON_VERSION=3.13"
+    echo "Building Vertex AI Workbench image for platform ${PLATFORM}..."
+else
+    DOCKERFILE="Dockerfile"
+    BUILD_ARGS="--build-arg ACCELERATOR=$ACCELERATOR --build-arg PYTHON_VERSION=3.13 --build-arg \"PYTHON_CFLAGS=-march=x86-64 -mtune=generic\""
+    echo "Building Docker image for platform ${PLATFORM}..."
+    echo "Note: Local builds use basic x86-64 for QEMU compatibility (no AVX optimizations)"
+fi
 
-echo "Build complete!"
-echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}"
-echo "Image: ${IMAGE_NAME}:${ACCELERATOR}"
-
-# Optionally push to Google Artifact Registry
+# Configure GCP and prepare tags if pushing
 if [[ "$PUSH_TO_GCP" == "true" ]]; then
     ARTIFACT_REGISTRY_URL="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_REPOSITORY}"
     REMOTE_IMAGE="${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}"
     REMOTE_IMAGE_LATEST="${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${ACCELERATOR}"
 
     echo ""
-    echo "Pushing to Google Artifact Registry..."
-    echo "Registry: ${ARTIFACT_REGISTRY_URL}"
+    echo "Will push to Google Artifact Registry: ${ARTIFACT_REGISTRY_URL}"
 
     # Configure docker for Artifact Registry
     gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
-    # Tag for remote
-    docker tag "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" "${REMOTE_IMAGE}"
-    docker tag "${IMAGE_NAME}:${ACCELERATOR}" "${REMOTE_IMAGE_LATEST}"
-
-    # Push
-    echo "Pushing ${REMOTE_IMAGE}..."
-    docker push "${REMOTE_IMAGE}"
-    echo "Pushing ${REMOTE_IMAGE_LATEST}..."
-    docker push "${REMOTE_IMAGE_LATEST}"
+    # Build and push directly to avoid --load issues with cross-platform builds
+    echo ""
+    echo "Building and pushing image..."
+    docker buildx build \
+        --platform "${PLATFORM}" \
+        ${BUILD_ARGS} \
+        --push \
+        -f "${DOCKERFILE}" \
+        -t "${REMOTE_IMAGE}" \
+        -t "${REMOTE_IMAGE_LATEST}" \
+        .
 
     echo ""
     echo "Successfully pushed to Artifact Registry!"
     echo "Image: ${REMOTE_IMAGE}"
     echo "Image: ${REMOTE_IMAGE_LATEST}"
+else
+    # Local build only - try to load into local docker daemon
+    echo ""
+    echo "Building image locally..."
+    docker buildx build \
+        --platform "${PLATFORM}" \
+        ${BUILD_ARGS} \
+        --load \
+        -f "${DOCKERFILE}" \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" \
+        -t "${IMAGE_NAME}:${ACCELERATOR}" \
+        .
+
+    # Verify the image was created
+    echo ""
+    echo "Verifying image was created..."
+    docker images "${IMAGE_NAME}" --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
+
+    if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" >/dev/null 2>&1; then
+        echo "ERROR: Image ${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR} was not created!"
+        echo "This can happen with buildx when using --platform with --load."
+        echo "Try building without specifying PLATFORM (PLATFORM=\"\" ./docker/build.sh ...)"
+        exit 1
+    fi
+
+    echo ""
+    echo "Build complete!"
+    echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}"
+    echo "Image: ${IMAGE_NAME}:${ACCELERATOR}"
 fi
+
+# Clean up generated files and symlinks (but NOT Dockerfile or build.sh!)
+echo ""
+echo "Cleaning up..."
+rm -f requirements.txt
+rm -rf dist/
