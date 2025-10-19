@@ -39,25 +39,38 @@ echo "Docker context: $DOCKER_DIR"
 # Change to project root for PDM commands
 cd "$PROJECT_ROOT"
 
-# Export dependencies to requirements.txt
+# Create build context directory
+BUILD_CONTEXT="$DOCKER_DIR/buildctxt"
+echo "Preparing build context at $BUILD_CONTEXT..."
+rm -rf "$BUILD_CONTEXT"
+mkdir -p "$BUILD_CONTEXT"
+
+# Export dependencies directly to build context
 echo "Exporting dependencies..."
-pdm export --prod --no-hashes -o "$DOCKER_DIR/requirements.txt"
+pdm export --prod --no-hashes -o "$BUILD_CONTEXT/requirements.txt"
 
-# Build wheel
+# Build wheel directly to build context (note: pdm build wipes the target directory)
 echo "Building wheel..."
-pdm build --no-sdist --dest "$DOCKER_DIR/dist"
+pdm build --no-sdist --dest "$BUILD_CONTEXT/dist"
 
-# Build Docker image
-cd "$DOCKER_DIR"
+# Copy data and notebooks to build context
+echo "Copying data and notebooks to build context..."
+pdm run python -m arc25.deploy prepare-docker-context "$BUILD_CONTEXT"
 
 # Select dockerfile and build args based on accelerator
 if [[ "$ACCELERATOR" == "workbench" ]]; then
     DOCKERFILE="vertex-ai-workbench.dockerfile"
-    BUILD_ARGS="--build-arg PYTHON_VERSION=3.13"
+    BUILD_ARGS=(
+        --build-arg "PYTHON_VERSION=3.13"
+    )
     echo "Building Vertex AI Workbench image for platform ${PLATFORM}..."
 else
     DOCKERFILE="Dockerfile"
-    BUILD_ARGS="--build-arg ACCELERATOR=$ACCELERATOR --build-arg PYTHON_VERSION=3.13 --build-arg \"PYTHON_CFLAGS=-march=x86-64 -mtune=generic\""
+    BUILD_ARGS=(
+        --build-arg "ACCELERATOR=$ACCELERATOR"
+        --build-arg "PYTHON_VERSION=3.13"
+        --build-arg "PYTHON_CFLAGS=-march=x86-64 -mtune=generic"
+    )
     echo "Building Docker image for platform ${PLATFORM}..."
     echo "Note: Local builds use basic x86-64 for QEMU compatibility (no AVX optimizations)"
 fi
@@ -77,15 +90,16 @@ if [[ "$PUSH_TO_GCP" == "true" ]]; then
     # Build and push directly to avoid --load issues with cross-platform builds
     echo ""
     echo "Building and pushing image..."
+    set -x
     docker buildx build \
         --platform "${PLATFORM}" \
-        ${BUILD_ARGS} \
+        "${BUILD_ARGS[@]}" \
         --push \
-        -f "${DOCKERFILE}" \
+        -f "$DOCKER_DIR/${DOCKERFILE}" \
         -t "${REMOTE_IMAGE}" \
         -t "${REMOTE_IMAGE_LATEST}" \
-        .
-
+        "$BUILD_CONTEXT"
+    set +x
     echo ""
     echo "Successfully pushed to Artifact Registry!"
     echo "Image: ${REMOTE_IMAGE}"
@@ -94,14 +108,16 @@ else
     # Local build only - try to load into local docker daemon
     echo ""
     echo "Building image locally..."
+    set -x
     docker buildx build \
         --platform "${PLATFORM}" \
-        ${BUILD_ARGS} \
+        "${BUILD_ARGS[@]}" \
         --load \
-        -f "${DOCKERFILE}" \
+        -f "$DOCKER_DIR/${DOCKERFILE}" \
         -t "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" \
         -t "${IMAGE_NAME}:${ACCELERATOR}" \
-        .
+        "$BUILD_CONTEXT"
+    set +x
 
     # Verify the image was created
     echo ""
@@ -110,8 +126,6 @@ else
 
     if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR}" >/dev/null 2>&1; then
         echo "ERROR: Image ${IMAGE_NAME}:${IMAGE_TAG}-${ACCELERATOR} was not created!"
-        echo "This can happen with buildx when using --platform with --load."
-        echo "Try building without specifying PLATFORM (PLATFORM=\"\" ./docker/build.sh ...)"
         exit 1
     fi
 
@@ -121,8 +135,7 @@ else
     echo "Image: ${IMAGE_NAME}:${ACCELERATOR}"
 fi
 
-# Clean up generated files and symlinks (but NOT Dockerfile or build.sh!)
+# Clean up build context
 echo ""
-echo "Cleaning up..."
-rm -f requirements.txt
-rm -rf dist/
+echo "Cleaning up build context..."
+rm -rf "$BUILD_CONTEXT"

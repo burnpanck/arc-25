@@ -70,9 +70,9 @@ RUN pip install --no-cache-dir "jax[${JAX_EXTRAS}]" -r /tmp/requirements.txt && 
 COPY dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
-# Copy data and notebooks (optional - comment out if not needed or causing issues)
-# COPY data/ /app/data/
-# COPY notebooks/ /app/notebooks/
+# Copy data and notebooks (prepared by build script via arc25.deploy prepare-docker-context)
+COPY data/ /app/data/
+COPY notebooks/ /app/notebooks/
 
 # Expose Jupyter port
 EXPOSE 8080

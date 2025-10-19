@@ -12,7 +12,7 @@ def test_importing():
     try:
         import asyncclick  # noqa
     except ImportError:
-        skip.add("arc25.kaggle")
+        skip.add("arc25.deploy")
 
     try:
         import transformers  # noqa

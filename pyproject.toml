@@ -14,6 +14,7 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "attrs",
+    "tqdm",
     "anyio",
     "matplotlib",
     "pyyaml>=6.0.2",
@@ -29,9 +30,9 @@ explorer = [
     "platformdirs>=4.3.8",
 ]
 huggingface = [
-    "peft",
-    "bitsandbytes; sys_platform == 'linux'",
-    "transformers>=4.55.0",
+    "peft; python_version < '3.14'",
+    "bitsandbytes; sys_platform == 'linux' and python_version < '3.14'",
+    "transformers>=4.55.0; python_version < '3.14'",
 ]
 vision = [
     "jax>=0.7.2",
@@ -44,7 +45,7 @@ test = [
     "pytest",
     "pytest-asyncio>=1.1.0",
 ]
-kaggle = [
+deploy = [
     "kaggle>=1.7.4.5",
     "asyncclick>=8.2.2.2",
 ]

@@ -104,10 +104,10 @@ jobs:
           pdm -V
 
       - name: Install (from lock) + extras
-        run: pdm install --frozen-lockfile -G kaggle
+        run: pdm install --frozen-lockfile -G deploy
 
       - name: Upload dataset
         env:
           KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-        run: pdm run python -m arc25.kaggle update-training-data -m "${GITHUB_REF_NAME}"
+        run: pdm run python -m arc25.deploy update-training-data -m "${GITHUB_REF_NAME}"

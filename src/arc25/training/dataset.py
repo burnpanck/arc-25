@@ -448,7 +448,12 @@ class BucketedCollator:
 
             assert available_buckets
 
-            remainings = np.array([bucket.remaining for bucket in available_buckets])
+            remainings = np.array(
+                [
+                    bucket.remaining / bucket.minibatch_size
+                    for bucket in available_buckets
+                ]
+            )
             probs = remainings / remainings.sum()
 
             # Select a bucket
