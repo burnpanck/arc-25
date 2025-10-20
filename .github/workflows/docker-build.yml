@@ -58,10 +58,6 @@ jobs:
           python-version: '3.13'
           cache: true
 
-      - name: Install deployment dependencies
-        run: |
-          pdm install -G deploy
-
       - name: Prepare build context
         run: |
           mkdir -p docker/buildctxt
@@ -73,6 +69,10 @@ jobs:
       - name: Build wheel
         run: |
           pdm build --no-sdist --dest docker/buildctxt/dist
+
+      - name: Install deployment dependencies
+        run: |
+          pdm install -G deploy
 
       - name: Copy data and notebooks to build context
         run: |
@@ -100,22 +100,35 @@ jobs:
 
           IMAGE_NAME="${{ steps.docker-config.outputs.image_name }}"
 
-          TAGS="${IMAGE_NAME}:${IMAGE_TAG}-${{ matrix.accelerator }}"
-          TAGS="${TAGS},${IMAGE_NAME}:${{ matrix.accelerator }}"
-
           if [[ "${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}" == "true" ]]; then
-            TAGS="${TAGS},${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}-${{ matrix.accelerator }}"
+            TAGS="${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}-${{ matrix.accelerator }}"
             TAGS="${TAGS},${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${{ matrix.accelerator }}"
+          else
+            TAGS="${IMAGE_NAME}:${IMAGE_TAG}-${{ matrix.accelerator }}"
+            TAGS="${TAGS},${IMAGE_NAME}:${{ matrix.accelerator }}"
           fi
 
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
 
+      - name: Inspect GitHub OIDC JWT claims
+        if: always()
+        env:
+          AUD: https://iam.googleapis.com/projects/440754660445/locations/global/workloadIdentityPools/github-actions/providers/github-burnanck-only
+        run: |
+          set -euo pipefail
+          tok=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
+
+          # decode payload (no signature verification; just for debugging)
+          jq -R 'split(".") | .[1] | @base64d | fromjson' <<< "$tok"
+
       - name: Authenticate to Google Cloud
         if: ${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}
         uses: google-github-actions/auth@v3
         with:
+          project_id: deep-time-358505
           workload_identity_provider: 'projects/440754660445/locations/global/workloadIdentityPools/github-actions/providers/github-burnanck-only'
 
       - name: Configure Docker for Artifact Registry
