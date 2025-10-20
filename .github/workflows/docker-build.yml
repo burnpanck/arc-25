@@ -12,7 +12,7 @@ on:
           - tpu
           - workbench
           - all
-        default: 'gpu'
+        default: 'all'
       push:
         description: 'Push to Artifact Registry'
         required: true

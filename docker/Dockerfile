@@ -48,14 +48,11 @@ ARG PYTHON_CFLAGS="-march=x86-64-v3 -mtune=generic"
 # Faster PGO build (comment out for maximum performance, use full test suite)
 ARG PROFILE_TASK="-m test.regrtest --pgo -j0"
 
-ENV PYTHON_CONFIGURE_OPTS="${PYTHON_CONFIGURE_OPTS}"
-ENV PYTHON_CFLAGS="${PYTHON_CFLAGS}"
-ENV PROFILE_TASK="${PROFILE_TASK}"
 
 # Build and install Python
 RUN FULL_VERSION=$(pyenv install --list | grep -E "^\s*${PYTHON_VERSION}\.[0-9]+$" | tail -1 | tr -d ' ') && \
     echo "PYTHON_VERSION=\"${PYTHON_VERSION}\", FULL_VERSION=\"${FULL_VERSION}\"" && \
-    pyenv install ${FULL_VERSION} && \
+    PYTHON_CONFIGURE_OPTS="${PYTHON_CONFIGURE_OPTS}" PYTHON_CFLAGS="${PYTHON_CFLAGS}" PROFILE_TASK="${PROFILE_TASK}" pyenv install ${FULL_VERSION} && \
     pyenv global ${FULL_VERSION} && \
     pyenv rehash
 
@@ -70,12 +67,14 @@ RUN pip install --no-cache-dir "jax[${JAX_EXTRAS}]" -r /tmp/requirements.txt && 
 COPY dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
+ARG ARC25_APP_ROOT="/app"
+ENV ARC25_APP_ROOT="${ARC25_APP_ROOT}"
+# Set working directory
+WORKDIR "${ARC25_APP_ROOT}"
+
 # Copy data and notebooks (prepared by build script via arc25.deploy prepare-docker-context)
-COPY data/ /app/data/
-COPY notebooks/ /app/notebooks/
+COPY data/ "${ARC25_APP_ROOT}/data/"
+COPY notebooks/ "${ARC25_APP_ROOT}/notebooks/"
 
-# Expose Jupyter port
-EXPOSE 8080
-
-# Default command for Jupyter (can be overridden for training jobs)
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8080", "--no-browser", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+ENTRYPOINT ["python", "-m", "arc25.training.cli"]
+CMD []
