@@ -1,19 +1,28 @@
+import contextlib
 import dataclasses
+import datetime
+import gc
+import itertools
 import os
 import sys
+import typing
 from pathlib import Path
-from typing import Literal, get_args, get_origin
+from typing import Literal
 
 import attrs
 import click
 import jax
 import jax.numpy as jnp
 import json5
+import numpy as np
 from flax import nnx
+
+import arc25
 
 from ..vision2 import mae
 from . import dataset
 from . import mae as mae_trainer
+from .config import describe_config_json
 
 proj_root = Path(os.environ.get("ARC25_APP_ROOT", Path(__file__).parents[3])).resolve()
 data_root = proj_root / "data"
@@ -38,14 +47,15 @@ def attrs_to_click_options(attrs_cls):
             )
 
             # Handle Literal types (enum-like)
-            origin = get_origin(field_type)
+            origin = typing.get_origin(field_type)
             if origin is Literal:
-                choices = get_args(field_type)
+                choices = typing.get_args(field_type)
                 click_type = click.Choice([str(c) for c in choices])
                 click_kwargs["type"] = click_type
             # Handle list types
             elif origin in {list, set, frozenset}:
-                inner_type = get_args(field_type)[0] if get_args(field_type) else str
+                args = typing.get_args(field_type)
+                inner_type = args[0] if args else str
                 click_kwargs["multiple"] = True
                 click_kwargs["type"] = inner_type
             # Handle basic types
@@ -89,8 +99,9 @@ class ModelSelection:
 
 
 @attrs.frozen
-class BatchSizeTuning(ModelSelection):
-    image_sizes: frozenset[int] = attrs.field(factory=lambda: frozenset([30]))
+class BatchSizeTuning:
+    model: ModelSelection = ModelSelection
+    image_sizes: frozenset[int] = frozenset([30])
     start: int = 16
     resolution: float = 0.05
 
@@ -158,14 +169,21 @@ def tune_batch_size_impl(task: BatchSizeTuning):
                     dataset=training_ds,
                 )
             except Exception as ex:
-                print(f"  Batch size {cur} FAILED: {ex!r}")
+                print(f"  Batch size {cur}x{image_size}x{image_size} FAILED: {ex!r}")
                 hi = cur
             else:
                 weight_per_sec = stats[-1]["weight_per_sec"]
-                print(f"  Batch size {cur} succeeded: {weight_per_sec:.2f} wt/s")
+                print(
+                    f"  Batch size {cur}x{image_size}x{image_size} succeeded: {weight_per_sec:.2f} wt/s"
+                )
                 lo = cur
                 if best is None or weight_per_sec > best[1]:
                     best = cur, weight_per_sec
+
+            gc.collect()
+            jax.clear_caches()
+            # Device barrier to flush any pending work before next probe
+            jax.device_put(0).block_until_ready()
 
             cur = lo * 2 if hi is None else (hi + lo) // 2
 
@@ -175,6 +193,85 @@ def tune_batch_size_impl(task: BatchSizeTuning):
                 f">>> Best batch size for {image_size}x{image_size}: {best[0]} -> {best[1]:.2f} wt/s"
             )
         sys.stdout.flush()
+
+
+@attrs.frozen
+class Pretraining:
+    run_name: str
+    size_bins: frozenset[int] = frozenset([12, 21, 30])
+    model: ModelSelection = ModelSelection
+    training: mae_trainer.MAETaskConfig = mae_trainer.MAETaskConfig
+
+
+def full_pretraining_impl(task: Pretraining):
+    import wandb
+
+    assert task.type == "mae"
+
+    now = datetime.datetime.now().astimezone()
+
+    data_file = data_root / "repack/re-arc.cbor.xz"
+    print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
+    src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
+    config = task.training
+
+    run_name = f"{now:%Y%m%d-%H%M}-{task.run_name}"
+
+    size_cuts = list(task.size_bins)
+
+    full_eval_split, train_split = src_dataset.split_by_challenge(
+        np.random.default_rng(seed=42),
+        n_min=100,
+    )
+    eval_split, _ = full_eval_split.split_by_challenge(
+        np.random.default_rng(seed=77),
+        n_min=24,
+    )
+    valid_split, valid_train_split = full_eval_split.split_by_challenge(
+        np.random.default_rng(seed=83),
+        n_min=9,
+    )
+
+    training_ds, eval_ds, valid_ds, valid_train_ds = [
+        dataset.BucketedDataset.make(
+            s,
+            (
+                set(itertools.product(size_cuts, size_cuts))
+                if s is not valid_split
+                else [(30, 30)]
+            ),
+        )
+        for s in [train_split, eval_split, valid_split, valid_train_split]
+    ]
+
+    model = mae.MaskedAutoencoder(
+        **mae.configs[task.config],
+        dtype=getattr(jnp, task.dtype),
+        rngs=nnx.Rngs(config.seed),
+    )
+
+    with contextlib.ExitStack() as stack:
+        run = stack.enter_context(
+            wandb.init(
+                project="arc-vision-v2-mae",
+                name=run_name,
+                reinit="create_new",
+                config=vars(config)
+                | dict(
+                    encoder_config=describe_config_json(model.config),
+                    code_version=arc25.__version__,
+                ),
+            )
+        )
+        train_state, stats = mae_trainer.MAETrainer.main(
+            model=model,
+            config=config,
+            dataset=training_ds,
+            eval_dataset=eval_ds,
+            wandb_run=run,
+            run_name=run_name,
+            #            checkpoint_dir=model_root,
+        )
 
 
 @click.group()

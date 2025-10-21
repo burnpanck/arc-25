@@ -192,3 +192,21 @@ Observed compilation time on 4x L4: 750 seconds (somehow, we got four traces).
 - *4x L4*: Batchsize scaling 1024, only 30x30, bf16, mode="flat": OOM
 - *4x L4*: Batchsize scaling  768, only 30x30, bf16, mode="flat": OOM
 - *4x L4*: Batchsize scaling  512, only 12x12, bf16, mode="flat": ~170 wps
+
+
+## Vertex AI Batch size tuning
+
+### Model config `small` on single L4
+mode="flat", bf16.
+
+- Image size 12x12:
+  - 16:  7.1 wt/s
+  - 32: 10.3 wt/s
+  - 33 ... 64: OOM
+- Image size 20x20:
+  - 4: 1.70 wt/s
+  - 6: 2.29 wt/s
+  - 7 ... 32: OOM
+- Image size 30x30:
+  - 1: 0.34 wt/s
+  - 2 ... 8: OOM

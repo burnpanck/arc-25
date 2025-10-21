@@ -336,13 +336,14 @@ class MAETrainer:
 
         # The schedule is queried in terms of steps (of size `config.batch_size`).
         # calculate the full schedule length
-        total_steps = (
-            min(
-                config.max_num_ref_batches * config.ref_batch,
-                config.max_num_epochs * collator.total_example_weight,
-            )
-            / config.batch_size
-        )
+        total_weight = None
+        if config.max_num_ref_batches is not None:
+            total_weight = config.max_num_ref_batches * config.ref_batch
+        if config.max_num_epochs is not None:
+            tw = total_weight
+            total_weight = tw if total_weight is None else min(tw, total_weight)
+        assert total_weight is not None
+        total_steps = total_weight / config.batch_size
 
         if lr_schedule is None:
             # --- Create learning rate schedule
