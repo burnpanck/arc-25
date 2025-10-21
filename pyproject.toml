@@ -16,6 +16,8 @@ dependencies = [
     "attrs",
     "tqdm",
     "anyio",
+    "json5",
+    "click",
     "matplotlib",
     "pyyaml>=6.0.2",
     "scipy>=1.15.3",

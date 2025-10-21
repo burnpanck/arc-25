@@ -1,5 +1,4 @@
 import dataclasses
-import json
 import os
 import sys
 from pathlib import Path
@@ -9,6 +8,7 @@ import attrs
 import click
 import jax
 import jax.numpy as jnp
+import json5
 from flax import nnx
 
 from ..vision2 import mae
@@ -38,17 +38,18 @@ def attrs_to_click_options(attrs_cls):
             )
 
             # Handle Literal types (enum-like)
-            if get_origin(field_type) is Literal:
+            origin = get_origin(field_type)
+            if origin is Literal:
                 choices = get_args(field_type)
                 click_type = click.Choice([str(c) for c in choices])
                 click_kwargs["type"] = click_type
             # Handle list types
-            elif get_origin(field_type) is list:
+            elif origin in {list, set, frozenset}:
                 inner_type = get_args(field_type)[0] if get_args(field_type) else str
                 click_kwargs["multiple"] = True
                 click_kwargs["type"] = inner_type
             # Handle basic types
-            elif field_type in (int, float, str, bool):
+            elif field_type in {int, float, str, bool}:
                 click_kwargs["type"] = field_type
             else:
                 # Default to string for complex types
@@ -89,7 +90,7 @@ class ModelSelection:
 
 @attrs.frozen
 class BatchSizeTuning(ModelSelection):
-    image_sizes: list[int] = attrs.field(factory=lambda: [30])
+    image_sizes: frozenset[int] = attrs.field(factory=lambda: frozenset([30]))
     start: int = 16
     resolution: float = 0.05
 
@@ -193,7 +194,7 @@ def tune_batch_size(config_json, **kwargs):
     # Start with config from JSON if provided
     config_dict = {}
     if config_json:
-        config_dict = json.loads(config_json)
+        config_dict = json5.loads(config_json)
 
     # Override with any explicitly provided CLI arguments
     for key, value in kwargs.items():
