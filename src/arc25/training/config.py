@@ -6,7 +6,7 @@ from typing import Literal
 
 import attrs
 
-from .vision2.symrep import RepSpec
+from ..vision2.symrep import RepSpec
 
 
 @dataclass(frozen=True)

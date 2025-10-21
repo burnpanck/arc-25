@@ -19,6 +19,11 @@ from flax import nnx
 
 import arc25
 
+from ..lib.click_tools import (
+    attrs_to_click_options,
+    reconstruct_hierarchical_config,
+    unflatten_config,
+)
 from ..vision2 import mae
 from . import dataset
 from . import mae as mae_trainer
@@ -26,69 +31,6 @@ from .config import describe_config_json
 
 proj_root = Path(os.environ.get("ARC25_APP_ROOT", Path(__file__).parents[3])).resolve()
 data_root = proj_root / "data"
-
-
-def attrs_to_click_options(attrs_cls):
-    """
-    Decorator that automatically generates Click options from attrs class fields.
-    DRY approach - single source of truth for configuration parameters.
-    """
-
-    def decorator(func):
-        # Introspect attrs fields in reverse order (Click applies decorators bottom-up)
-        for field in reversed(attrs.fields(attrs_cls)):
-            option_name = f"--{field.name.replace('_', '-')}"
-
-            # Determine Click type from field type annotation
-            field_type = field.type
-            click_type = None
-            click_kwargs = dict(
-                help=field.metadata.get("help", f"{field.name} parameter")
-            )
-
-            # Handle Literal types (enum-like)
-            origin = typing.get_origin(field_type)
-            if origin is Literal:
-                choices = typing.get_args(field_type)
-                click_type = click.Choice([str(c) for c in choices])
-                click_kwargs["type"] = click_type
-            # Handle list types
-            elif origin in {list, set, frozenset}:
-                args = typing.get_args(field_type)
-                inner_type = args[0] if args else str
-                click_kwargs["multiple"] = True
-                click_kwargs["type"] = inner_type
-            # Handle basic types
-            elif field_type in {int, float, str, bool}:
-                click_kwargs["type"] = field_type
-            else:
-                # Default to string for complex types
-                click_kwargs["type"] = str
-
-            # Set default value
-            if isinstance(field.default, attrs.Factory):
-                if field.default.takes_self:
-                    click_kwargs["default"] = None
-                else:
-                    click_kwargs["default"] = field.default.factory()
-            elif field.default != attrs.NOTHING:
-                click_kwargs["default"] = field.default
-            else:
-                click_kwargs["required"] = True
-
-            # Apply Click option decorator
-            func = click.option(option_name, **click_kwargs)(func)
-
-        # Add JSON config option for bulk configuration
-        func = click.option(
-            "--config-json",
-            type=str,
-            help="JSON string with configuration (individual options override this)",
-        )(func)
-
-        return func
-
-    return decorator
 
 
 @attrs.frozen
@@ -108,7 +50,7 @@ class BatchSizeTuning:
 
 def tune_batch_size_impl(task: BatchSizeTuning):
     """Implementation of batch size tuning."""
-    assert task.type == "mae"
+    assert task.model.type == "mae"
 
     data_file = data_root / "repack/re-arc.cbor.xz"
     print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
@@ -135,8 +77,8 @@ def tune_batch_size_impl(task: BatchSizeTuning):
     sys.stdout.flush()
 
     model = mae.MaskedAutoencoder(
-        **mae.configs[task.config],
-        dtype=getattr(jnp, task.dtype),
+        **mae.configs[task.model.config],
+        dtype=getattr(jnp, task.model.dtype),
         rngs=nnx.Rngs(42),
     )
 
@@ -199,14 +141,14 @@ def tune_batch_size_impl(task: BatchSizeTuning):
 class Pretraining:
     run_name: str
     size_bins: frozenset[int] = frozenset([12, 21, 30])
-    model: ModelSelection = ModelSelection
-    training: mae_trainer.MAETaskConfig = mae_trainer.MAETaskConfig
+    model: ModelSelection = ModelSelection()
+    training: mae_trainer.MAETaskConfig = mae_trainer.MAETaskConfig()
 
 
 def full_pretraining_impl(task: Pretraining):
     import wandb
 
-    assert task.type == "mae"
+    assert task.model.type == "mae"
 
     now = datetime.datetime.now().astimezone()
 
@@ -245,8 +187,8 @@ def full_pretraining_impl(task: Pretraining):
     ]
 
     model = mae.MaskedAutoencoder(
-        **mae.configs[task.config],
-        dtype=getattr(jnp, task.dtype),
+        **mae.configs[task.model.config],
+        dtype=getattr(jnp, task.model.dtype),
         rngs=nnx.Rngs(config.seed),
     )
 
@@ -282,7 +224,7 @@ def cli():
 
 @cli.command()
 @attrs_to_click_options(BatchSizeTuning)
-def tune_batch_size(config_json, **kwargs):
+def tune_batch_size(config_json, cli_dict):
     """
     Tune batch size for training by binary search.
 
@@ -291,15 +233,23 @@ def tune_batch_size(config_json, **kwargs):
     # Start with config from JSON if provided
     config_dict = {}
     if config_json:
-        config_dict = json5.loads(config_json)
+        raw_json = json5.loads(config_json)
+        # Unflatten to support both flat and nested formats
+        config_dict = unflatten_config(raw_json)
 
-    # Override with any explicitly provided CLI arguments
-    for key, value in kwargs.items():
-        if value is not None:  # Only override if explicitly set
-            config_dict[key] = value
+    # Merge CLI args into config_dict (CLI args override JSON)
+    def merge_dicts(base, override):
+        """Recursively merge override into base."""
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                merge_dicts(base[key], value)
+            else:
+                base[key] = value
 
-    # Instantiate the attrs class
-    task = BatchSizeTuning(**config_dict)
+    merge_dicts(config_dict, cli_dict)
+
+    # Reconstruct the hierarchical config object
+    task = reconstruct_hierarchical_config(BatchSizeTuning, config_dict)
 
     # Run the implementation
     tune_batch_size_impl(task)
