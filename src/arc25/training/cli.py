@@ -44,7 +44,7 @@ class ModelSelection:
 class BatchSizeTuning:
     model: ModelSelection = ModelSelection
     image_sizes: frozenset[int] = frozenset([30])
-    start: int = 16
+    start: int = 1
     resolution: float = 0.05
 
 
@@ -82,16 +82,16 @@ def tune_batch_size_impl(task: BatchSizeTuning):
         rngs=nnx.Rngs(42),
     )
 
-    cur = task.start
+    lo = task.start
 
-    for image_size in sorted(task.image_sizes):
+    for image_size in sorted(task.image_sizes, reverse=True):
         print(f"\n*** Tuning batch size for image size {image_size}x{image_size}")
         training_ds = dataset.BucketedDataset.make(
             src_dataset,
             [(image_size, image_size)],
         )
 
-        cur = 2 ** (cur - 1).bit_length()
+        cur = 2 ** max(0, lo - 1).bit_length()
         lo = 0
         hi = None
         best = None
