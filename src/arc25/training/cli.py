@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import sys
@@ -116,7 +117,7 @@ def tune_batch_size_impl(task: BatchSizeTuning):
     )
 
     num_devices = len(jax.devices())
-    print(f"*** Tuning batch size for image sizes {task.image_sizes}")
+    print(f"*** Tuning batch size for image sizes {set(task.image_sizes)}")
     print(f"Devices: {num_devices} × {jax.devices()[0].device_kind}")
     print()
     sys.stdout.flush()
@@ -127,19 +128,21 @@ def tune_batch_size_impl(task: BatchSizeTuning):
         rngs=nnx.Rngs(42),
     )
 
-    for image_size in task.image_sizes:
+    cur = task.start
+
+    for image_size in sorted(task.image_sizes):
         print(f"\n*** Tuning batch size for image size {image_size}x{image_size}")
         training_ds = dataset.BucketedDataset.make(
             src_dataset,
             [(image_size, image_size)],
         )
 
-        cur = task.start
+        cur = 2 ** (cur - 1).bit_length()
         lo = 0
         hi = None
         best = None
         while hi is None or hi - lo > max(1, task.resolution * lo):
-            config = attrs.evolve(
+            config = dataclasses.replace(
                 base_config,
                 reference_image_size=image_size,
                 batch_size=cur,
