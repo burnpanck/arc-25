@@ -99,9 +99,9 @@ def tune_batch_size_impl(task: BatchSizeTuning):
     """Implementation of batch size tuning."""
     assert task.type == "mae"
 
-    src_dataset = dataset.ImagesDataset.load_compressed_cbor(
-        data_root / "repack/re-arc.cbor.xz"
-    )
+    data_file = data_root / "repack/re-arc.cbor.xz"
+    print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
+    src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
     base_config = mae_trainer.MAETaskConfig(
         seed=42,
         base_cell_cost=0,

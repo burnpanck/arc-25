@@ -7,7 +7,7 @@ import numpy as np
 
 try:
     import jax
-except ImportError:
+except Exception:
     jax = None
 
 from .dsl import types

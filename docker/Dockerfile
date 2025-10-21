@@ -6,9 +6,15 @@ FROM nvcr.io/nvidia/cuda-dl-base:25.09-cuda13.0-devel-ubuntu24.04 AS base-gpu
 ENV ACCELERATOR=gpu
 ENV JAX_EXTRAS=cuda13-local
 
+ENTRYPOINT ["/opt/nvidia/nvidia_entrypoint.sh", "python", "-m", "arc25.training.cli"]
+CMD []
+
 FROM us-central1-docker.pkg.dev/tpu-pytorch-releases/docker/xla:r2.8.1_3.13_tpuvm AS base-tpu
 ENV ACCELERATOR=tpu
 ENV JAX_EXTRAS=tpu
+
+ENTRYPOINT ["python", "-m", "arc25.training.cli"]
+CMD []
 
 # Select the appropriate base
 FROM base-${ACCELERATOR}
@@ -56,9 +62,6 @@ RUN FULL_VERSION=$(pyenv install --list | grep -E "^\s*${PYTHON_VERSION}\.[0-9]+
     pyenv global ${FULL_VERSION} && \
     pyenv rehash
 
-# Install Jupyter for Vertex AI Workbench
-RUN pip install --no-cache-dir jupyter jupyterlab
-
 # Install Python dependencies (this layer changes rarely)
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir "jax[${JAX_EXTRAS}]" -r /tmp/requirements.txt && rm /tmp/requirements.txt
@@ -75,6 +78,3 @@ WORKDIR "${ARC25_APP_ROOT}"
 # Copy data and notebooks (prepared by build script via arc25.deploy prepare-docker-context)
 COPY data/ "${ARC25_APP_ROOT}/data/"
 COPY notebooks/ "${ARC25_APP_ROOT}/notebooks/"
-
-ENTRYPOINT ["python", "-m", "arc25.training.cli"]
-CMD []
