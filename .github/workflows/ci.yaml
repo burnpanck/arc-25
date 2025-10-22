@@ -1,10 +1,9 @@
 name: ci
 
 on:
+  workflow_dispatch:
   push:
-    paths-ignore: [ "**.md" ]
-  pull_request:
-    paths-ignore: [ "**.md" ]
+    tags: ["v*"]     # e.g. v0.3.2
 
 # Cancel older runs on the same branch/PR
 concurrency:

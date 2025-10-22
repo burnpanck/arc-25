@@ -199,14 +199,107 @@ Observed compilation time on 4x L4: 750 seconds (somehow, we got four traces).
 ### Model config `small` on single L4
 mode="flat", bf16.
 
+Cost: $1.05/h/GPU on-demand
+
+
+- Image size 30x30:
+  - 1: 0.51 wt/s 0.51
+  - 2: 0.96 wt/s 0.94
+  - 4: 1.53 wt/s 1.55
+  - 5: 1.63 wt/s 1.65
+  - 6,8: OOM
+
+- Image size 24x24:
+  - 4: 1.82 wt/s 2.85
+  - 6: 2.50 wt/s
+  - 7: 2.42 wt/s
+  - 8: OOM
+
+- Image size 20x20:
+  - 8: 3.36 wt/s
+  - 9, 10, 12, 16: OOM
+
+- Image size 16x16:
+  -  8: 3.53 wt/s
+  - 10: 4.64 wt/s
+  - 11: OOM
+
 - Image size 12x12:
+  -  8: 4.03 wt/s
+  - 12: 5.96 wt/s
+  - 13, 14, 16: OOM
+
+- Take 2: Image size 12x12:
+  -  1: 0.51 wt/s
+  -  2: 0.96 wt/s
+  -  4: 1.94 wt/s
+  -  8: 3.94 wt/s
+  - 16: 7.18 wt/s
+  - 32:10.33 wt/s
+  - 34 ... 64: OOM
+
+- Take 3 (maxmem): Image size 12x12:
+  -  1: 0.51 wt/s
+  -  2: 0.97 wt/s
+  -  4: 1.99 wt/s
+  -  8: 3.93 wt/s
+  - 16: 7.19 wt/s
+  - 32:10.32 wt/s
+  - 40:11.17 wt/s
+  - 48, 64: OOM
+
+- Test-run: Image size 12x12:
   - 16:  7.1 wt/s
   - 32: 10.3 wt/s
   - 33 ... 64: OOM
-- Image size 20x20:
-  - 4: 1.70 wt/s
-  - 6: 2.29 wt/s
-  - 7 ... 32: OOM
+
+### Model config `small` on single TPU v6e
+mode="flat", bf16.
+
+Cost: $2.97/h/TPU on-demand (spot unavailable!)
+
 - Image size 30x30:
-  - 1: 0.34 wt/s
-  - 2 ... 8: OOM
+  -  1: 0.81 wt/s
+  -  2: 1.54 wt/s
+  -  4: 3.17 wt/s
+  -  8: 4.36 wt/s
+  - 12: 5.09 wt/s
+  - 14: 5.46 wt/s
+  - 15: OOM
+  - 16: OOM
+- Image size 24x24:
+  - 16: 7.76 wt/s
+  - 20: 8.07 wt/s
+  - 22: 7.60 wt/s
+  - 23: 7.76 wt/s
+  - 24, 32: OOM
+- Image size 20x20:
+  - 16: 8.02 wt/s
+  - 24: 9.44 wt/s
+  - 28: 8.83 wt/s
+  - 29: 9.38 wt/s
+  - 30, 32: OOM
+- Image size 16x16:
+  - 32: 12.84 wt/s
+  - 48: 14.03 wt/s
+  - 50, 52, 56, 64: OOM
+- Image size 12x12:
+  - 64: 19.72 wt/s
+  - 80: 19.83 wt/s
+  - 84, 88, 96, 128: OOM
+
+- Take 2 (maxmem): Image size 12x12:
+  -  1:  0.78 wt/s
+  -  2:  1.47 wt/s
+  -  4:  3.03 wt/s
+  -  8:  6.05 wt/s
+  - 16: 10.44 wt/s
+  - 32: 15.19 wt/s
+  - 64: 19.67 wt/s
+  - 80: 19.53 wt/s
+  - 81...: OOM
+
+
+### H100
+
+Cost: $14.07/h/GPU on-demand

@@ -19,8 +19,9 @@ on:
         type: boolean
         default: true
   push:
-    branches:
-      - main
+    tags: ["v*"]     # e.g. v0.3.2
+#    branches:
+#      - main-disabled
     paths:
       - 'docker/**'
       - 'src/**'
@@ -150,8 +151,8 @@ jobs:
             PYTHON_VERSION=3.13
           push: ${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}
           tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.accelerator }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.accelerator }}
 
       - name: Output image info
         run: |
