@@ -194,7 +194,7 @@ def full_pretraining(task: Pretraining):
     if task.wandb_secret_name is not None:
         # Get WandB API key from GCP Secret Manager
         print(f"Fetching WandB API key from Secret Manager: {task.wandb_secret_name}")
-        wandb_key = gcp.get_wandb_key(
+        wandb_key = gcp.get_secret(
             secret_name=task.wandb_secret_name,
             project_id=task.gcp_project_id,
         )

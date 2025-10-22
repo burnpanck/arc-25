@@ -53,7 +53,8 @@ deploy = [
 ]
 train = [
     "google-cloud-aiplatform",
-    "google-cloud-secret-manager>=2.24.0",
+    "google-cloud-secret-manager",
+    "google-cloud-storage",
     "wandb",
 ]
 

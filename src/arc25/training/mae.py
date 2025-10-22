@@ -340,7 +340,7 @@ class MAETrainer:
         if config.max_num_ref_batches is not None:
             total_weight = config.max_num_ref_batches * config.ref_batch
         if config.max_num_epochs is not None:
-            tw = total_weight
+            tw = config.max_num_epochs * collator.total_example_weight
             total_weight = tw if total_weight is None else min(tw, total_weight)
         assert total_weight is not None
         total_steps = total_weight / config.batch_size
@@ -560,42 +560,45 @@ class MAETrainer:
         resume_from_checkpoint = None
         resume_step = 0
         if checkpoint_dir is not None:
+            from . import gcp
+
             checkpoint_dir = Path(checkpoint_dir)
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            is_gcs = gcp.is_gcs_path(checkpoint_dir)
+
+            # Create directory only for local filesystem (GCS doesn't have directories)
+            if not is_gcs:
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
             chkp_pfx = f"{run_name}-chkp"
 
             # Scan for existing checkpoints to resume from (excluding -final)
-            if checkpoint_dir.exists():
-                checkpoint_files = [
-                    p
-                    for p in checkpoint_dir.glob(f"{chkp_pfx}-*.msgpack.xz")
-                    if "-final" not in p.name
-                ]
-                if checkpoint_files:
-                    # Parse step numbers from filenames: {run_name}-chkp-XXXXXX.msgpack.xz
-                    # The step is the last component after splitting by '-'
-                    def parse_step(path: Path) -> int | None:
-                        stem = path.stem  # Remove .xz
-                        if stem.endswith(".msgpack"):
-                            stem = stem[: -len(".msgpack")]
-                        try:
-                            return int(stem.split("-")[-1])
-                        except ValueError:
-                            return None
+            # For GCS, we can still use the /gcs/ mount for listing files
+            if is_gcs or checkpoint_dir.exists():
+                # Parse step numbers from filenames: {run_name}-chkp-XXXXXX.msgpack.xz
+                # The step is the last component after splitting by '-'
+                def parse_step(path: Path) -> int | None:
+                    stem = path.stem  # Remove .xz
+                    if stem.endswith(".msgpack"):
+                        stem = stem[: -len(".msgpack")]
+                    try:
+                        return int(stem.split("-")[-1])
+                    except ValueError:
+                        return None
 
-                    # Find checkpoint with highest step number
-                    checkpoints_with_steps = [
-                        (path, step)
-                        for path in checkpoint_files
-                        if (step := parse_step(path)) is not None
-                    ]
-                    if checkpoints_with_steps:
-                        resume_from_checkpoint, resume_step = max(
-                            checkpoints_with_steps, key=lambda x: x[1]
-                        )
-                        print(
-                            f"Found checkpoint to resume from: {resume_from_checkpoint.name} (step {resume_step})"
-                        )
+                checkpoint_files = [
+                    (p, step)
+                    for p in checkpoint_dir.glob(f"{chkp_pfx}-*.msgpack.xz")
+                    if "-final" not in p.name and (step := parse_step(p)) is not None
+                ]
+            else:
+                checkpoint_files = None
+            if checkpoint_files:
+                resume_from_checkpoint, resume_step = max(
+                    checkpoint_files, key=lambda x: x[1]
+                )
+                print(
+                    f"Found checkpoint to resume from: {resume_from_checkpoint.name} (step {resume_step})"
+                )
 
         # Detect available devices
         if num_devices is None:
@@ -676,6 +679,20 @@ class MAETrainer:
             ),
             code_version=arc25.__version__,
         )
+
+        # Helper function to save checkpoints (handles GCS uploads)
+        def save_checkpoint(checkpoint_path: Path, metadata: dict) -> None:
+            """Save checkpoint, uploading to GCS if needed."""
+            if is_gcs:
+                # Save to BytesIO and upload to GCS
+                gcp.save_and_upload_to_gcs(
+                    lambda f: save_model(trainer.train_state, f, metadata=metadata),
+                    checkpoint_path,
+                    checkpoint_path.name,
+                )
+            else:
+                # Save directly to local filesystem
+                save_model(trainer.train_state, checkpoint_path, metadata=metadata)
 
         print(f"--- MAE Training ---")
         print(f"Devices: {num_devices} × {jax.devices()[0].device_kind}")
@@ -798,8 +815,7 @@ class MAETrainer:
                     f"[Step {training_step}] Saving checkpoint to {checkpoint_path.name}..."
                 )
                 checkpoint_start = time.monotonic()
-                save_model(
-                    trainer.train_state,
+                save_checkpoint(
                     checkpoint_path,
                     metadata=dict(
                         **base_metadata, stats=dict(last_knn=last_eval, **stats)
@@ -856,8 +872,7 @@ class MAETrainer:
                 checkpoint_dir / f"{chkp_pfx}-{training_step:06d}-final.msgpack.xz"
             )
             print(f"\nSaving final checkpoint to {checkpoint_path.name}...")
-            save_model(
-                trainer.train_state,
+            save_checkpoint(
                 checkpoint_path,
                 metadata=dict(**base_metadata, stats=stats),
             )

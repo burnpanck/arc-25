@@ -1,8 +1,10 @@
+import contextlib
+import io
 import lzma
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, BinaryIO
 
 import jax
 import jaxlib
@@ -14,8 +16,17 @@ from flax import nnx
 from ..serialisation import deserialise, serialise
 
 
-def save_model(model: nnx.Module, path: Path, *, metadata: dict | None = None):
-    with lzma.open(path, "wb") as fh:
+def save_model(
+    model: nnx.Module, path: Path | BinaryIO, *, metadata: dict | None = None
+):
+    """Save model to a file path or file-like object.
+
+    Args:
+        model: The model to save
+        path: Either a Path to write to, or a file-like object (e.g., io.BytesIO)
+        metadata: Optional metadata to include in the checkpoint
+    """
+    with lzma.LZMAFile(path, mode="wb") as fh:
 
         def write(*data):
             serialised = msgpack.dumps(tuple(data))
@@ -46,12 +57,12 @@ def save_model(model: nnx.Module, path: Path, *, metadata: dict | None = None):
             pointer = path
 
 
-def load_model(path: Path) -> SimpleNamespace:
+def load_model(path: Path | BinaryIO) -> SimpleNamespace:
     metadata = {}
     state = {}
     graphdef = None
 
-    with lzma.open(path, "rb") as fh:
+    with lzma.LZMAFile(path, "rb") as fh:
         path = ()
 
         for data in msgpack.Unpacker(fh, raw=False, strict_map_key=False):

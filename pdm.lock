@@ -5,7 +5,7 @@
 groups = ["default", "deploy", "explorer", "huggingface", "test", "train", "vision"]
 strategy = ["inherit_metadata", "static_urls"]
 lock_version = "4.5.0"
-content_hash = "sha256:dd2259a5e97a39f55123b40cfe700bfe4c19b1fb900f29bb59fa8e219f0fd41d"
+content_hash = "sha256:7668e39f460891aaa17924129d7cef2f107419d31dd3fca7876d9c3c271e0be0"
 
 [[metadata.targets]]
 requires_python = ">=3.11,<3.13"

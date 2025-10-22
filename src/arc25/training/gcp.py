@@ -1,10 +1,11 @@
 """Google Cloud Platform integration for training."""
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Literal
 
-from google.cloud import secretmanager
+from google.cloud import secretmanager, storage
 
 
 def get_secret(
@@ -39,23 +40,6 @@ def get_secret(
 
     response = client.access_secret_version(request=dict(name=name))
     return response.payload.data.decode("UTF-8")
-
-
-def get_wandb_key(
-    secret_name: str = "wandb-api-key",
-    project_id: str | None = None,
-) -> str:
-    """
-    Fetch WandB API key from Google Secret Manager.
-
-    Args:
-        secret_name: Name of the secret containing the WandB API key
-        project_id: GCP project ID (defaults to GCP_PROJECT_ID env var)
-
-    Returns:
-        The WandB API key
-    """
-    return get_secret(secret_name, project_id)
 
 
 def gcs_uri_to_path(uri: str | Path | None) -> Path | None:
@@ -134,3 +118,74 @@ def get_checkpoint_dir(
     # Convert GCS URI to /gcs/ path if needed
     base_path = gcs_uri_to_path(base_uri)
     return base_path / run_name
+
+
+def is_gcs_path(path: Path | str) -> bool:
+    """Check if a path is a GCS path (starts with /gcs/)."""
+    return str(path).startswith("/gcs/")
+
+
+def gcs_path_to_uri(path: Path | str) -> str:
+    """
+    Convert a /gcs/ path back to a gs:// URI.
+
+    Args:
+        path: Path starting with /gcs/
+
+    Returns:
+        GCS URI (gs://bucket/path)
+
+    Examples:
+        >>> gcs_path_to_uri("/gcs/my-bucket/checkpoints/run-001")
+        'gs://my-bucket/checkpoints/run-001'
+    """
+    path_str = str(path)
+    if not path_str.startswith("/gcs/"):
+        raise ValueError(f"Path must start with /gcs/, got: {path_str}")
+    return "gs://" + path_str[5:]
+
+
+def save_and_upload_to_gcs(save_fn, gcs_path: Path | str, filename: str) -> None:
+    """
+    Save a checkpoint to GCS using the Cloud Storage client library.
+
+    The /gcs/ FUSE mount is non-POSIX and doesn't support all write operations,
+    so we use the client library for writing checkpoints.
+
+    Args:
+        save_fn: Callable that accepts a file-like object and writes checkpoint data
+        gcs_path: Destination path (can be /gcs/bucket/path or gs://bucket/path)
+        filename: Name of the file being uploaded (for logging)
+
+    Raises:
+        ValueError: If gcs_path is not a GCS path
+    """
+    import io
+
+    # Convert to gs:// URI if needed
+    gcs_path_str = str(gcs_path)
+    if gcs_path_str.startswith("/gcs/"):
+        gcs_uri = gcs_path_to_uri(gcs_path_str)
+    elif gcs_path_str.startswith("gs://"):
+        gcs_uri = gcs_path_str
+    else:
+        raise ValueError(
+            f"Path must be a GCS path (/gcs/ or gs://), got: {gcs_path_str}"
+        )
+
+    # Parse bucket and blob path from gs:// URI
+    bucket_name, blob_path = gcs_uri[5:].split("/", 1)
+
+    # Save to BytesIO buffer
+    buffer = io.BytesIO()
+    save_fn(buffer)
+    buffer.seek(0)  # Reset to beginning for upload
+
+    # Upload using Cloud Storage client
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+
+    print(f"Uploading {filename} to {gcs_uri}...")
+    blob.upload_from_file(buffer, content_type="application/octet-stream")
+    print(f"Upload complete: {gcs_uri}")

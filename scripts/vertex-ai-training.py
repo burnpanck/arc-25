@@ -1,3 +1,5 @@
+import datetime
+import os
 import subprocess
 import sys
 
@@ -8,9 +10,11 @@ from arc25.lib.click_tools import _get_fields, _is_config_class
 from arc25.training.cli import ModelSelection, Pretraining
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
-run_name = "20251022-2224-vertex-ai-test-1xL4"
+now = datetime.datetime.now().astimezone(datetime.timezone.utc)
+run_name = f"{now:%Y%m%d-%H%M}-vertex-ai-test-1xL4"
+print(f"Run: {run_name}")
 
 accelerator = "L4"
 
@@ -99,7 +103,11 @@ env = dict(
 )
 
 if dry_run:
-    subprocess.check_call([sys.executable, "-m", "arc25.training.cli"] + args)
+    # TODO: we should probably launch docker instead !?
+    subprocess.check_call(
+        [sys.executable, "-m", "arc25.training.cli"] + args,
+        env=dict(**os.environ, **env),
+    )
     sys.exit(0)
 
 job = aiplatform.CustomContainerTrainingJob(
