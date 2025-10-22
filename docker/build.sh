@@ -47,7 +47,7 @@ mkdir -p "$BUILD_CONTEXT"
 
 # Export dependencies directly to build context
 echo "Exporting dependencies..."
-pdm export -G vision -G train --prod --no-hashes -o "$BUILD_CONTEXT/requirements.txt"
+pdm export -G vision -G train --no-hashes -o "$BUILD_CONTEXT/requirements.txt"
 
 # Build wheel directly to build context (note: pdm build wipes the target directory)
 echo "Building wheel..."
