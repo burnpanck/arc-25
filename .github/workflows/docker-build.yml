@@ -68,7 +68,7 @@ jobs:
 
       - name: Export dependencies
         run: |
-          pdm export -G vision --prod --no-hashes -o docker/buildctxt/requirements.txt
+          pdm export -G vision -G train --prod --no-hashes -o docker/buildctxt/requirements.txt
 
       - name: Build wheel
         run: |

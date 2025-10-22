@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import json5
 import numpy as np
+import wandb
 from flax import nnx
 
 import arc25
@@ -25,7 +26,7 @@ from ..lib.click_tools import (
     unflatten_config,
 )
 from ..vision2 import mae
-from . import dataset
+from . import dataset, gcp
 from . import mae as mae_trainer
 from .config import describe_config_json
 
@@ -143,21 +144,54 @@ class Pretraining:
     size_bins: frozenset[int] = frozenset([12, 21, 30])
     model: ModelSelection = ModelSelection()
     training: mae_trainer.MAETaskConfig = mae_trainer.MAETaskConfig()
+    wandb_secret_name: str | None = attrs.field(
+        default=None,
+        metadata=dict(
+            help="Name of the secret in GCP Secret Manager containing WandB API key"
+        ),
+    )
+    gcp_project_id: str | None = attrs.field(
+        default=None,
+        metadata=dict(help="GCP project ID (defaults to GCP_PROJECT_ID env var)"),
+    )
+    checkpoint_base_uri: str | None = attrs.field(
+        default=None,
+        metadata=dict(
+            help="Base URI for checkpoints (defaults to AIP_CHECKPOINT_DIR env var)"
+        ),
+    )
 
 
 def full_pretraining_impl(task: Pretraining):
-    import wandb
 
     assert task.model.type == "mae"
-
-    now = datetime.datetime.now().astimezone()
 
     data_file = data_root / "repack/re-arc.cbor.xz"
     print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
     src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
     config = task.training
 
-    run_name = f"{now:%Y%m%d-%H%M}-{task.run_name}"
+    run_name = task.run_name
+
+    if task.wandb_secret_name is not None:
+        # Get WandB API key from GCP Secret Manager
+        print(f"Fetching WandB API key from Secret Manager: {task.wandb_secret_name}")
+        wandb_key = gcp.get_wandb_key(
+            secret_name=task.wandb_secret_name,
+            project_id=task.gcp_project_id,
+        )
+    else:
+        wandb_key = None
+
+    # Set up checkpoint directory
+    checkpoint_dir = gcp.get_checkpoint_dir(
+        run_name=run_name,
+        base_uri=task.checkpoint_base_uri,
+    )
+    if checkpoint_dir is not None:
+        is_gcs = str(checkpoint_dir).startswith("/gcs/")
+        storage_type = "GCS (via /gcs/ mount)" if is_gcs else "local filesystem"
+        print(f"Checkpoint directory ({storage_type}): {checkpoint_dir}")
 
     size_cuts = list(task.size_bins)
 
@@ -186,6 +220,13 @@ def full_pretraining_impl(task: Pretraining):
         for s in [train_split, eval_split, valid_split, valid_train_split]
     ]
 
+    if wandb_key is not None:
+        # Login to WandB
+        wandb.login(
+            key=wandb_key,
+            verify=True,
+        )
+
     model = mae.MaskedAutoencoder(
         **mae.configs[task.model.config],
         dtype=getattr(jnp, task.model.dtype),
@@ -193,18 +234,20 @@ def full_pretraining_impl(task: Pretraining):
     )
 
     with contextlib.ExitStack() as stack:
-        run = stack.enter_context(
-            wandb.init(
-                project="arc-vision-v2-mae",
-                name=run_name,
-                reinit="create_new",
-                config=vars(config)
-                | dict(
-                    encoder_config=describe_config_json(model.config),
-                    code_version=arc25.__version__,
-                ),
+        if wandb_key is not None:
+            run = stack.enter_context(
+                wandb.init(
+                    project="arc-vision-v2-mae",
+                    name=run_name,
+                    resume="allow",
+                    config=vars(config)
+                    | dict(
+                        encoder_config=describe_config_json(model.config),
+                        code_version=arc25.__version__,
+                        checkpoint_dir=str(checkpoint_dir),
+                    ),
+                )
             )
-        )
         train_state, stats = mae_trainer.MAETrainer.main(
             model=model,
             config=config,
@@ -212,7 +255,7 @@ def full_pretraining_impl(task: Pretraining):
             eval_dataset=eval_ds,
             wandb_run=run,
             run_name=run_name,
-            #            checkpoint_dir=model_root,
+            checkpoint_dir=checkpoint_dir,
         )
 
 
@@ -253,6 +296,39 @@ def tune_batch_size(config_json, cli_dict):
 
     # Run the implementation
     tune_batch_size_impl(task)
+
+
+@cli.command()
+@attrs_to_click_options(Pretraining)
+def full_pretraining(config_json, cli_dict):
+    """
+    Run full pretraining with WandB logging and GCS checkpointing.
+
+    WandB API key is fetched from GCP Secret Manager using Application Default Credentials.
+    Checkpoints are saved to GCS bucket specified by AIP_STORAGE_URI or checkpoint-base-uri.
+    """
+    # Start with config from JSON if provided
+    config_dict = {}
+    if config_json:
+        raw_json = json5.loads(config_json)
+        config_dict = unflatten_config(raw_json)
+
+    # Merge CLI args into config_dict (CLI args override JSON)
+    def merge_dicts(base, override):
+        """Recursively merge override into base."""
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                merge_dicts(base[key], value)
+            else:
+                base[key] = value
+
+    merge_dicts(config_dict, cli_dict)
+
+    # Reconstruct the hierarchical config object
+    task = reconstruct_hierarchical_config(Pretraining, config_dict)
+
+    # Run the implementation
+    full_pretraining_impl(task)
 
 
 if __name__ == "__main__":

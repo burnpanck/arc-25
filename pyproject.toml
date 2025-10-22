@@ -53,6 +53,8 @@ deploy = [
 ]
 train = [
     "google-cloud-aiplatform",
+    "google-cloud-secret-manager>=2.24.0",
+    "wandb",
 ]
 
 [build-system]
