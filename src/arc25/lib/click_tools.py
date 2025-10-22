@@ -1,9 +1,14 @@
 import dataclasses
+import functools
+import inspect
+import types
 import typing
+from types import SimpleNamespace
 from typing import Literal
 
 import attrs
 import click
+import json5
 
 
 def _is_config_class(type_hint):
@@ -25,7 +30,7 @@ def _get_fields(cls):
 def _get_field_info(field):
     """Extract field info uniformly from attrs or dataclass field."""
     if isinstance(field, attrs.Attribute):
-        return dict(
+        return SimpleNamespace(
             name=field.name,
             type=field.type,
             default=field.default,
@@ -33,7 +38,7 @@ def _get_field_info(field):
             has_default=(field.default != attrs.NOTHING),
         )
     else:  # dataclass field
-        return dict(
+        return SimpleNamespace(
             name=field.name,
             type=field.type,
             default=field.default if field.default != dataclasses.MISSING else None,
@@ -55,12 +60,12 @@ def _flatten_config_fields(cls, prefix_path=()):
 
     for field in _get_fields(cls):
         info = _get_field_info(field)
-        field_path = prefix_path + (info["name"],)
+        field_path = prefix_path + (info.name,)
 
         # Check if field is a nested config class
-        if _is_config_class(info["type"]):
+        if _is_config_class(info.type):
             # Recurse into nested config
-            flattened.extend(_flatten_config_fields(info["type"], field_path))
+            flattened.extend(_flatten_config_fields(info.type, field_path))
         else:
             flattened.append((field_path, info))
 
@@ -94,96 +99,130 @@ def unflatten_config(flat_dict):
     return result
 
 
-def attrs_to_click_options(attrs_cls):
+def attrs_to_click_options(func):
     """
     Decorator that automatically generates Click options from attrs/dataclass fields.
     Supports hierarchical configs with hyphenated names (e.g., --model-config).
     DRY approach - single source of truth for configuration parameters.
     """
+    (args_cls,) = inspect.get_annotations(func).values()
+    assert _is_config_class(args_cls)
 
-    def decorator(func):
-        # Flatten hierarchical structure
-        flat_fields = _flatten_config_fields(attrs_cls)
+    # Flatten hierarchical structure
+    flat_fields = _flatten_config_fields(args_cls)
 
-        # Build mapping from option name to field path
-        option_to_path = {}
+    # Build mapping from option name to field path
+    option_to_path = {}
 
-        # Create wrapper that will receive Click arguments
-        def wrapper(config_json, **kwargs):
-            # Convert CLI kwargs to nested dict using the captured mapping
-            cli_dict = kwargs_to_nested_dict(kwargs, option_to_path)
+    # Create wrapper that will receive Click arguments
+    @functools.wraps(func)
+    def wrapper(config_json, **kwargs):
+        # Convert CLI kwargs to nested dict using the captured mapping
+        cli_dict = kwargs_to_nested_dict(kwargs, option_to_path)
 
-            # Call the actual function with processed args
-            return func(config_json=config_json, cli_dict=cli_dict)
+        # Start with config from JSON if provided
+        config_dict = {}
+        if config_json:
+            raw_json = json5.loads(config_json)
+            config_dict = unflatten_config(raw_json)
 
-        # Preserve function metadata
-        wrapper.__name__ = func.__name__
-        wrapper.__doc__ = func.__doc__
+        # Merge CLI args into config_dict (CLI args override JSON)
+        def merge_dicts(base, override):
+            """Recursively merge override into base."""
+            for key, value in override.items():
+                if isinstance((bv := base.get(key)), dict) and isinstance(value, dict):
+                    merge_dicts(bv, value)
+                else:
+                    base[key] = value
 
-        # Apply Click decorators to the wrapper (in reverse order for Click)
-        # Start with JSON config option
-        wrapper = click.option(
-            "--config-json",
-            type=str,
-            help="JSON string with configuration (supports both flat 'a.b.c' and nested {'a':{'b':{'c':...}}} formats)",
-        )(wrapper)
+        merge_dicts(config_dict, cli_dict)
 
-        # Introspect fields in reverse order (Click applies decorators bottom-up)
-        for field_path, info in reversed(flat_fields):
-            # Convert path to hyphenated option name
-            # e.g., ['model', 'config'] -> 'model-config'
-            option_name_hyphenated = "-".join(field_path).replace("_", "-")
-            full_option_name = f"--{option_name_hyphenated}"
+        # Reconstruct the hierarchical config object
+        args = reconstruct_hierarchical_config(args_cls, config_dict)
 
-            # Store reverse mapping with underscores (Click converts hyphens to underscores in kwargs)
-            option_name_underscored = option_name_hyphenated.replace("-", "_")
-            option_to_path[option_name_underscored] = field_path
+        return func(args)
 
-            # Determine Click type from field type annotation
-            field_type = info["type"]
-            path_str = ".".join(field_path)
-            click_kwargs = dict(
-                help=info["metadata"].get("help", f"{path_str} parameter")
-            )
+    # Apply Click decorators to the wrapper (in reverse order for Click)
+    # Start with JSON config option
+    wrapper = click.option(
+        "--config-json",
+        type=str,
+        help="JSON string with configuration (supports both flat 'a.b.c' and nested {'a':{'b':{'c':...}}} formats)",
+    )(wrapper)
 
-            # Handle Literal types (enum-like)
+    # Introspect fields in reverse order (Click applies decorators bottom-up)
+    for field_path, info in reversed(flat_fields):
+        # Convert path to hyphenated option name
+        # e.g., ['model', 'config'] -> 'model-config'
+        option_name_hyphenated = "-".join(field_path).replace("_", "-")
+        full_option_name = f"--{option_name_hyphenated}"
+
+        # Store reverse mapping with underscores (Click converts hyphens to underscores in kwargs)
+        option_name_underscored = option_name_hyphenated.replace("-", "_")
+        option_to_path[option_name_underscored] = field_path
+
+        # Determine Click type from field type annotation
+        field_type = info.type
+        path_str = ".".join(field_path)
+        click_kwargs = dict(
+            help=info.metadata.get("help", f"{path_str} parameter"),
+        )
+
+        # Handle Literal types (enum-like)
+        origin = typing.get_origin(field_type)
+        if origin in {types.UnionType, typing.Union, typing.Optional}:
+            # we can only handle effective "optinals"
+            alternatives = typing.get_args(field_type)
+            non_none = [t for t in alternatives if t is not type(None)]
+            if len(non_none) != 1:
+                raise ValueError(f"Cannot handle union {field_type}")
+            (inner,) = non_none
+            field_type = inner
             origin = typing.get_origin(field_type)
-            if origin is Literal:
-                choices = typing.get_args(field_type)
-                click_kwargs["type"] = click.Choice([str(c) for c in choices])
-            # Handle list/set/frozenset types
-            elif origin in {list, set, frozenset}:
-                args = typing.get_args(field_type)
-                inner_type = args[0] if args else str
-                click_kwargs["multiple"] = True
-                click_kwargs["type"] = inner_type
-            # Handle basic types
-            elif field_type in {int, float, str, bool}:
-                click_kwargs["type"] = field_type
-            else:
-                # Default to string for complex types
-                click_kwargs["type"] = str
+        if origin is Literal:
+            choices = typing.get_args(field_type)
+            click_type = click.Choice([str(c) for c in choices])
+        # Handle list/set/frozenset types
+        elif origin is tuple:
+            args = typing.get_args(field_type)
+            inner_type = args[0]
+            assert all(t == inner_type for t in args)
+            click_type = inner_type
+            click_kwargs["nargs"] = len(args)
+        elif origin in {list, set, frozenset}:
+            args = typing.get_args(field_type)
+            if len(args) != 1:
+                raise ValueError(f"Cannot handle {field_type}")
+            (inner_type,) = args
+            assert (
+                inner_type is int
+            ), f"{inner_type!r} is not currently supported in variable length arguments"
+            click_kwargs["callback"] = (
+                lambda ctx, param, v, *, origin=origin, inner_type=inner_type: (
+                    None
+                    if v is None
+                    else origin(
+                        [inner_type(n.strip()) for n in v.split(",")]
+                        if v.strip()
+                        else []
+                    )
+                )
+            )
+            click_type = None
+        # Handle basic types
+        elif field_type in {int, float, str, bool}:
+            click_type = field_type
+        else:
+            raise TypeError(
+                f"Unsupported annotation origin {origin!r} for field {field_path} ({field_type!r})"
+            )
+        click_kwargs["type"] = click_type
+        del click_type
 
-            # Set default value
-            if isinstance(info["default"], (attrs.Factory, dataclasses.Field)):
-                # Handle factory defaults
-                if isinstance(info["default"], attrs.Factory):
-                    if not info["default"].takes_self:
-                        click_kwargs["default"] = info["default"].factory()
-                elif isinstance(info["default"], dataclasses.Field):
-                    if info["default"].default_factory != dataclasses.MISSING:
-                        click_kwargs["default"] = info["default"].default_factory()
-            elif info["has_default"] and info["default"] is not None:
-                click_kwargs["default"] = info["default"]
-            elif not info["has_default"]:
-                click_kwargs["required"] = True
+        # Apply Click option decorator to wrapper
+        wrapper = click.option(full_option_name, **click_kwargs)(wrapper)
 
-            # Apply Click option decorator to wrapper
-            wrapper = click.option(full_option_name, **click_kwargs)(wrapper)
-
-        return wrapper
-
-    return decorator
+    return wrapper
 
 
 def kwargs_to_nested_dict(kwargs, option_to_path_mapping):
@@ -228,7 +267,7 @@ def reconstruct_hierarchical_config(cls, config_dict):
 
     for field in _get_fields(cls):
         info = _get_field_info(field)
-        field_name = info["name"]
+        field_name = info.name
 
         if field_name not in config_dict:
             continue
@@ -236,17 +275,15 @@ def reconstruct_hierarchical_config(cls, config_dict):
         value = config_dict[field_name]
 
         # If field is a nested config class, recurse
-        if _is_config_class(info["type"]):
+        if _is_config_class(info.type):
             if isinstance(value, dict):
-                kwargs[field_name] = reconstruct_hierarchical_config(
-                    info["type"], value
-                )
+                kwargs[field_name] = reconstruct_hierarchical_config(info.type, value)
             else:
                 # Value is already an instance (shouldn't happen with CLI, but handle it)
                 kwargs[field_name] = value
         else:
             # Handle collection types that need conversion
-            origin = typing.get_origin(info["type"])
+            origin = typing.get_origin(info.type)
             if origin in {frozenset, set}:
                 kwargs[field_name] = (
                     origin(value) if not isinstance(value, origin) else value

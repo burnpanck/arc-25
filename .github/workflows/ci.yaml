@@ -65,7 +65,7 @@ jobs:
           pdm -V
 
       - name: Install (from lock) + test extras
-        run: pdm install --frozen-lockfile -G test,kaggle,vision
+        run: pdm install --frozen-lockfile -G test,kaggle,vision,train
 
       - name: Cache JAX compilation cache
         uses: actions/cache@v4

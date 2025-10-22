@@ -13,9 +13,7 @@ import attrs
 import click
 import jax
 import jax.numpy as jnp
-import json5
 import numpy as np
-import wandb
 from flax import nnx
 
 import arc25
@@ -41,6 +39,12 @@ class ModelSelection:
     dtype: Literal["float32", "bfloat16"] = "bfloat16"
 
 
+@click.group()
+def cli():
+    """ARC25 Training CLI - train vision models on ARC challenges."""
+    pass
+
+
 @attrs.frozen
 class BatchSizeTuning:
     model: ModelSelection = ModelSelection
@@ -49,8 +53,14 @@ class BatchSizeTuning:
     resolution: float = 0.05
 
 
-def tune_batch_size_impl(task: BatchSizeTuning):
-    """Implementation of batch size tuning."""
+@cli.command()
+@attrs_to_click_options
+def tune_batch_size(task: BatchSizeTuning):
+    """
+    Tune batch size for training by binary search.
+
+    Finds the maximum batch size that fits in memory for each image size.
+    """
     assert task.model.type == "mae"
 
     data_file = data_root / "repack/re-arc.cbor.xz"
@@ -162,8 +172,16 @@ class Pretraining:
     )
 
 
-def full_pretraining_impl(task: Pretraining):
+@cli.command()
+@attrs_to_click_options
+def full_pretraining(task: Pretraining):
+    """
+    Run full pretraining with WandB logging and GCS checkpointing.
 
+    WandB API key is fetched from GCP Secret Manager using Application Default Credentials.
+    Checkpoints are saved to GCS bucket specified by AIP_STORAGE_URI or checkpoint-base-uri.
+    """
+    print(f"full_pretraining({task})")
     assert task.model.type == "mae"
 
     data_file = data_root / "repack/re-arc.cbor.xz"
@@ -221,6 +239,8 @@ def full_pretraining_impl(task: Pretraining):
     ]
 
     if wandb_key is not None:
+        import wandb
+
         # Login to WandB
         wandb.login(
             key=wandb_key,
@@ -257,78 +277,6 @@ def full_pretraining_impl(task: Pretraining):
             run_name=run_name,
             checkpoint_dir=checkpoint_dir,
         )
-
-
-@click.group()
-def cli():
-    """ARC25 Training CLI - train vision models on ARC challenges."""
-    pass
-
-
-@cli.command()
-@attrs_to_click_options(BatchSizeTuning)
-def tune_batch_size(config_json, cli_dict):
-    """
-    Tune batch size for training by binary search.
-
-    Finds the maximum batch size that fits in memory for each image size.
-    """
-    # Start with config from JSON if provided
-    config_dict = {}
-    if config_json:
-        raw_json = json5.loads(config_json)
-        # Unflatten to support both flat and nested formats
-        config_dict = unflatten_config(raw_json)
-
-    # Merge CLI args into config_dict (CLI args override JSON)
-    def merge_dicts(base, override):
-        """Recursively merge override into base."""
-        for key, value in override.items():
-            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-                merge_dicts(base[key], value)
-            else:
-                base[key] = value
-
-    merge_dicts(config_dict, cli_dict)
-
-    # Reconstruct the hierarchical config object
-    task = reconstruct_hierarchical_config(BatchSizeTuning, config_dict)
-
-    # Run the implementation
-    tune_batch_size_impl(task)
-
-
-@cli.command()
-@attrs_to_click_options(Pretraining)
-def full_pretraining(config_json, cli_dict):
-    """
-    Run full pretraining with WandB logging and GCS checkpointing.
-
-    WandB API key is fetched from GCP Secret Manager using Application Default Credentials.
-    Checkpoints are saved to GCS bucket specified by AIP_STORAGE_URI or checkpoint-base-uri.
-    """
-    # Start with config from JSON if provided
-    config_dict = {}
-    if config_json:
-        raw_json = json5.loads(config_json)
-        config_dict = unflatten_config(raw_json)
-
-    # Merge CLI args into config_dict (CLI args override JSON)
-    def merge_dicts(base, override):
-        """Recursively merge override into base."""
-        for key, value in override.items():
-            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-                merge_dicts(base[key], value)
-            else:
-                base[key] = value
-
-    merge_dicts(config_dict, cli_dict)
-
-    # Reconstruct the hierarchical config object
-    task = reconstruct_hierarchical_config(Pretraining, config_dict)
-
-    # Run the implementation
-    full_pretraining_impl(task)
 
 
 if __name__ == "__main__":

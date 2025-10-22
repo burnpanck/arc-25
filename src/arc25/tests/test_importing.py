@@ -20,9 +20,16 @@ def test_importing():
         skip.add("arc25.hf")
 
     try:
+        import flax
         import jax  # noqa
     except ImportError:
         skip.add("arc25.vision1")
+        skip.add("arc25.vision2")
+
+    try:
+        import google.cloud
+    except ImportError:
+        skip.add("arc25.training.cli")
 
     done = set()
     failed = dict()
