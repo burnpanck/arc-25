@@ -421,6 +421,22 @@ class BucketedCollator:
             total_example_weight=total_example_weight,
         )
 
+    def fast_forward(self, n_steps: int) -> None:
+        """Fast-forward the collator by n training steps.
+
+        This advances the internal RNG and state by iterating through
+        the data pipeline without actually using the data.
+
+        Args:
+            n_steps: Number of training steps to skip
+        """
+        if n_steps <= 0:
+            return
+
+        gen = self.generate()
+        for _ in range(n_steps):
+            next(gen)
+
     def generate(self) -> typing.Iterator[BatchData]:
         target_batch_weight = self.batch_spec.target_batch_weight
         minibatches = []

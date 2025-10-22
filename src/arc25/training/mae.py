@@ -556,11 +556,46 @@ class MAETrainer:
             now = datetime.datetime.now().astimezone(datetime.timezone.utc)
             run_name = f"{now:%Y%m%d-%H%M}"
 
-        # Setup checkpoint directory
+        # Setup checkpoint directory and scan for existing checkpoints
+        resume_from_checkpoint = None
+        resume_step = 0
         if checkpoint_dir is not None:
             checkpoint_dir = Path(checkpoint_dir)
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
             chkp_pfx = f"{run_name}-chkp"
+
+            # Scan for existing checkpoints to resume from (excluding -final)
+            if checkpoint_dir.exists():
+                checkpoint_files = [
+                    p
+                    for p in checkpoint_dir.glob(f"{chkp_pfx}-*.msgpack.xz")
+                    if "-final" not in p.name
+                ]
+                if checkpoint_files:
+                    # Parse step numbers from filenames: {run_name}-chkp-XXXXXX.msgpack.xz
+                    # The step is the last component after splitting by '-'
+                    def parse_step(path: Path) -> int | None:
+                        stem = path.stem  # Remove .xz
+                        if stem.endswith(".msgpack"):
+                            stem = stem[: -len(".msgpack")]
+                        try:
+                            return int(stem.split("-")[-1])
+                        except ValueError:
+                            return None
+
+                    # Find checkpoint with highest step number
+                    checkpoints_with_steps = [
+                        (path, step)
+                        for path in checkpoint_files
+                        if (step := parse_step(path)) is not None
+                    ]
+                    if checkpoints_with_steps:
+                        resume_from_checkpoint, resume_step = max(
+                            checkpoints_with_steps, key=lambda x: x[1]
+                        )
+                        print(
+                            f"Found checkpoint to resume from: {resume_from_checkpoint.name} (step {resume_step})"
+                        )
 
         # Detect available devices
         if num_devices is None:
@@ -603,6 +638,35 @@ class MAETrainer:
             lr_schedule=lr_schedule,
         )
 
+        # Resume from checkpoint if found
+        if resume_from_checkpoint is not None:
+            from .saving import load_model
+
+            print(f"Loading checkpoint from {resume_from_checkpoint}...")
+            checkpoint_data = load_model(resume_from_checkpoint)
+
+            # Update training state with checkpoint data
+            nnx.update(trainer.train_state, checkpoint_data.state)
+
+            # Restore trainer's progress tracking from checkpoint metadata
+            if stats := checkpoint_data.metadata.get("stats") is not None:
+                trainer.step = stats.get("training_step", resume_step)
+                data_step = stats.get("data_step", trainer.step)
+                trainer.examples_seen = stats.get("examples_seen", 0)
+                print(
+                    f"Checkpoint loaded. Resuming from step {trainer.step} (data: {data_step}, "
+                    f"examples seen: {trainer.examples_seen})"
+                )
+            else:
+                trainer.step = resume_step
+                data_step = resume_step
+                print(f"Checkpoint loaded. Resuming from step {resume_step}")
+
+            # Fast-forward the collator to skip already-trained steps
+            print(f"Fast-forwarding data pipeline by {data_step} steps...")
+            collator.fast_forward(data_step)
+            print("Data pipeline synchronized")
+
         import arc25
 
         base_metadata = dict(
@@ -619,7 +683,12 @@ class MAETrainer:
         print(
             f"Reference step size: {config.ref_batch} (~{config.ref_batch/config.batch_size:.2f} steps)"
         )
-        print(f"Total steps: {int(trainer.total_steps)}")
+        if resume_from_checkpoint is not None:
+            print(
+                f"Total steps: {int(trainer.total_steps)} (resuming from step {trainer.step})"
+            )
+        else:
+            print(f"Total steps: {int(trainer.total_steps)}")
         if trainer.knn_evaluator is not None:
             print(
                 f"k-NN evaluation: every {config.knn_validation_every_ref_batch} reference steps"
@@ -644,11 +713,12 @@ class MAETrainer:
 
         # tracking
         last_eval = None
+        last_training_step = 0
         all_stats = []
 
         def process_stats(stats_dev, was_jit_step):
             """Process stats from device, compute metrics, log and display."""
-            nonlocal excluded_weight, excluded_time, last_eval
+            nonlocal excluded_weight, excluded_time, last_eval, last_training_step
 
             # Get stats from device (blocks if needed)
             stats = jax.device_get(stats_dev)
@@ -741,7 +811,9 @@ class MAETrainer:
                 stats["checkpoint_time"] = checkpoint_time
 
             # Update progress bar
-            pbar.update(1)
+            n_step_done = max(0, training_step - last_training_step)
+            pbar.update(n_step_done)
+            last_training_step += n_step_done
             pbar.set_postfix(
                 rstep=f"{training_progress:.1f}",
                 loss=f"{stats['loss']:.3f}",

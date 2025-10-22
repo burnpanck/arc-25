@@ -141,7 +141,7 @@ def tune_batch_size_impl(task: BatchSizeTuning):
 @attrs.frozen
 class Pretraining:
     run_name: str
-    size_bins: frozenset[int] = frozenset([12, 21, 30])
+    size_bins: frozenset[int] = frozenset([12, 20, 30])
     model: ModelSelection = ModelSelection()
     training: mae_trainer.MAETaskConfig = mae_trainer.MAETaskConfig()
     wandb_secret_name: str | None = attrs.field(
