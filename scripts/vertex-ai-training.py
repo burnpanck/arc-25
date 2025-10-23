@@ -10,7 +10,7 @@ from arc25.lib.click_tools import _get_fields, _is_config_class
 from arc25.training.cli import ModelSelection, Pretraining
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 
@@ -18,6 +18,7 @@ accelerator = "L4"
 accelerator_count = 4
 
 model_config = "tiny"
+now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
 run_name = (
     f"{now:%Y%m%d-%H%M}-vertex-ai-mae-{model_config}-{accelerator_count}x{accelerator}"
 )
@@ -25,6 +26,7 @@ print(f"Run: {run_name}")
 
 config = Pretraining(
     run_name=run_name,
+    checkpoint_base_uri=f"gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/",
     size_bins=[12, 20, 30],
     model=ModelSelection(
         config=model_config,

@@ -106,13 +106,15 @@ class FieldTransformer(nnx.Module):
         active_sa = None
         active_ca = None
         match style:
-            case "co-attention" | "active-decoder":
+            case "co-attention":
                 active_towers = {"context", "cells"}
-                active_ca = {"cells"}
             case "perceiver":
                 active_towers = {"context"}
             case "decoder":
                 active_towers = {"cells"}
+            case "active-decoder":
+                active_towers = {"context", "cells"}
+                active_ca = {"cells"}
             case _:
                 raise KeyError(style)
         active_towers = frozenset(active_towers)
@@ -231,6 +233,7 @@ class FieldTransformer(nnx.Module):
             }
         )
 
+    @jax.named_scope("FieldTransformer")
     def __call__(
         self,
         x: Field,
