@@ -652,7 +652,7 @@ class MAETrainer:
             nnx.update(trainer.train_state, checkpoint_data.state)
 
             # Restore trainer's progress tracking from checkpoint metadata
-            if stats := checkpoint_data.metadata.get("stats") is not None:
+            if (stats := checkpoint_data.metadata.get("stats")) is not None:
                 trainer.step = stats.get("training_step", resume_step)
                 data_step = stats.get("data_step", trainer.step)
                 trainer.examples_seen = stats.get("examples_seen", 0)

@@ -10,7 +10,7 @@ from arc25.lib.click_tools import _get_fields, _is_config_class
 from arc25.training.cli import ModelSelection, Pretraining
 from arc25.training.mae import MAETaskConfig
 
-dry_run = False
+dry_run = True
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 

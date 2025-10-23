@@ -464,6 +464,7 @@ class SymDecompLinear(nnx.Module):
             )
         return ret
 
+    @jax.named_scope("SymDecompLinear")
     def __call__(
         self,
         inputs: SymDecompBase,

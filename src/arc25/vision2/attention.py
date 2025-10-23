@@ -185,6 +185,7 @@ class AxialAttention(nnx.Module):
             cls=nnx_compat.Dict,
         )
 
+    @jax.named_scope("AxialAttention")
     def __call__(
         self,
         inputs: SymDecompBase,
@@ -510,6 +511,7 @@ class GlobalAttention(nnx.Module):
             **kw,
         )
 
+    @jax.named_scope("GlobalAttention")
     def __call__(
         self,
         target: SymDecompBase,
