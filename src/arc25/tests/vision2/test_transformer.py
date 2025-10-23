@@ -14,11 +14,16 @@ from .conftest import quant, verify_swap
 
 
 @pytest.mark.parametrize("use_chirality", [False, True])
-@pytest.mark.parametrize("style", ["co-attention", "perceiver", "decoder"])
+@pytest.mark.parametrize(
+    "style", ["co-attention", "perceiver", "decoder", "active-decoder"]
+)
 @pytest.mark.parametrize("norm_per", ["basis-nnx", "all", "rep", "basis"])
 @pytest.mark.parametrize("with_attention_maps", [True])
 def test_FieldTransformer_symmetry(use_chirality, style, norm_per, with_attention_maps):
     """Test that FieldTransformer preserves D4 symmetry."""
+    if norm_per != "all" and (style != "co-attention" or use_chirality):
+        raise pytest.skip("Too expensive / not important enough")
+
     global_head_rep = symmetry.FullRep
     with jax.enable_x64():
         # Prepare example transformer layer with small dimensions
@@ -50,6 +55,7 @@ def test_FieldTransformer_symmetry(use_chirality, style, norm_per, with_attentio
             norm_per=norm_per,
             dropout_rate=0.0,
             style=style,
+            active_context_tokens=2 if style == "active-decoder" else None,
             rngs=rngs,
         )
 

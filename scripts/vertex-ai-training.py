@@ -13,23 +13,21 @@ from arc25.training.mae import MAETaskConfig
 dry_run = False
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
-run_name = f"{now:%Y%m%d-%H%M}-vertex-ai-test-1xL4"
-print(f"Run: {run_name}")
 
 accelerator = "L4"
+accelerator_count = 4
 
-accelerator_type = dict(
-    L4="gpu",
-    H100="gpu",
-    RTX6000="gpu",
-    v6e="tpu",
-)[accelerator]
-accelerator_count = 1
+model_config = "tiny"
+run_name = (
+    f"{now:%Y%m%d-%H%M}-vertex-ai-mae-{model_config}-{accelerator_count}x{accelerator}"
+)
+print(f"Run: {run_name}")
 
 config = Pretraining(
     run_name=run_name,
+    size_bins=[12, 20, 30],
     model=ModelSelection(
-        config="tiny",
+        config=model_config,
     ),
     training=MAETaskConfig(
         seed=42,
@@ -42,7 +40,7 @@ config = Pretraining(
         max_num_epochs=5,
         max_num_ref_batches=None,
         warmup_steps=64,
-        checkpoint_every_steps=512,
+        checkpoint_every_steps=256,
         knn_validation_every_ref_batch=128,  # eval dataset is about 24 reference batches big
         mode="flat",
         remat=True,
@@ -53,6 +51,13 @@ config = Pretraining(
     ),
     wandb_secret_name="wandb-api-key",
 )
+
+accelerator_type = dict(
+    L4="gpu",
+    H100="gpu",
+    RTX6000="gpu",
+    v6e="tpu",
+)[accelerator]
 
 # see https://docs.cloud.google.com/vertex-ai/docs/training/configure-compute#specifying_gpus
 
@@ -100,6 +105,7 @@ args = pretrain_task
 env = dict(
     XLA_PYTHON_CLIENT_MEM_FRACTION="1.00",
     GCP_PROJECT_ID="deep-time-358505",
+    #    JAX_LOG_COMPILES="1", # attention: huge amount of logs
 )
 
 if dry_run:

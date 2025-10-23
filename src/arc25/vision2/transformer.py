@@ -96,13 +96,19 @@ class FieldTransformer(nnx.Module):
         dropout_rate: float = 0.0,
         normalise_qk: bool = False,  # True to stabilise learning in ViT-22B; see paper http://arxiv.org/abs/2302.05442
         keep_rngs: bool = True,
-        style: typing.Literal["co-attention", "perceiver", "decoder"] = "co-attention",
+        active_context_tokens: int | None = None,
+        style: typing.Literal[
+            "co-attention", "perceiver", "decoder", "active-decoder"
+        ] = "co-attention",
         norm_per: typing.Literal["basis-nnx", "all", "rep", "basis"] = "all",
         rngs: nnx.Rngs,
     ) -> None:
+        active_sa = None
+        active_ca = None
         match style:
-            case "co-attention":
+            case "co-attention" | "active-decoder":
                 active_towers = {"context", "cells"}
+                active_ca = {"cells"}
             case "perceiver":
                 active_towers = {"context"}
             case "decoder":
@@ -110,7 +116,12 @@ class FieldTransformer(nnx.Module):
             case _:
                 raise KeyError(style)
         active_towers = frozenset(active_towers)
+        active_sa = active_towers if active_sa is None else frozenset(active_sa)
+        active_ca = active_towers if active_ca is None else frozenset(active_ca)
         self.active_towers = active_towers
+        self.active_sa = active_sa
+        self.active_ca = active_ca
+        self.active_context_tokens = active_context_tokens
         self.norm_per = norm_per
 
         def norms(features: FieldDims = hidden_size, **kw):
@@ -164,7 +175,7 @@ class FieldTransformer(nnx.Module):
                     keep_rngs=keep_rngs,
                     rngs=rngs,
                 )
-                if "cells" in active_towers
+                if "cells" in active_sa
                 else None
             ),
             context=(
@@ -172,7 +183,7 @@ class FieldTransformer(nnx.Module):
                     in_features=hidden_size.context,
                     **global_attn_kw,
                 )
-                if "context" in active_towers
+                if "context" in active_sa
                 else None
             ),
         )
@@ -185,7 +196,7 @@ class FieldTransformer(nnx.Module):
                     source_features=hidden_size.context,
                     **global_attn_kw,
                 )
-                if "cells" in active_towers
+                if "cells" in active_ca
                 else None
             ),
             context2cells=(
@@ -194,7 +205,7 @@ class FieldTransformer(nnx.Module):
                     source_features=hidden_size.cells,
                     **global_attn_kw,
                 )
-                if "context" in active_towers
+                if "context" in active_ca
                 else None
             ),
         )
@@ -230,15 +241,20 @@ class FieldTransformer(nnx.Module):
         with_residuals: bool = False,
         with_attention_maps: bool = False,
     ) -> Field:
-        active_towers = self.active_towers
+        batch_shape = x.batch_shape
 
-        def add_resid(x, ax):
+        active_towers = self.active_towers
+        active_sa = self.active_sa
+        active_ca = self.active_ca
+        nactx = self.active_context_tokens
+
+        def add_resid(x, ax, active):
             return attrs.evolve(
                 x,
                 **{
                     k: v.map_elementwise(lambda a, b: a + b, getattr(ax, k))
                     for k, v in x.projections.items()
-                    if k in active_towers
+                    if k in active
                 },
             )
 
@@ -247,12 +263,12 @@ class FieldTransformer(nnx.Module):
             x,
             self.norm1,
             norm_per=self.norm_per,
-            active_towers=active_towers,
+            active_towers=active_sa,
             mode=mode,
         )
         sa_inp = ax
         sa_maps = {}
-        if "cells" in active_towers:
+        if "cells" in active_sa:
             res = self.self_attn.cells(
                 ax.cells,
                 grid=ax.grid,
@@ -276,8 +292,16 @@ class FieldTransformer(nnx.Module):
         else:
             cells_out = ax.cells
 
-        if "context" in active_towers:
+        if "context" in active_sa:
+            if nactx is not None:
+                n = len(batch_shape)
+                tgt = ax.context.map_elementwise(
+                    lambda v: v[(slice(None),) * n + (slice(None, nactx),)]
+                )
+            else:
+                tgt = ax.context
             res = self.self_attn.context(
+                tgt,
                 ax.context,
                 mask=None,
                 rngs=rngs,
@@ -296,14 +320,28 @@ class FieldTransformer(nnx.Module):
             context_out = ax.context
 
         sa_res = ax = attrs.evolve(ax, cells=cells_out, context=context_out)
-        sa_out = x = add_resid(x, ax)
+
+        # step 1X: split off static context if needed
+        if nactx is not None:
+            n = len(batch_shape)
+            static_ctxt = x.context.map_elementwise(
+                lambda v: v[(slice(None),) * n + (slice(nactx, None),)]
+            )
+            x = attrs.evolve(
+                x,
+                context=x.context.map_elementwise(
+                    lambda v: v[(slice(None),) * n + (slice(None, nactx),)]
+                ),
+            )
+
+        sa_out = x = add_resid(x, ax, active_sa)
 
         # step 2: cross-attention
         ax = apply_norms(
             x,
             self.norm2,
             norm_per=self.norm_per,
-            active_towers=active_towers,
+            active_towers=active_ca,
             mode=mode,
         )
         ca_inp = ax
@@ -311,7 +349,7 @@ class FieldTransformer(nnx.Module):
         cells_flat = ax.cells.batch_reshape(*ax.cells.batch_shape[:-2], -1)
         mask = ax.grid.mask
 
-        if "cells" in active_towers:
+        if "cells" in active_ca:
             res = self.cross_attn.cells2context(
                 target=cells_flat,
                 source=ax.context,
@@ -333,7 +371,7 @@ class FieldTransformer(nnx.Module):
         else:
             cells_out = ax.cells
 
-        if "context" in active_towers:
+        if "context" in active_ca:
             res = self.cross_attn.context2cells(
                 target=ax.context,
                 source=cells_flat,
@@ -357,7 +395,7 @@ class FieldTransformer(nnx.Module):
             context_out = ax.context
 
         ca_res = ax = attrs.evolve(ax, cells=cells_out, context=context_out)
-        ca_out = x = add_resid(x, ax)
+        ca_out = x = add_resid(x, ax, active_ca)
 
         # step 3: swiglu
         ax = apply_norms(
@@ -376,7 +414,18 @@ class FieldTransformer(nnx.Module):
             ),
             self.swiglu,
         )
-        x = add_resid(x, ax)
+        x = add_resid(x, ax, active_towers)
+
+        # step 3f: add static context if needed
+        if nactx is not None:
+            n = len(batch_shape)
+            x = attrs.evolve(
+                x,
+                context=x.context.map_elementwise(
+                    lambda a, b: jnp.concatenate([a, b], axis=n),
+                    static_ctxt,
+                ),
+            )
 
         intermediates = dict()
 

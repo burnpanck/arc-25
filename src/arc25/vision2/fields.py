@@ -143,7 +143,7 @@ class Field(AttrsModel):
 
     @property
     def batch_shape(self):
-        np.broadcast_shapes(
+        return np.broadcast_shapes(
             self.context.batch_shape[:-1],
             #                self.rows.batch_shape[:-1],
             #                self.cols.batch_shape[:-1],
