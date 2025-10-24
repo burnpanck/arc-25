@@ -10,7 +10,7 @@ from arc25.lib.click_tools import _get_fields, _is_config_class
 from arc25.training.cli import ModelSelection, Pretraining
 from arc25.training.mae import MAETaskConfig
 
-dry_run = False
+dry_run = True
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 
@@ -27,7 +27,7 @@ print(f"Run: {run_name}")
 config = Pretraining(
     run_name=run_name,
     checkpoint_base_uri=f"gs://576e2361-arc-agi-2/checkpoints/",
-    size_bins=[12, 16, 20, 24, 30],
+    size_bins=[12, 16, 24, 30],
     model=ModelSelection(
         config=model_config,
     ),
@@ -115,7 +115,7 @@ if dry_run:
     # TODO: we should probably launch docker instead !?
     subprocess.check_call(
         [sys.executable, "-m", "arc25.training.cli"] + args,
-        env=dict(**os.environ, **env),
+        env=os.environ | env,
     )
     sys.exit(0)
 
