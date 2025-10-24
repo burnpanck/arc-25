@@ -10,7 +10,7 @@ from arc25.lib.click_tools import _get_fields, _is_config_class
 from arc25.training.cli import ModelSelection, Pretraining
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 
@@ -107,7 +107,7 @@ args = pretrain_task
 env = dict(
     XLA_PYTHON_CLIENT_MEM_FRACTION="1.00",
     GCP_PROJECT_ID="deep-time-358505",
-    JAX_COMPILATION_CACHE_DIR="gs://576e2361-arc-agi-2/jax-cache",
+    JAX_COMPILATION_CACHE_DIR="/gcs/41bd4de0-jax-cache",
     #    JAX_LOG_COMPILES="1", # attention: huge amount of logs
 )
 

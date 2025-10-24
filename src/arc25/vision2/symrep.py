@@ -223,7 +223,9 @@ class SplitSymDecomp(SymDecompBase):
     def map_representations(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
-        other = [o.coerce_to(self) for o in other]
+        other = [
+            o.coerce_to(self) if isinstance(o, SymDecompBase) else o for o in other
+        ]
         return attrs.evolve(
             self,
             **{
@@ -323,7 +325,9 @@ class FlatSymDecomp(SymDecompBase):
     def map_elementwise(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
-        other = [o.coerce_to(self) for o in other]
+        other = [
+            o.coerce_to(self) if isinstance(o, SymDecompBase) else o for o in other
+        ]
         return attrs.evolve(
             self,
             data=fun(self.data, *[o.data for o in other], **kw),
