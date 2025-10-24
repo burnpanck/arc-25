@@ -72,6 +72,16 @@ class SymDecompBase(abc.ABC, AttrsModel):
         n = len(cur_batch_shape)
         return self.map_elementwise(lambda v: v.reshape(*new_batch_shape, *v.shape[n:]))
 
+    def coerce_to(self, cls: Self | type[Self]) -> Self:
+        if not isinstance(cls, type):
+            cls = type(cls)
+        if isinstance(self, cls):
+            return self
+        return {
+            SplitSymDecomp: self.as_split,
+            FlatSymDecomp: self.as_flat,
+        }[cls]()
+
 
 @serialisable
 @attrs.frozen
@@ -213,7 +223,7 @@ class SplitSymDecomp(SymDecompBase):
     def map_representations(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
-        other = [o.as_split() if isinstance(o, FlatSymDecomp) else o for o in other]
+        other = [o.coerce_to(self) for o in other]
         return attrs.evolve(
             self,
             **{
@@ -313,7 +323,7 @@ class FlatSymDecomp(SymDecompBase):
     def map_elementwise(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:
-        other = [o.as_flat() if isinstance(o, SplitSymDecomp) else o for o in other]
+        other = [o.coerce_to(self) for o in other]
         return attrs.evolve(
             self,
             data=fun(self.data, *[o.data for o in other], **kw),

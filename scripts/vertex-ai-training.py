@@ -17,8 +17,8 @@ now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 accelerator = "L4"
 accelerator_count = 4
 
-model_config = "tiny"
-now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
+model_config = "small"
+# now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
 run_name = (
     f"{now:%Y%m%d-%H%M}-vertex-ai-mae-{model_config}-{accelerator_count}x{accelerator}"
 )
@@ -26,30 +26,30 @@ print(f"Run: {run_name}")
 
 config = Pretraining(
     run_name=run_name,
-    checkpoint_base_uri=f"gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/checkpoints/",
-    size_bins=[12, 20, 30],
+    checkpoint_base_uri=f"gs://576e2361-arc-agi-2/checkpoints/",
+    size_bins=[12, 16, 20, 24, 30],
     model=ModelSelection(
         config=model_config,
     ),
     training=MAETaskConfig(
         seed=42,
-        batch_size=512,
-        minibatch_size=128 * accelerator_count,
+        batch_size=1024,
+        minibatch_size=20 * accelerator_count,
         reference_image_size=15,
-        base_cell_cost=10,
+        base_cell_cost=0,
         ref_batch=256,
         learning_rate=1e-5,
-        max_num_epochs=5,
+        max_num_epochs=10,
         max_num_ref_batches=None,
         warmup_steps=64,
         checkpoint_every_steps=256,
-        knn_validation_every_ref_batch=128,  # eval dataset is about 24 reference batches big
+        knn_validation_every_ref_batch=256,  # eval dataset is about 24 reference batches big
         mode="flat",
         remat=True,
         unroll=None,
         test_ratio=0.25,
         nonmask_fraction=0.2,
-        randomise_fraction=0.2,
+        randomise_fraction=0.5,
     ),
     wandb_secret_name="wandb-api-key",
 )
@@ -107,6 +107,7 @@ args = pretrain_task
 env = dict(
     XLA_PYTHON_CLIENT_MEM_FRACTION="1.00",
     GCP_PROJECT_ID="deep-time-358505",
+    JAX_COMPILATION_CACHE_DIR="gs://576e2361-arc-agi-2/jax-cache",
     #    JAX_LOG_COMPILES="1", # attention: huge amount of logs
 )
 

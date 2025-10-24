@@ -124,6 +124,17 @@ class Field(AttrsModel):
             },
         )
 
+    def map_elementwise(
+        self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
+    ) -> Self:
+        return attrs.evolve(
+            self,
+            **{
+                k: v.map_elementwise(fun, *[getattr(o, k) for o in other], **kw)
+                for k, v in self.projections.items()
+            },
+        )
+
     def map_representations(
         self, fun: typing.Callable[[jt.Float], jt.Float], *other: Self, **kw
     ) -> Self:

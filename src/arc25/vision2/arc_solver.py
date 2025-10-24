@@ -109,13 +109,10 @@ class ARCSolver(nnx.Module):
         n_flavours = phs.rep.n_flavours
 
         decoder_cell_width = None
-        dhs = (
-            phs
-            if decoder_cell_width is None
-            else attrs.evolve(
-                phs,
-                cells=decoder_cell_width,
-            )
+        dhs = attrs.evolve(
+            phs,
+            cells=decoder_cell_width if decoder_cell_width is not None else phs.cells,
+            context_tokens=phs.context_tokens + num_program_tokens,
         )
 
         pos_embedding_dims = SymDecompDims(
@@ -299,6 +296,7 @@ class ARCSolver(nnx.Module):
         )
 
         pos_emb = self.pos_embedding(pos_enc, **lin_kw)
+        in_context = in_context.coerce_to(pos_emb)
         in_cells = encoded.cells.map_elementwise(lambda a, b: a + b, pos_emb)
         res_path = self.decoder_cell_prep(
             in_cells,

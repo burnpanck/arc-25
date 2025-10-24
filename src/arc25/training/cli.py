@@ -264,4 +264,6 @@ def full_pretraining(task: Pretraining):
 
 
 if __name__ == "__main__":
+    jax.config.update("jax_persistent_cache_enable_xla_caches", "all")
+
     cli()
