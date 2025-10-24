@@ -451,7 +451,9 @@ class MAETrainer:
 
         return tuple(prepared)
 
-    def train(self) -> typing.Iterator[tuple[dict, bool]]:
+    def train(
+        self, *, start_weight: float | None = None
+    ) -> typing.Iterator[tuple[dict, bool]]:
         """Main training loop. Yields (stats, is_jit_step) for each training step.
 
         Returns:
@@ -459,7 +461,6 @@ class MAETrainer:
             - stats_dict: Training statistics (with async device-to-host copy initiated)
             - is_jit_step: True if this batch contains new bucket shapes (likely triggers JIT)
         """
-        start_weight = None
         for batch_data in self.collator.generate():
             # Check if we've reached max examples
             if self.step >= self.total_steps:
@@ -531,7 +532,7 @@ class MAETrainer:
         eval_dataset: BucketedDataset | None = None,
         checkpoint_dir: Path | str | None = None,
         lr_schedule: typing.Callable | None = None,
-        wandb_run=None,
+        wandb_project: str | None = None,
         run_name: str | None = None,
         num_devices: int | None = None,
     ):
@@ -544,7 +545,8 @@ class MAETrainer:
             eval_dataset: Optional bucketed evaluation dataset for k-NN validation
             checkpoint_dir: Optional directory for saving checkpoints
             lr_schedule: Optional custom learning rate schedule
-            wandb_run: Optional wandb run object for logging
+            wandb_project: Optional wandb project name for logging (enables wandb if provided)
+            run_name: Optional run name (defaults to timestamp)
             num_devices: Number of devices (default: all available)
 
         Returns:
@@ -559,6 +561,8 @@ class MAETrainer:
         # Setup checkpoint directory and scan for existing checkpoints
         resume_from_checkpoint = None
         resume_step = 0
+        resume_accumulated_weight = None
+        resume_wandb_id = None
         if checkpoint_dir is not None:
             from . import gcp
 
@@ -655,6 +659,7 @@ class MAETrainer:
             if (stats := checkpoint_data.metadata.get("stats")) is not None:
                 trainer.step = stats.get("training_step", resume_step)
                 data_step = stats.get("data_step", trainer.step)
+                resume_accumulated_weight = stats.get("accumulated_weight")
                 trainer.examples_seen = stats.get("examples_seen", 0)
                 print(
                     f"Checkpoint loaded. Resuming from step {trainer.step} (data: {data_step}, "
@@ -665,12 +670,42 @@ class MAETrainer:
                 data_step = resume_step
                 print(f"Checkpoint loaded. Resuming from step {resume_step}")
 
+            # Extract wandb run ID for resumption
+            resume_wandb_id = checkpoint_data.metadata.get("wandb_run_id")
+            if resume_wandb_id:
+                print(f"Will resume wandb run: {resume_wandb_id}")
+
             # Fast-forward the collator to skip already-trained steps
             print(f"Fast-forwarding data pipeline by {data_step} steps...")
             collator.fast_forward(data_step)
             print("Data pipeline synchronized")
 
         import arc25
+
+        # Initialize wandb if project name provided
+        wandb_run = None
+        if wandb_project is not None:
+            import wandb
+
+            wandb_init_kwargs = dict(
+                project=wandb_project,
+                name=run_name,
+                config=dict(
+                    **vars(config),
+                    encoder_config=model.config,
+                    code_version=arc25.__version__,
+                ),
+            )
+
+            # Resume wandb run if we have a run ID from checkpoint
+            if resume_wandb_id is not None:
+                wandb_init_kwargs["id"] = resume_wandb_id
+                wandb_init_kwargs["resume"] = "must"
+            else:
+                wandb_init_kwargs["resume"] = "allow"
+
+            wandb_run = wandb.init(**wandb_init_kwargs)
+            print(f"Wandb run initialized: {wandb_run.id}")
 
         base_metadata = dict(
             config=dict(
@@ -679,6 +714,10 @@ class MAETrainer:
             ),
             code_version=arc25.__version__,
         )
+
+        # Include wandb run ID in metadata if we have a run
+        if wandb_run is not None:
+            base_metadata["wandb_run_id"] = wandb_run.id
 
         # Helper function to save checkpoints (handles GCS uploads)
         def save_checkpoint(checkpoint_path: Path, metadata: dict) -> None:
@@ -845,7 +884,9 @@ class MAETrainer:
 
         with tqdm.auto.tqdm(total=int(trainer.total_steps), desc="Training") as pbar:
             try:
-                for stats_dev, is_jit_step in trainer.train():
+                for stats_dev, is_jit_step in trainer.train(
+                    start_weight=resume_accumulated_weight
+                ):
                     # If we have pending stats from previous step, process them now
                     # (device-to-host copy should be complete by now, or we block here)
                     if pending_stats is not None:

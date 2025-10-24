@@ -31,7 +31,10 @@ class LayerStack(nnx.Module):
         num_heads: int,
         num_groups: int | None = None,
         num_layers: int = 12,
-        style: typing.Literal["co-attention", "perceiver", "decoder"] = "co-attention",
+        style: typing.Literal[
+            "co-attention", "perceiver", "decoder", "active-decoder"
+        ] = "co-attention",
+        active_context_tokens: int | None = None,
         dtype: Dtype | None = None,
         param_dtype: Dtype = jnp.float32,
         precision: PrecisionLike = None,
@@ -78,6 +81,7 @@ class LayerStack(nnx.Module):
                 # attention_dtype=attention_dtype,
                 precision=precision,
                 style=style,
+                active_context_tokens=active_context_tokens,
                 head_rep=head_rep,
                 norm_per=norm_per,
                 # we can't hold on to the Rngs, as we want to carry it through the scan later

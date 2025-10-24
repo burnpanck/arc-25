@@ -26,7 +26,7 @@ print(f"Run: {run_name}")
 
 config = Pretraining(
     run_name=run_name,
-    checkpoint_base_uri=f"gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/",
+    checkpoint_base_uri=f"gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/checkpoints/",
     size_bins=[12, 20, 30],
     model=ModelSelection(
         config=model_config,

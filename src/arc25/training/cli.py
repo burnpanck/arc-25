@@ -1,4 +1,3 @@
-import contextlib
 import dataclasses
 import datetime
 import gc
@@ -253,30 +252,15 @@ def full_pretraining(task: Pretraining):
         rngs=nnx.Rngs(config.seed),
     )
 
-    with contextlib.ExitStack() as stack:
-        if wandb_key is not None:
-            run = stack.enter_context(
-                wandb.init(
-                    project="arc-vision-v2-mae",
-                    name=run_name,
-                    resume="allow",
-                    config=vars(config)
-                    | dict(
-                        encoder_config=describe_config_json(model.config),
-                        code_version=arc25.__version__,
-                        checkpoint_dir=str(checkpoint_dir),
-                    ),
-                )
-            )
-        train_state, stats = mae_trainer.MAETrainer.main(
-            model=model,
-            config=config,
-            dataset=training_ds,
-            eval_dataset=eval_ds,
-            wandb_run=run,
-            run_name=run_name,
-            checkpoint_dir=checkpoint_dir,
-        )
+    train_state, stats = mae_trainer.MAETrainer.main(
+        model=model,
+        config=config,
+        dataset=training_ds,
+        eval_dataset=eval_ds,
+        wandb_project="arc-vision-v2-mae" if wandb_key is not None else None,
+        run_name=run_name,
+        checkpoint_dir=checkpoint_dir,
+    )
 
 
 if __name__ == "__main__":
