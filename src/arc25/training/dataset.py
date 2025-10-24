@@ -15,10 +15,14 @@ from ..dataset import Image
 
 
 @attrs.frozen
-class ImageExample:
+class ImageKey:
     challenge: str
     example_idx: int
     example_type: Literal["input", "output"]
+
+
+@attrs.frozen
+class ImageExample(ImageKey):
     image: Image
 
 
@@ -139,6 +143,123 @@ class MiniBatchData:
         return len(self.images)
 
 
+@attrs.frozen
+class OnDemandBucketDataset:
+    """Helper to look up inputs corresponding to outputs for ArcSolver training."""
+
+    dataset: ImagesDataset
+    # in order of preference; preferred first
+    bucket_shapes: tuple[tuple[int, int], ...]
+    challenges: tuple[str, ...]
+    weight_fun: typing.Callable[[jt.Int], jt.Float]
+    allow_transpose: bool = True
+    index: MappingProxyType[dict[ImageKey, Image]] = attrs.field(
+        default=attrs.Factory(
+            lambda self: MappingProxyType(
+                {
+                    ImageKey(
+                        **{
+                            k: v
+                            for k, v in attrs.asdict(ex, recursive=False).items()
+                            if k != "image"
+                        }
+                    ): ex.image
+                    for ex in self.dataset.examples
+                }
+            )
+        )
+    )
+
+    def get_peer_batch(
+        self,
+        batch: MiniBatchData,
+        *,
+        target_shape: tuple[int, int] | None = None,
+        transpose: Literal["match", "allow", "disable"] = "match",
+    ) -> MiniBatchData:
+        """Retrieve and pad inputs corresponding to a batch of outputs.
+
+        Args:
+            output_batch: MiniBatchData containing outputs
+            challenges: Ordered list of challenge names (for label decoding)
+            target_shape: Target (H, W) to pad inputs to. If None, uses output_batch shape
+            allow_transpose: Whether inputs were transposed in output_batch
+
+        Returns:
+            MiniBatchData with inputs padded to target_shape
+        """
+        batch_shape = batch.labels.shape[:-1]
+
+        images = []
+        max_shape = np.array([0, 0])
+        for (chal_idx, example_idx, io), tp in zip(
+            batch.labels.reshape(-1, batch.labels.shape[-1]), batch.transpose.ravel()
+        ):
+            img = self.index[
+                ImageKey(
+                    challenge=self.challenges[chal_idx],
+                    example_idx=example_idx,
+                    example_type=["output", "input"][io],
+                )
+            ]
+            h, w = img.shape
+            match transpose:
+                case "match":
+                    pass
+                case "allow":
+                    tp = h > w
+                case "disable":
+                    tp = False
+                case _:
+                    raise KeyError(transpose)
+            if tp:
+                img = dataclasses.replace(img, _data=img._data.T)
+            images.append((img, tp, (chal_idx, example_idx, 1 - io)))
+            max_shape = np.maximum(max_shape, img.shape)
+
+        if target_shape is None:
+            h, w = max_shape
+            fitting_buckets = [
+                (bh, bw) for bh, bw in self.bucket_shapes if h <= bh and w <= bw
+            ]
+            assert fitting_buckets
+            target_shape = fitting_buckets[0]
+        else:
+            assert np.all(max_shape <= target_shape)
+
+        image_shape = batch_shape + target_shape
+
+        # Prepare output arrays
+        images = np.zeros(image_shape, dtype=np.int8)
+        masks = np.zeros(image_shape, dtype=bool)
+        sizes = np.empty(batch_shape + (2,), dtype=int)
+        labels = np.empty(batch_shape + (3,), dtype=int)
+        transpose_flags = np.empty(batch_shape, dtype=bool)
+
+        for imb, msk, sz, lblb, tpb, (ims, tps, lbls) in zip(
+            images.reshape(-1, *target_shape),
+            masks.reshape(-1, *target_shape),
+            sizes.reshape(-1, 2),
+            labels.reshape(-1, 3),
+            transpose_flags.reshape(-1, 1),
+        ):
+            h, w = ims.shape
+            imb[:h, :w] = ims._data
+            msk[:h, :w] = True
+            sz[:] = ims.shape
+            lblb[:] = lbls
+            tpb[:] = tps
+
+        return MiniBatchData(
+            images=images,
+            masks=masks,
+            sizes=sizes,
+            labels=labels,
+            transpose=transpose_flags,
+            weight=self.weight_fun(sizes[0] * sizes[1]),
+        )
+
+
 @attrs.frozen(kw_only=True)
 class BucketedDataset:
     buckets: MappingProxyType[tuple[int, int], MiniBatchData]
@@ -174,12 +295,9 @@ class BucketedDataset:
             if allow_transpose and h > w:
                 h, w = w, h
 
-            # Find smallest bucket that fits (tie-break by squareness)
-            def fits(bucket_shape: tuple[int, int]) -> bool:
-                bh, bw = bucket_shape
-                return h <= bh and w <= bw
-
-            fitting_buckets = [shape for shape in bucket_shapes if fits(shape)]
+            fitting_buckets = [
+                (bh, bw) for bh, bw in bucket_shapes if h <= bh and w <= bw
+            ]
             if not fitting_buckets:
                 # discard images that won't fit;
                 continue

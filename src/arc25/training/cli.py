@@ -22,7 +22,8 @@ from ..lib.click_tools import (
     reconstruct_hierarchical_config,
     unflatten_config,
 )
-from ..vision2 import mae
+from ..vision2 import arc_solver, mae
+from . import arc_solver as arc_solver_trainer
 from . import dataset, gcp
 from . import mae as mae_trainer
 from .config import describe_config_json
@@ -33,8 +34,8 @@ data_root = proj_root / "data"
 
 @attrs.frozen
 class ModelSelection:
-    type: Literal["mae"] = "mae"
-    config: Literal["tiny", "small"] = "small"
+    type: Literal["mae", "arc_solver"] = "mae"
+    config: Literal["tiny", "small", "legacy"] = "small"
     dtype: Literal["float32", "bfloat16"] = "bfloat16"
 
 
@@ -148,11 +149,24 @@ def tune_batch_size(task: BatchSizeTuning):
 
 
 @attrs.frozen
-class Pretraining:
+class Training:
+    """Unified training configuration for both MAE and ArcSolver."""
+
     run_name: str
-    size_bins: frozenset[int] = frozenset([12, 20, 30])
     model: ModelSelection = ModelSelection()
-    training: mae_trainer.MAETaskConfig = mae_trainer.MAETaskConfig()
+
+    # Polymorphic training configs - exactly one should be set based on model.type
+    mae_training: mae_trainer.MAETaskConfig | None = None
+    arc_solver_training: arc_solver_trainer.ArcSolverConfig | None = None
+
+    # Common parameters
+    size_bins: frozenset[int] = frozenset([12, 20, 30])
+    encoder_checkpoint: str | None = attrs.field(
+        default=None,
+        metadata=dict(
+            help="Path to encoder checkpoint (for arc_solver or MAE multi-stage)"
+        ),
+    )
     wandb_secret_name: str | None = attrs.field(
         default=None,
         metadata=dict(
@@ -173,20 +187,39 @@ class Pretraining:
 
 @cli.command()
 @attrs_to_click_options
-def full_pretraining(task: Pretraining):
+def train(task: Training):
     """
-    Run full pretraining with WandB logging and GCS checkpointing.
+    Run training with WandB logging and GCS checkpointing.
 
+    Supports both MAE pretraining and ArcSolver fine-tuning.
     WandB API key is fetched from GCP Secret Manager using Application Default Credentials.
     Checkpoints are saved to GCS bucket specified by AIP_STORAGE_URI or checkpoint-base-uri.
     """
-    print(f"full_pretraining({task})")
-    assert task.model.type == "mae"
+    print(f"train({task})")
 
+    # Validate polymorphic config
+    match task.model.type:
+        case "mae":
+            assert task.mae_training is not None, "mae_training must be set for MAE"
+            assert (
+                task.arc_solver_training is None
+            ), "arc_solver_training must be None for MAE"
+            config = task.mae_training
+            wandb_project = "arc-vision-v2-mae"
+        case "arc_solver":
+            assert (
+                task.arc_solver_training is not None
+            ), "arc_solver_training must be set for ArcSolver"
+            assert task.mae_training is None, "mae_training must be None for ArcSolver"
+            config = task.arc_solver_training
+            wandb_project = "arc-vision-v2-solver"
+        case _:
+            raise ValueError(f"Unknown model type: {task.model.type}")
+
+    # Common setup
     data_file = data_root / "repack/re-arc.cbor.xz"
     print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
     src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
-    config = task.training
 
     run_name = task.run_name
 
@@ -210,33 +243,6 @@ def full_pretraining(task: Pretraining):
         storage_type = "GCS (via /gcs/ mount)" if is_gcs else "local filesystem"
         print(f"Checkpoint directory ({storage_type}): {checkpoint_dir}")
 
-    size_cuts = list(task.size_bins)
-
-    full_eval_split, train_split = src_dataset.split_by_challenge(
-        np.random.default_rng(seed=42),
-        n_min=100,
-    )
-    eval_split, _ = full_eval_split.split_by_challenge(
-        np.random.default_rng(seed=77),
-        n_min=24,
-    )
-    valid_split, valid_train_split = full_eval_split.split_by_challenge(
-        np.random.default_rng(seed=83),
-        n_min=9,
-    )
-
-    training_ds, eval_ds, valid_ds, valid_train_ds = [
-        dataset.BucketedDataset.make(
-            s,
-            (
-                set(itertools.product(size_cuts, size_cuts))
-                if s is not valid_split
-                else [(30, 30)]
-            ),
-        )
-        for s in [train_split, eval_split, valid_split, valid_train_split]
-    ]
-
     if wandb_key is not None:
         import wandb
 
@@ -246,20 +252,83 @@ def full_pretraining(task: Pretraining):
             verify=True,
         )
 
-    model = mae.MaskedAutoencoder(
-        **mae.configs[task.model.config],
-        dtype=getattr(jnp, task.model.dtype),
-        rngs=nnx.Rngs(config.seed),
-    )
+    # Model-specific training
+    match task.model.type:
+        case "mae":
+            # MAE pretraining
+            size_cuts = list(task.size_bins)
 
-    train_state, stats = mae_trainer.MAETrainer.main(
+            full_eval_split, train_split = src_dataset.split_by_challenge(
+                np.random.default_rng(seed=42),
+                n_min=100,
+            )
+            eval_split, _ = full_eval_split.split_by_challenge(
+                np.random.default_rng(seed=77),
+                n_min=24,
+            )
+
+            training_ds, eval_ds = [
+                dataset.BucketedDataset.make(
+                    s,
+                    set(itertools.product(size_cuts, size_cuts)),
+                )
+                for s in [train_split, eval_split]
+            ]
+
+            model = mae.MaskedAutoencoder(
+                **mae.configs[task.model.config],
+                dtype=getattr(jnp, task.model.dtype),
+                rngs=nnx.Rngs(config.seed),
+            )
+
+            trainer_cls = mae_trainer.MAETrainer
+            trainer_kw = dict(
+                dataset=training_ds,
+                eval_dataset=eval_ds,
+            )
+
+        case "arc_solver":
+            # ArcSolver training
+            num_latent_programs = len(src_dataset.challenges)
+            print(
+                f"Creating ARCSolver model with {num_latent_programs} latent programs"
+            )
+
+            model = arc_solver.ARCSolver(
+                **arc_solver.configs[task.model.config],
+                dtype=getattr(jnp, task.model.dtype),
+                num_latent_programs=num_latent_programs,
+                rngs=nnx.Rngs(config.seed),
+            )
+
+            trainer_cls = arc_solver_trainer.ArcSolverTrainer
+            trainer_kw = dict(
+                dataset=src_dataset,  # Pass raw dataset (with inputs and outputs)
+            )
+
+            # Load encoder checkpoint (required for ArcSolver)
+            if task.encoder_checkpoint is None:
+                raise RuntimeError(f"For ArcSolver, a encoder checkpoint is required")
+
+        case _:
+            raise ValueError()
+
+    # Load encoder checkpoint if provided (for multi-stage training)
+    if task.encoder_checkpoint is not None:
+        from .saving import load_model
+
+        print(f"Loading encoder from checkpoint: {task.encoder_checkpoint}")
+        encoder_checkpoint = load_model(task.encoder_checkpoint)
+        nnx.update(model.encoder, encoder_checkpoint.state.encoder)
+        print("Encoder loaded successfully")
+
+    train_state, stats = trainer_cls.main(
         model=model,
         config=config,
-        dataset=training_ds,
-        eval_dataset=eval_ds,
-        wandb_project="arc-vision-v2-mae" if wandb_key is not None else None,
+        wandb_project=wandb_project if wandb_key is not None else None,
         run_name=run_name,
         checkpoint_dir=checkpoint_dir,
+        **trainer_kw,
     )
 
 

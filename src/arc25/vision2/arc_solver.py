@@ -222,6 +222,51 @@ class ARCSolver(nnx.Module):
         latent_program: jt.Float[jt.Array, "... N C"] | None = None,
         with_stats: bool = False,
         with_attention_maps: bool = False,
+        **kw,
+    ) -> jt.Float[jt.Array, "... F"]:
+        res = self.encoder(
+            x,
+            size,
+            **kw,
+        )
+
+        if with_stats or with_attention_maps:
+            encoded, encoder_stats = res
+        else:
+            encoded = res
+
+        encoded = encoded.map_elementwise(lambda v: jax.lax.stop_gradient(v))
+
+        res = self.decode(
+            encoded,
+            output_size=size,
+            latent_program_idx=latent_program_idx,
+            latent_program=latent_program,
+            with_stats=with_stats,
+            with_attention_maps=with_attention_maps,
+        )
+
+        if with_stats or with_attention_maps:
+            logits, decoder_stats = res
+        else:
+            logits = res
+
+        if with_stats or with_attention_maps:
+            stats = dict(encoder=encoder_stats, decoder=decoder_stats)
+            return logits, stats
+
+        return logits
+
+    def decode(
+        self,
+        embeddings: Field,
+        output_size: jt.Int[jt.Array, "... 2"],
+        output_grid: CoordinateGrid | None = None,
+        *,
+        latent_program_idx: jt.Int[jt.Array, "..."] | None = None,
+        latent_program: jt.Float[jt.Array, "... N C"] | None = None,
+        with_stats: bool = False,
+        with_attention_maps: bool = False,
         deterministic: bool | None = None,
         rngs: nnx.Rngs | None = None,
         unroll: int | bool | None = None,
@@ -230,11 +275,8 @@ class ARCSolver(nnx.Module):
         **kw,
     ) -> jt.Float[jt.Array, "... F"]:
         assert (latent_program_idx is None) != (latent_program is None)
-        batch = x.shape[:-2]
-        Y, X = x.shape[-2:]
-
-        if latent_program is None:
-            latent_program = self.latent_program_embeddings[latent_program_idx, :, :]
+        cells_shape = embeddings.cells.batch_shape
+        batch, (Y, X) = cells_shape[:-2], cells_shape[-2:]
 
         lin_kw = dict(
             mode=mode,
@@ -246,35 +288,24 @@ class ARCSolver(nnx.Module):
             **lin_kw,
             **kw,
         )
-        res = self.encoder(
-            x,
-            size,
-            deterministic=True,
-            **enc_kw,
-            with_stats=with_stats,
-            with_attention_maps=with_attention_maps,
-        )
 
-        if with_stats or with_attention_maps:
-            encoded, encoder_stats = res
-        else:
-            encoded = res
+        if latent_program is None:
+            latent_program = self.latent_program_embeddings[latent_program_idx, :, :]
 
-        encoded = encoded.map_elementwise(lambda v: jax.lax.stop_gradient(v))
+        if output_grid is None:
+            output_grid = embeddings.grid
 
-        grid = encoded.grid
-
-        ecrep = encoded.cells.rep
-        match encoded.cells:
+        ecrep = embeddings.cells.rep
+        match embeddings.cells:
             case FlatSymDecomp():
-                dtype = encoded.cells.data.dtype
+                dtype = embeddings.cells.data.dtype
             case SplitSymDecomp():
-                dtype = encoded.cells.invariant.dtype
+                dtype = embeddings.cells.invariant.dtype
             case _:
-                raise TypeError(type(encoded.cells).__name__)
+                raise TypeError(type(embeddings.cells).__name__)
         n_flavours = ecrep.n_flavours
 
-        in_context = encoded.context.as_flat()
+        in_context = embeddings.context.as_flat()
         in_context = attrs.evolve(
             in_context,
             data=jnp.concatenate(
@@ -287,7 +318,7 @@ class ARCSolver(nnx.Module):
         )
 
         # TODO: we could probably share this one with the original call within self.encoder above.
-        pos_enc, pos_enc_rep = self.encoder.encode_positions(size, grid)
+        pos_enc, pos_enc_rep = self.encoder.encode_positions(output_size, output_grid)
         pos_enc = SplitSymDecomp(
             invariant=jnp.zeros(batch + (Y, X, 0), dtype),
             flavour=jnp.zeros(batch + (Y, X, n_flavours, 0), dtype),
@@ -297,7 +328,7 @@ class ARCSolver(nnx.Module):
 
         pos_emb = self.pos_embedding(pos_enc, **lin_kw)
         in_context = in_context.coerce_to(pos_emb)
-        in_cells = encoded.cells.map_elementwise(lambda a, b: a + b, pos_emb)
+        in_cells = embeddings.cells.map_elementwise(lambda a, b: a + b, pos_emb)
         res_path = self.decoder_cell_prep(
             in_cells,
             **lin_kw,
@@ -315,7 +346,7 @@ class ARCSolver(nnx.Module):
         y = Field(
             context=in_context,
             cells=y_cells,
-            grid=grid,
+            grid=output_grid,
         )
 
         res = self.decoder(
@@ -342,8 +373,7 @@ class ARCSolver(nnx.Module):
         logits = z.reshape(z.shape[:-1])
 
         if with_stats or with_attention_maps:
-            stats = dict(encoder=encoder_stats, decoder=decoder_stats)
-            return logits, stats
+            return logits, decoder_stats
         return logits
 
 
