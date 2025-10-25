@@ -1,0 +1,37 @@
+name: Deploy Data to Kaggle
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]     # e.g. v0.3.2
+
+
+jobs:
+  deploy-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with LFS fixtures)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Set up PDM + Python
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: 3.13
+          cache: true
+
+      - name: Show tool versions
+        run: |
+          python -V
+          pdm -V
+
+      - name: Install (from lock) + extras
+        run: pdm install --frozen-lockfile -G deploy
+
+      - name: Upload dataset
+        env:
+          KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: pdm run python -m arc25.deploy update-training-data -m "${GITHUB_REF_NAME}"

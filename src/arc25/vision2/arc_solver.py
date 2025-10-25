@@ -225,10 +225,15 @@ class ARCSolver(nnx.Module):
         with_attention_maps: bool = False,
         **kw,
     ) -> jt.Float[jt.Array, "... F"]:
+        skw = dict(
+            with_stats=with_stats,
+            with_attention_maps=with_attention_maps,
+            **kw,
+        )
         res = self.encoder(
             x,
             size,
-            **kw,
+            **skw,
         )
 
         if with_stats or with_attention_maps:
@@ -243,9 +248,7 @@ class ARCSolver(nnx.Module):
             output_size=size,
             latent_program_idx=latent_program_idx,
             latent_program=latent_program,
-            with_stats=with_stats,
-            with_attention_maps=with_attention_maps,
-            **kw,
+            **skw,
         )
 
         if with_stats or with_attention_maps:

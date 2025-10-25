@@ -1,4 +1,4 @@
-name: build-wheelhouse-and-publish-to-kaggle
+name: Deploy Code to Kaggle
 
 on:
   push:

@@ -56,6 +56,13 @@ async def get_data_files_for_deployment(data_root: anyio.Path) -> list[anyio.Pat
     async for fn in ssrc.glob("*.py"):
         files.append(fn)
 
+    # Pretrained models
+    models_root = data_root / "models"
+    for fn in [
+        "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-006912.msgpack.xz",
+    ]:
+        files.append(models_root / fn)
+
     return files
 
 

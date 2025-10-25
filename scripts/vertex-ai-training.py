@@ -11,11 +11,11 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
-training = "mae"
 training = "arc-solver"
-model_config = "tiny"
+training = "mae"
+model_config = "small"
 
 accelerator = "L4"
 accelerator_count = 4
@@ -28,9 +28,13 @@ run_name = (
 print(f"Run: {run_name}")
 
 checkpoint = (
-    "gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
-    "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
-    "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz"
+    (
+        "gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
+        "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
+        "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz"
+    )
+    if training != "mae"
+    else None
 )
 
 base_config = dict(
@@ -100,7 +104,7 @@ config = Training(
         config=model_config,
     ),
     wandb_secret_name="wandb-api-key",
-    encoder_checkpoint="gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
+    encoder_checkpoint=checkpoint,
     **{
         MAETaskConfig: dict(mae_training=training_config),
         ArcSolverConfig: dict(arc_solver_training=training_config),
@@ -161,7 +165,7 @@ env = dict(
     XLA_PYTHON_CLIENT_MEM_FRACTION="1.00",
     GCP_PROJECT_ID="deep-time-358505",
     JAX_COMPILATION_CACHE_DIR="/gcs/41bd4de0-jax-cache",
-    JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES="all",
+    #    JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES="all",
     #    JAX_LOG_COMPILES="1", # attention: huge amount of logs
 )
 
