@@ -11,7 +11,7 @@ import jaxtyping as jt
 import numpy as np
 
 from .. import serialisation
-from ..dataset import Image
+from ..dataset import Image, IOPair
 
 
 @attrs.frozen
@@ -33,7 +33,12 @@ class ImagesDataset:
     max_size: tuple[int, int] = (30, 30)
 
     @classmethod
-    def load_compressed_cbor(cls, fpath: Path):
+    def load_compressed_cbor(
+        cls,
+        fpath: Path,
+        *,
+        filter: typing.Callable[[IOPair, ImageExample], bool] | None = None,
+    ):
         with lzma.LZMAFile(fpath, "rb") as fh:
             src_data = serialisation.deserialise(cbor2.load(fh))
         max_size = np.r_[0, 0]
@@ -41,20 +46,38 @@ class ImagesDataset:
         for k, v in src_data.items():
             for i, iop in enumerate(v):
                 for kk in ["input", "output"]:
-                    vv = getattr(iop, kk)
-                    sh = np.array(vv.shape)
-                    max_size = np.maximum(max_size, sh)
-                    examples.append(
-                        ImageExample(
-                            challenge=k,
-                            example_idx=i,
-                            example_type=kk,
-                            image=vv,
-                        )
+                    img = getattr(iop, kk)
+                    ex = ImageExample(
+                        challenge=k,
+                        example_idx=i,
+                        example_type=kk,
+                        image=img,
                     )
+                    if filter is not None and not filter(iop, ex):
+                        continue
+                    sh = np.array(img.shape)
+                    max_size = np.maximum(max_size, sh)
+                    examples.append(ex)
         return cls(
             examples=tuple(examples),
             challenges=frozenset(src_data),
+            max_size=tuple(int(v) for v in max_size),
+        )
+
+    def filtered(self, filter: typing.Callable[[ImageExample], bool]) -> Self:
+        max_size = np.r_[0, 0]
+        examples = []
+        challenges = set()
+        for img in self.examples:
+            if not filter(img):
+                continue
+            challenges.add(img.challenge)
+            sh = np.array(img.image.shape)
+            max_size = np.maximum(max_size, sh)
+            examples.append(img)
+        return type(self)(
+            examples=tuple(examples),
+            challenges=frozenset(challenges),
             max_size=tuple(int(v) for v in max_size),
         )
 
@@ -136,7 +159,7 @@ class MiniBatchData:
     # (challenge, i/o-pair, i or o)
     labels: jt.Int[np.ndarray, " B 3"]
     transpose: jt.Bool[np.ndarray, " B"]
-    weight: jt.Float[np.ndarray, " B"]
+    weight: jt.Float[np.ndarray, " B"] | None
 
     @property
     def n_examples(self) -> int:
@@ -151,23 +174,24 @@ class OnDemandBucketDataset:
     # in order of preference; preferred first
     bucket_shapes: tuple[tuple[int, int], ...]
     challenges: tuple[str, ...]
-    weight_fun: typing.Callable[[jt.Int], jt.Float]
-    allow_transpose: bool = True
+    weight_fun: typing.Callable[[jt.Int], jt.Float | None] = lambda area: None
     index: MappingProxyType[dict[ImageKey, Image]] = attrs.field(
+        init=False,
         default=attrs.Factory(
             lambda self: MappingProxyType(
                 {
                     ImageKey(
                         **{
                             k: v
-                            for k, v in attrs.asdict(ex, recursive=False).items()
+                            for k, v in attrs.asdict(ex, recurse=False).items()
                             if k != "image"
                         }
                     ): ex.image
                     for ex in self.dataset.examples
                 }
-            )
-        )
+            ),
+            takes_self=True,
+        ),
     )
 
     def get_peer_batch(
@@ -190,10 +214,18 @@ class OnDemandBucketDataset:
         """
         batch_shape = batch.labels.shape[:-1]
 
-        images = []
+        sizes = np.empty(batch_shape + (2,), dtype=int)
+        labels = np.empty(batch_shape + (3,), dtype=int)
+        transpose_flags = np.empty(batch_shape, dtype=bool)
+
+        data = []
         max_shape = np.array([0, 0])
-        for (chal_idx, example_idx, io), tp in zip(
-            batch.labels.reshape(-1, batch.labels.shape[-1]), batch.transpose.ravel()
+        for szb, lblb, tpb, (chal_idx, example_idx, io), tp in zip(
+            sizes.reshape(-1, 2),
+            labels.reshape(-1, 3),
+            transpose_flags.reshape(-1, 1),
+            batch.labels.reshape(-1, batch.labels.shape[-1]),
+            batch.transpose.ravel(),
         ):
             img = self.index[
                 ImageKey(
@@ -214,8 +246,11 @@ class OnDemandBucketDataset:
                     raise KeyError(transpose)
             if tp:
                 img = dataclasses.replace(img, _data=img._data.T)
-            images.append((img, tp, (chal_idx, example_idx, 1 - io)))
             max_shape = np.maximum(max_shape, img.shape)
+            szb[:] = img.shape
+            lblb[:] = chal_idx, example_idx, 1 - io
+            tpb[:] = tp
+            data.append(img)
 
         if target_shape is None:
             h, w = max_shape
@@ -232,23 +267,15 @@ class OnDemandBucketDataset:
         # Prepare output arrays
         images = np.zeros(image_shape, dtype=np.int8)
         masks = np.zeros(image_shape, dtype=bool)
-        sizes = np.empty(batch_shape + (2,), dtype=int)
-        labels = np.empty(batch_shape + (3,), dtype=int)
-        transpose_flags = np.empty(batch_shape, dtype=bool)
 
-        for imb, msk, sz, lblb, tpb, (ims, tps, lbls) in zip(
+        for imb, msk, ims in zip(
             images.reshape(-1, *target_shape),
             masks.reshape(-1, *target_shape),
-            sizes.reshape(-1, 2),
-            labels.reshape(-1, 3),
-            transpose_flags.reshape(-1, 1),
+            data,
         ):
             h, w = ims.shape
             imb[:h, :w] = ims._data
             msk[:h, :w] = True
-            sz[:] = ims.shape
-            lblb[:] = lbls
-            tpb[:] = tps
 
         return MiniBatchData(
             images=images,
@@ -272,9 +299,15 @@ class BucketedDataset:
         dataset: ImagesDataset,
         bucket_shapes: set[tuple[int, int]],
         allow_transpose: bool = True,
+        *,
+        challenges: typing.Iterable[str] | None = None,
     ) -> Self:
         # Create challenge_to_label mapping
-        challenges = tuple(sorted(dataset.challenges))
+        challenges = (
+            tuple(sorted(dataset.challenges))
+            if challenges is None
+            else tuple(challenges)
+        )
         challenge_to_label = {ch: i for i, ch in enumerate(challenges)}
 
         # Group examples by bucket
@@ -343,9 +376,6 @@ class BucketedDataset:
 
                 transpose_flags[i] = transposed
 
-            # Weights placeholder - will be set by batch_spec later based on actual sizes
-            weights = np.ones(n_examples, dtype=float)
-
             # Create MiniBatchData containing all examples for this bucket
             minibatch_data = MiniBatchData(
                 images=images,
@@ -353,7 +383,7 @@ class BucketedDataset:
                 sizes=sizes,
                 labels=labels,
                 transpose=transpose_flags,
-                weight=weights,
+                weight=None,
             )
 
             buckets_dict[bucket_shape] = minibatch_data
@@ -391,9 +421,9 @@ class BatchSpec:
     #
     area_weight_exponent: float = 0
 
-    def __call__(self, area: int) -> float:
+    def __call__(self, area: jt.Int) -> jt.Float | None:
         if not self.area_weight_exponent:
-            return 1
+            return None
         return (area / self.reference_image_size**2) ** self.area_weight_exponent
 
 
@@ -438,7 +468,10 @@ class BucketState:
         self.remaining -= nB
 
         return MiniBatchData(
-            **{k: v[choice] for k, v in attrs.asdict(self.examples).items()}
+            **{
+                k: v[choice] if v is not None else None
+                for k, v in attrs.asdict(self.examples).items()
+            }
         )
 
 
@@ -528,7 +561,9 @@ class BucketedCollator:
             buckets_dict[bucket_shape] = bucket_state
 
             total_examples += n_examples
-            total_example_weight += float(weights.sum())
+            total_example_weight += (
+                float(weights.sum()) if weights is not None else n_examples
+            )
 
         return cls(
             dataset=dataset,
@@ -598,9 +633,13 @@ class BucketedCollator:
             minibatch = bucket.sample(self.rng)
 
             # Sum the weights in the minibatch
-            minibatch_weight = float(minibatch.weight.sum())
             n_examples = len(minibatch.images)
             assert n_examples == bucket.minibatch_size
+            minibatch_weight = (
+                float(minibatch.weight.sum())
+                if minibatch.weight is not None
+                else float(n_examples)
+            )
 
             # Check if that minibatch belongs to this or the next batch
             if (

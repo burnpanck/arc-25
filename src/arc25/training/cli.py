@@ -10,6 +10,7 @@ from typing import Literal
 
 import attrs
 import click
+import etils.epath
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,6 +27,7 @@ from ..vision2 import arc_solver, mae
 from . import arc_solver as arc_solver_trainer
 from . import dataset, gcp
 from . import mae as mae_trainer
+from . import saving
 from .config import describe_config_json
 
 proj_root = Path(os.environ.get("ARC25_APP_ROOT", Path(__file__).parents[3])).resolve()
@@ -34,7 +36,7 @@ data_root = proj_root / "data"
 
 @attrs.frozen
 class ModelSelection:
-    type: Literal["mae", "arc_solver"] = "mae"
+    type: Literal["mae", "arc-solver"] = "mae"
     config: Literal["tiny", "small", "legacy"] = "small"
     dtype: Literal["float32", "bfloat16"] = "bfloat16"
 
@@ -206,7 +208,7 @@ def train(task: Training):
             ), "arc_solver_training must be None for MAE"
             config = task.mae_training
             wandb_project = "arc-vision-v2-mae"
-        case "arc_solver":
+        case "arc-solver":
             assert (
                 task.arc_solver_training is not None
             ), "arc_solver_training must be set for ArcSolver"
@@ -234,14 +236,17 @@ def train(task: Training):
         wandb_key = None
 
     # Set up checkpoint directory
-    checkpoint_dir = gcp.get_checkpoint_dir(
-        run_name=run_name,
-        base_uri=task.checkpoint_base_uri,
-    )
+    if task.checkpoint_base_uri:
+        # User-specified base, append run_name
+        checkpoint_dir = etils.epath.Path(task.checkpoint_base_uri) / run_name
+    elif aip_dir := os.environ.get("AIP_CHECKPOINT_DIR"):
+        # Vertex AI dir is already unique per run
+        checkpoint_dir = etils.epath.Path(aip_dir)
+    else:
+        checkpoint_dir = None
+
     if checkpoint_dir is not None:
-        is_gcs = str(checkpoint_dir).startswith("/gcs/")
-        storage_type = "GCS (via /gcs/ mount)" if is_gcs else "local filesystem"
-        print(f"Checkpoint directory ({storage_type}): {checkpoint_dir}")
+        print(f"Checkpoint directory: {checkpoint_dir}")
 
     if wandb_key is not None:
         import wandb
@@ -287,7 +292,7 @@ def train(task: Training):
                 eval_dataset=eval_ds,
             )
 
-        case "arc_solver":
+        case "arc-solver":
             # ArcSolver training
             num_latent_programs = len(src_dataset.challenges)
             print(
@@ -301,28 +306,32 @@ def train(task: Training):
                 rngs=nnx.Rngs(config.seed),
             )
 
+            eval_split, train_split = src_dataset.split_by_challenge(
+                np.random.default_rng(seed=42),
+                n_min=100,
+            )
+
             trainer_cls = arc_solver_trainer.ArcSolverTrainer
             trainer_kw = dict(
-                dataset=src_dataset,  # Pass raw dataset (with inputs and outputs)
+                dataset=train_split,  # Pass raw dataset (with inputs and outputs)
             )
 
             # Load encoder checkpoint (required for ArcSolver)
             if task.encoder_checkpoint is None:
-                raise RuntimeError(f"For ArcSolver, a encoder checkpoint is required")
+                raise RuntimeError(f"For ArcSolver, an encoder checkpoint is required")
 
         case _:
             raise ValueError()
 
     # Load encoder checkpoint if provided (for multi-stage training)
     if task.encoder_checkpoint is not None:
-        from .saving import load_model
-
-        print(f"Loading encoder from checkpoint: {task.encoder_checkpoint}")
-        encoder_checkpoint = load_model(task.encoder_checkpoint)
-        nnx.update(model.encoder, encoder_checkpoint.state.encoder)
+        chkp_path = etils.epath.Path(task.encoder_checkpoint)
+        print(f"Loading encoder from checkpoint: {chkp_path}")
+        encoder_checkpoint = saving.load_model(chkp_path)
+        nnx.update(model.encoder, encoder_checkpoint.state.model.encoder)
         print("Encoder loaded successfully")
 
-    train_state, stats = trainer_cls.main(
+    trainer, stats = trainer_cls.main(
         model=model,
         config=config,
         wandb_project=wandb_project if wandb_key is not None else None,
@@ -333,6 +342,6 @@ def train(task: Training):
 
 
 if __name__ == "__main__":
-    jax.config.update("jax_persistent_cache_enable_xla_caches", "all")
+    os.environ["EPATH_USE_TF"] = "false"
 
     cli()

@@ -1,11 +1,10 @@
 """Google Cloud Platform integration for training."""
 
+import io
 import os
-import tempfile
-from pathlib import Path
 from typing import Literal
 
-from google.cloud import secretmanager, storage
+import etils.epath
 
 
 def get_secret(
@@ -28,6 +27,8 @@ def get_secret(
         ValueError: If project_id is not provided and GCP_PROJECT_ID env var is not set
         google.api_core.exceptions.GoogleAPIError: If secret retrieval fails
     """
+    from google.cloud import secretmanager
+
     if project_id is None:
         project_id = os.environ.get("GCP_PROJECT_ID")
         if project_id is None:
@@ -42,136 +43,26 @@ def get_secret(
     return response.payload.data.decode("UTF-8")
 
 
-def gcs_uri_to_path(uri: str | Path | None) -> Path | None:
-    """
-    Convert a GCS URI to a local filesystem path using Vertex AI's /gcs/ mount.
-
-    In Vertex AI, Cloud Storage buckets are mounted at /gcs/, allowing direct
-    filesystem access without using the Cloud Storage client library.
-
-    Args:
-        uri: Either a GCS URI (gs://bucket/path) or already a local path
-
-    Returns:
-        Path object pointing to /gcs/bucket/path (for GCS URIs) or the original path
-
-    Examples:
-        >>> gcs_uri_to_path("gs://my-bucket/checkpoints/run-001")
-        Path('/gcs/my-bucket/checkpoints/run-001')
-        >>> gcs_uri_to_path("/local/path")
-        Path('/local/path')
-    """
-    match uri:
-        case str():
-            if uri.startswith("gs://"):
-                # Convert gs://bucket/path to /gcs/bucket/path
-                return Path("/gcs") / uri[5:]
-            return Path(uri)
-        case Path():
-            return uri
-        case None:
-            return None
-        case _:
-            raise TypeError(type(uri).__name__)
-
-
-def get_checkpoint_dir(
-    run_name: str,
-    base_uri: str | None = None,
-) -> Path | None:
-    """
-    Get the checkpoint directory for a training run.
-
-    For GCS URIs, converts to /gcs/ mount point path.
-    For local paths, returns the path as-is.
-
-    Args:
-        run_name: Name of the training run
-        base_uri: Base URI for checkpoints. Can be:
-            - GCS URI (gs://bucket/path) - converted to /gcs/bucket/path
-            - Local path (/path/to/dir) - used as-is
-            - None (defaults to AIP_CHECKPOINT_DIR env var, or local data/checkpoints/)
-
-    Returns:
-        Path object for the checkpoint directory
-
-    Examples:
-        >>> # With Vertex AI environment variable
-        >>> os.environ["AIP_CHECKPOINT_DIR"] = "gs://my-bucket/runs"
-        >>> get_checkpoint_dir("run-001")
-        Path('/gcs/my-bucket/runs/run-001')
-
-        >>> # With explicit GCS URI
-        >>> get_checkpoint_dir("run-001", "gs://my-bucket/checkpoints")
-        Path('/gcs/my-bucket/checkpoints/run-001')
-
-        >>> # With local path
-        >>> get_checkpoint_dir("run-001", "/data/checkpoints")
-        Path('/data/checkpoints/run-001')
-    """
-    if base_uri is None:
-        # Try Vertex AI environment variable first
-        base_uri = os.environ.get("AIP_CHECKPOINT_DIR")
-        if base_uri is None:
-            return None
-
-    # Convert GCS URI to /gcs/ path if needed
-    base_path = gcs_uri_to_path(base_uri)
-    return base_path / run_name
-
-
-def is_gcs_path(path: Path | str) -> bool:
-    """Check if a path is a GCS path (starts with /gcs/)."""
-    return str(path).startswith("/gcs/")
-
-
-def gcs_path_to_uri(path: Path | str) -> str:
-    """
-    Convert a /gcs/ path back to a gs:// URI.
-
-    Args:
-        path: Path starting with /gcs/
-
-    Returns:
-        GCS URI (gs://bucket/path)
-
-    Examples:
-        >>> gcs_path_to_uri("/gcs/my-bucket/checkpoints/run-001")
-        'gs://my-bucket/checkpoints/run-001'
-    """
-    path_str = str(path)
-    if not path_str.startswith("/gcs/"):
-        raise ValueError(f"Path must start with /gcs/, got: {path_str}")
-    return "gs://" + path_str[5:]
-
-
-def save_and_upload_to_gcs(save_fn, gcs_path: Path | str, filename: str) -> None:
+def save_and_upload_to_gcs(save_fn, gcs_path: str, filename: str) -> None:
     """
     Save a checkpoint to GCS using the Cloud Storage client library.
 
-    The /gcs/ FUSE mount is non-POSIX and doesn't support all write operations,
-    so we use the client library for writing checkpoints.
+    Temporary function kept for compatibility verification.
+    TODO: Remove once saving infrastructure is verified to work with etils.epath.
 
     Args:
         save_fn: Callable that accepts a file-like object and writes checkpoint data
-        gcs_path: Destination path (can be /gcs/bucket/path or gs://bucket/path)
+        gcs_path: GCS URI (gs://bucket/path)
         filename: Name of the file being uploaded (for logging)
 
     Raises:
-        ValueError: If gcs_path is not a GCS path
+        ValueError: If gcs_path is not a GCS URI
     """
-    import io
+    from google.cloud import storage
 
-    # Convert to gs:// URI if needed
-    gcs_path_str = str(gcs_path)
-    if gcs_path_str.startswith("/gcs/"):
-        gcs_uri = gcs_path_to_uri(gcs_path_str)
-    elif gcs_path_str.startswith("gs://"):
-        gcs_uri = gcs_path_str
-    else:
-        raise ValueError(
-            f"Path must be a GCS path (/gcs/ or gs://), got: {gcs_path_str}"
-        )
+    gcs_uri = str(gcs_path)
+    if not gcs_uri.startswith("gs://"):
+        raise ValueError(f"Path must be a GCS URI (gs://), got: {gcs_uri}")
 
     # Parse bucket and blob path from gs:// URI
     bucket_name, blob_path = gcs_uri[5:].split("/", 1)

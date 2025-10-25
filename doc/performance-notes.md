@@ -303,3 +303,41 @@ Cost: $2.97/h/TPU on-demand (spot unavailable!)
 ### H100
 
 Cost: $14.07/h/GPU on-demand
+
+
+```python
+v6e = np.r_[
+    30,14, 5.46,14, 5.46,
+    24,20, 8.07,23, 7.76,
+    20,24, 9.44,29, 9.38,
+    16,48,14.03,48,14.03,
+    12,80,19.83,80,19.83,
+].reshape(-1,5)
+
+L4 = np.r_[
+    30, 5, 1.63, 5, 1.63,
+#    24, 7, 2.42, 7, 2.42,
+    20,16, 4.31,16, 4.31,
+#    16,10, 4.64,10, 4.64,
+    12,40,11.17,40,11.17,
+].reshape(-1,5)
+
+
+
+fig, axes = plt.subplots(1,2,figsize=(12,6),sharex=True)
+for v,cost,ccb in zip([v6e,L4],[2.97,1.05],[64,0]):
+    imsz, fsz, fspd, bsz, bspd = v.T
+    ax = axes[0]
+    memory = (imsz**2 + ccb) / 15**2
+    print(f"At base cost {ccb}, minibatch size should be {(bsz*memory).min():.1f}")
+    l, = ax.plot(imsz, bsz*memory,'o-')
+    c = l.get_color()
+    #memory = 7*imsz*((imsz+7)//8) / 15**2
+    #ax.plot(imsz, bsz*memory,'o:',c=c)
+    ax = axes[1]
+    work = imsz*(imsz-0)
+    weight = 0.5*imsz
+    fac = work/weight/cost
+    ax.plot(imsz, fspd*fac,'o-',c=c)
+    ax.plot(imsz, bspd*fac,'o:',c=c)
+```

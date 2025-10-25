@@ -29,7 +29,11 @@ from .learning_rate import scale_by_kwarg
 from .saving import save_model
 
 
-@serialisable
+@serialisable(
+    renamed_attrs=dict(
+        knn_validation_every_ref_batch="eval_every_ref_batch",
+    ),
+)
 @dataclass(frozen=True)
 class MAETaskConfig(ImageTrainConfigBase):
     """Configuration for the training script."""
@@ -39,9 +43,6 @@ class MAETaskConfig(ImageTrainConfigBase):
     nonmask_fraction: float = 0.2
     # fraction of non-masked cells that are randomised
     randomise_fraction: float = 0.5
-
-    # inline validation in ref_batch/batch_size optimizer steps
-    knn_validation_every_ref_batch: float = 32
 
 
 class TrainState(TrainStateBase):
@@ -174,7 +175,7 @@ class MAETrainer(TrainerBase):
         num_devices: int = 1,
         *,
         eval_dataset: BucketedDataset | None = None,
-        minibatch_size_fn: MinibatchSizeFunction | None = None,
+        eval_batch_size_fn: MinibatchSizeFunction | None = None,
         lr_schedule: typing.Callable | None = None,
         rngs: nnx.Rngs,
     ) -> typing.Self:
@@ -192,13 +193,13 @@ class MAETrainer(TrainerBase):
         # Create k-NN evaluator if eval_dataset provided (MAE-specific)
         knn_evaluator = None
         if eval_dataset is not None:
-            if minibatch_size_fn is None:
+            if eval_batch_size_fn is None:
                 raise ValueError(
                     "minibatch_size_fn required when eval_dataset is provided"
                 )
             knn_evaluator = KNNEvaluator(
                 dataset=eval_dataset,
-                batch_size=minibatch_size_fn,
+                batch_size=eval_batch_size_fn,
                 seed=config.seed,
             )
 
@@ -288,8 +289,8 @@ class MAETrainer(TrainerBase):
         # Check if it's time for k-NN evaluation
         if (
             self.knn_evaluator is not None
-            and training_progress // config.knn_validation_every_ref_batch
-            > prev_progress // config.knn_validation_every_ref_batch
+            and training_progress // config.eval_every_ref_batch
+            > prev_progress // config.eval_every_ref_batch
         ):
             training_step = stats["training_step"]
             print(f"\n[Step {training_step}] Running k-NN evaluation...")
@@ -345,20 +346,20 @@ class MAETrainer(TrainerBase):
         Returns:
             Tuple of (trainer, stats_list) where stats_list contains all training statistics
         """
-        if run_name is None:
-            now = datetime.datetime.now().astimezone(datetime.timezone.utc)
-            run_name = f"{now:%Y%m%d-%H%M}"
-
         # Detect available devices
         if num_devices is None:
             num_devices = jax.local_device_count()
 
-        # Setup PRNG key
-        rngs = nnx.Rngs(config.seed)
-
         # Create collator with proper seed and granularity
         minibatch_size_fn = MinibatchSizeFunction(
             reference_minibatch_size=config.minibatch_size,
+            reference_image_size=config.reference_image_size,
+            base_cost=config.base_cell_cost,
+            granularity=num_devices,  # Ensure divisibility for pmap
+        )
+        eval_batch_size_fn = MinibatchSizeFunction(
+            # heuristic, large batch size - eval has no gradients, so memory is usually not a problem.
+            reference_minibatch_size=8 * config.minibatch_size,
             reference_image_size=config.reference_image_size,
             base_cost=config.base_cell_cost,
             granularity=num_devices,  # Ensure divisibility for pmap
@@ -379,22 +380,21 @@ class MAETrainer(TrainerBase):
         )
 
         # Initialize trainer
-        trainer = cls.make(
+        self = cls.make(
             config=config,
             model=model,
             collator=collator,
             num_devices=num_devices,
             eval_dataset=eval_dataset,
-            minibatch_size_fn=minibatch_size_fn,
-            rngs=rngs,
+            eval_batch_size_fn=eval_batch_size_fn,
+            rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
         )
 
         # Run common training loop
-        return cls.run_main(
-            trainer,
+        res = self.run_main(
             checkpoint_dir=checkpoint_dir,
             wandb_project=wandb_project,
             run_name=run_name,
-            config=config,
         )
+        return self, res

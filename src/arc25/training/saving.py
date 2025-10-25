@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, BinaryIO
 
+import etils.epath
 import jax
 import jaxlib
 import msgpack
@@ -17,7 +18,10 @@ from ..serialisation import deserialise, serialise
 
 
 def save_model(
-    model: nnx.Module, path: Path | BinaryIO, *, metadata: dict | None = None
+    model: nnx.Module,
+    path_or_fh: etils.epath.PathLike | BinaryIO,
+    *,
+    metadata: dict | None = None,
 ):
     """Save model to a file path or file-like object.
 
@@ -26,7 +30,10 @@ def save_model(
         path: Either a Path to write to, or a file-like object (e.g., io.BytesIO)
         metadata: Optional metadata to include in the checkpoint
     """
-    with lzma.LZMAFile(path, mode="wb") as fh:
+    with contextlib.ExitStack() as stack:
+        if isinstance(path_or_fh, etils.epath.Path):
+            path_or_fh = stack.enter_context(path_or_fh.open("wb"))
+        fh = stack.enter_context(lzma.LZMAFile(path_or_fh, mode="wb"))
 
         def write(*data):
             serialised = msgpack.dumps(tuple(data))
@@ -57,12 +64,16 @@ def save_model(
             pointer = path
 
 
-def load_model(path: Path | BinaryIO) -> SimpleNamespace:
+def load_model(path_or_fh: etils.epath.PathLike | BinaryIO) -> SimpleNamespace:
     metadata = {}
     state = {}
     graphdef = None
 
-    with lzma.LZMAFile(path, "rb") as fh:
+    with contextlib.ExitStack() as stack:
+        if isinstance(path_or_fh, etils.epath.Path):
+            path_or_fh = stack.enter_context(path_or_fh.open("rb"))
+        fh = stack.enter_context(lzma.LZMAFile(path_or_fh, mode="rb"))
+
         path = ()
 
         for data in msgpack.Unpacker(fh, raw=False, strict_map_key=False):

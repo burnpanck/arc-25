@@ -41,6 +41,9 @@ class ImageTrainConfigBase:
     # measured in optimizer steps which are counted in batch_size increments
     checkpoint_every_steps: int = 128
 
+    # periodic evaluation every ref_batch/batch_size optimizer steps (i.e. counted in ref_batches)
+    eval_every_ref_batch: float = 32
+
     # implementation
     mode: Literal["split", "flat"] | None = "flat"
     unroll: int | None = None

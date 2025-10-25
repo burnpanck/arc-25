@@ -400,11 +400,21 @@ def decomp_64a(n):
 
 
 def decomp_qk_32a_chiral(n):
-    """n*32 total width, split as 2×(3×n) + 10×(2×n) + 6×n."""
+    """n*32 total width, split as 2×(4×n) + 10×(1×n) + 14×n."""
     return SymDecompDims(
         space=4 * n,
         flavour=1 * n,
         invariant=14 * n,
+        rep=RepSpec(symmetry.ChiralityRep, 10),
+    )
+
+
+def decomp_qk_32b_chiral(n):
+    """n*32 total width, split as 2×(3×n) + 10×(2×n) + 6×n."""
+    return SymDecompDims(
+        space=3 * n,
+        flavour=2 * n,
+        invariant=6 * n,
         rep=RepSpec(symmetry.ChiralityRep, 10),
     )
 

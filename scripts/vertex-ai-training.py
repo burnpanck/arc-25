@@ -6,52 +6,105 @@ import sys
 import json5
 from google.cloud import aiplatform, aiplatform_v1
 
-from arc25.lib.click_tools import _get_fields, _is_config_class
-from arc25.training.cli import ModelSelection, Pretraining
+from arc25.lib.click_tools import _get_config_class, _get_fields
+from arc25.training.arc_solver import ArcSolverConfig
+from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = False
+dry_run = True
 
-now = datetime.datetime.now().astimezone(datetime.timezone.utc)
+training = "mae"
+training = "arc-solver"
+model_config = "tiny"
 
 accelerator = "L4"
 accelerator_count = 4
 
-model_config = "small"
+now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
 run_name = (
     f"{now:%Y%m%d-%H%M}-vertex-ai-mae-{model_config}-{accelerator_count}x{accelerator}"
 )
 print(f"Run: {run_name}")
 
-config = Pretraining(
+checkpoint = (
+    "gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
+    "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
+    "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz"
+)
+
+base_config = dict(
+    reference_image_size=15,
+    base_cell_cost=0,
+    ref_batch=256,
+    max_num_ref_batches=None,
+    mode="flat",
+    remat=True,
+    unroll=None,
+)
+mae_config = dict(
+    test_ratio=0.25,
+    nonmask_fraction=0.2,
+    randomise_fraction=0.2,
+)
+
+match training, model_config:
+    case ("mae", "tiny"):
+        training_config = MAETaskConfig(
+            seed=42,
+            batch_size=512,
+            minibatch_size=128 * accelerator_count,
+            learning_rate=1e-5,
+            max_num_epochs=5,
+            warmup_steps=64,
+            checkpoint_every_steps=512,
+            eval_every_ref_batch=256,
+            **base_config,
+            **mae_config,
+        )
+    case ("arc-solver", "tiny"):
+        training_config = ArcSolverConfig(
+            seed=42,
+            batch_size=512,
+            minibatch_size=128 * accelerator_count,
+            learning_rate=1e-5,
+            max_num_epochs=5,
+            warmup_steps=64,
+            checkpoint_every_steps=512,
+            eval_every_ref_batch=256,
+            **base_config,
+        )
+    case ("mae", "small"):
+        training_config = MAETaskConfig(
+            seed=42,
+            batch_size=1024,
+            minibatch_size=16 * accelerator_count,
+            learning_rate=1e-5,
+            max_num_epochs=10,
+            warmup_steps=64,
+            checkpoint_every_steps=256,
+            eval_every_ref_batch=256,
+            **base_config,
+            **mae_config,
+        )
+    case _:
+        raise NotImplementedError(f"{training=} {model_config=}")
+
+
+config = Training(
     run_name=run_name,
     checkpoint_base_uri=f"gs://576e2361-arc-agi-2/checkpoints/",
-    size_bins=[12, 16, 24, 30],
+    size_bins=[12, 20, 30],
     model=ModelSelection(
+        type=training,
         config=model_config,
     ),
-    training=MAETaskConfig(
-        seed=42,
-        batch_size=1024,
-        minibatch_size=16 * accelerator_count,
-        reference_image_size=15,
-        base_cell_cost=0,
-        ref_batch=256,
-        learning_rate=1e-5,
-        max_num_epochs=10,
-        max_num_ref_batches=None,
-        warmup_steps=64,
-        checkpoint_every_steps=256,
-        knn_validation_every_ref_batch=256,  # eval dataset is about 24 reference batches big
-        mode="flat",
-        remat=True,
-        unroll=None,
-        test_ratio=0.25,
-        nonmask_fraction=0.2,
-        randomise_fraction=0.5,
-    ),
     wandb_secret_name="wandb-api-key",
+    encoder_checkpoint="gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
+    **{
+        MAETaskConfig: dict(mae_training=training_config),
+        ArcSolverConfig: dict(arc_solver_training=training_config),
+    }[type(training_config)],
 )
 
 accelerator_type = dict(
@@ -86,8 +139,8 @@ tune_task = (
 
 
 def to_json(obj):
-    if _is_config_class(type(obj)):
-        return {f.name: to_json(getattr(obj, f.name)) for f in _get_fields(type(obj))}
+    if nested := _get_config_class(type(obj)):
+        return {f.name: to_json(getattr(obj, f.name)) for f in _get_fields(nested)}
     match obj:
         case dict():
             return {k: to_json(v) for k, v in obj.items()}
@@ -99,7 +152,7 @@ def to_json(obj):
             return obj
 
 
-pretrain_task = ["full-pretraining", "--config-json", json5.dumps(to_json(config))]
+pretrain_task = ["train", "--config-json", json5.dumps(to_json(config))]
 print(pretrain_task)
 
 args = pretrain_task
@@ -108,6 +161,7 @@ env = dict(
     XLA_PYTHON_CLIENT_MEM_FRACTION="1.00",
     GCP_PROJECT_ID="deep-time-358505",
     JAX_COMPILATION_CACHE_DIR="/gcs/41bd4de0-jax-cache",
+    JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES="all",
     #    JAX_LOG_COMPILES="1", # attention: huge amount of logs
 )
 

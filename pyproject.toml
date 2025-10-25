@@ -56,6 +56,7 @@ train = [
     "google-cloud-secret-manager",
     "google-cloud-storage",
     "wandb",
+    "etils[epath]",
     "gcsfs",
 ]
 

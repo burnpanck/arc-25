@@ -1,5 +1,6 @@
 import dataclasses
 import enum
+import functools
 from types import MappingProxyType
 
 import attrs
@@ -58,13 +59,26 @@ _known_types = {
     if isinstance(t, type) and not k.startswith("_")
 }
 
+_renamed_attrs = {}
 
-def serialisable(t):
+
+def serialisable(t=None, *, renamed_attrs=None):
+    if t is None:
+        kw = {
+            k: v
+            for k, v in dict(
+                renamed_attrs=renamed_attrs,
+            ).items()
+            if v is not None
+        }
+        return functools.partial(serialisable, **kw)
     assert (
         t.__qualname__ not in _known_types
         or t.__module__ == _known_types[t.__qualname__].__module__
     )
     _known_types[t.__qualname__] = t
+    if renamed_attrs is not None:
+        _renamed_attrs[t] = renamed_attrs
     return t
 
 
@@ -102,4 +116,7 @@ def deserialise(data):
         return cls[data["name"]]
     else:
         assert attrs.has(cls) or dataclasses.is_dataclass(cls)
-    return cls(**deserialise(data))
+    a = deserialise(data)
+    if (renamed_attrs := _renamed_attrs.get(cls)) is not None:
+        a = {renamed_attrs.get(k, k): v for k, v in a.items()}
+    return cls(**a)

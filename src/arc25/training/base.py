@@ -1,11 +1,12 @@
 """Base classes for training infrastructure shared between MAE and ArcSolver."""
 
+import datetime
 import time
 import typing
 from abc import abstractmethod
-from pathlib import Path
 
 import attrs
+import etils.epath
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -168,12 +169,17 @@ class TrainStateBase(nnx.Module):
     )
     def _compute_grads(self, minibatch_dict, kw):
         """Compute gradients for one minibatch (pmap'd, no update)."""
-        print(
-            f"Tracing _compute_grads for shape {list(minibatch_dict.values())[0].shape}"
+        kw = dict(kw)
+        shapes = ", ".join(
+            f"{k}=({','.join(str(i) for i in v.shape)})"
+            for k, v in minibatch_dict.items()
+            if v is not None
         )
+        kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
+        print(f"Tracing _compute_grads for shape dict({shapes}) (kw=dict({kwstr}))")
 
         def loss_fn(model):
-            return self.loss_fn(model, minibatch_dict, **dict(kw))
+            return self.loss_fn(model, minibatch_dict, **kw)
 
         grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
         (_, stats), grads = grad_fn(self.model)
@@ -334,52 +340,47 @@ class TrainerBase:
 
             yield stats, is_jit_step
 
-    @classmethod
     def run_main(
-        cls,
-        trainer: typing.Self,
+        self,
         *,
-        checkpoint_dir: "Path | str | None",
-        wandb_project: str | None,
-        run_name: str,
-        config: ImageTrainConfigBase,
+        checkpoint_dir: etils.epath.Path | str | None = None,
+        wandb_project: str | None = None,
+        run_name: str | None = None,
     ) -> tuple[typing.Self, list[dict]]:
         """Common checkpoint/wandb/training loop logic.
 
         Args:
-            trainer: Initialized trainer instance
             checkpoint_dir: Optional checkpoint directory
             wandb_project: Optional wandb project name
             run_name: Run name for checkpoints/wandb
             config: Training configuration
 
-        Returns:
-            Tuple of (trainer, all_stats)
         """
 
         import tqdm.auto
 
-        from . import gcp
+        config = self.config
+        model = self.train_state.model
+
+        if run_name is None:
+            now = datetime.datetime.now().astimezone(datetime.timezone.utc)
+            run_name = f"{now:%Y%m%d-%H%M}-{type(self).__name__}"
 
         devices = jax.devices()
 
         # Print training info
-        print(f"--- {type(trainer).__name__} ---")
+        print(f"--- {type(self).__name__} ---")
+        print(f"Run: {run_name}")
         print(f"Devices: {len(devices)} × {devices[0].device_kind}")
-        print(f"Training batch size: {config.batch_size} (1 step)")
+        print(f"Training batch data weight: {config.batch_size} (1 optimizer step)")
         print(
-            f"Reference step size: {config.ref_batch} (~{config.ref_batch/config.batch_size:.2f} steps)"
+            f"Reference step data weight: {config.ref_batch} (~{config.ref_batch/config.batch_size:.2f} optimizer steps)"
         )
-        print(f"Total steps: {int(trainer.total_steps)}")
-        if trainer.knn_evaluator is not None:
-            print(
-                f"k-NN evaluation: every {config.knn_validation_every_ref_batch} reference steps"
-            )
+        print(f"Total steps: {int(self.total_steps)}")
+        print(f"Evaluation: every {config.eval_every_ref_batch} reference steps")
         if checkpoint_dir is not None:
-            print(f"Checkpoints: every {config.checkpoint_every_steps} steps")
+            print(f"Checkpoints: every {config.checkpoint_every_steps} optimizer steps")
         print("----------------------------\n")
-
-        model = trainer.train_state.model
 
         # Build metadata/config dicts
         wandb_config = dict(
@@ -389,7 +390,7 @@ class TrainerBase:
         )
 
         base_metadata = dict(
-            config=dict(trainer=config, model=model.config),
+            config=dict(self=config, model=model.config),
             code_version=arc25.__version__,
         )
 
@@ -400,44 +401,37 @@ class TrainerBase:
         resume_wandb_id = None
 
         if checkpoint_dir is not None:
-            checkpoint_dir = Path(checkpoint_dir)
-            is_gcs = gcp.is_gcs_path(checkpoint_dir)
-
-            # Create directory only for local filesystem
-            if not is_gcs:
-                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint_dir = etils.epath.Path(checkpoint_dir)
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
             chkp_pfx = f"{run_name}-chkp"
 
             # Scan for existing checkpoints
-            if is_gcs or checkpoint_dir.exists():
+            def parse_step(path: etils.epath.Path) -> int | None:
+                stem = path.stem
+                if stem.endswith(".msgpack"):
+                    stem = stem[: -len(".msgpack")]
+                try:
+                    return int(stem.split("-")[-1])
+                except ValueError:
+                    return None
 
-                def parse_step(path: Path) -> int | None:
-                    stem = path.stem
-                    if stem.endswith(".msgpack"):
-                        stem = stem[: -len(".msgpack")]
-                    try:
-                        return int(stem.split("-")[-1])
-                    except ValueError:
-                        return None
+            checkpoint_files = [
+                (p, step)
+                for p in checkpoint_dir.glob(f"{chkp_pfx}-*.msgpack.xz")
+                if "-final" not in p.name and (step := parse_step(p)) is not None
+            ]
 
-                checkpoint_files = [
-                    (p, step)
-                    for p in checkpoint_dir.glob(f"{chkp_pfx}-*.msgpack.xz")
-                    if "-final" not in p.name and (step := parse_step(p)) is not None
-                ]
-
-                if checkpoint_files:
-                    resume_from_checkpoint, resume_step = max(
-                        checkpoint_files, key=lambda x: x[1]
-                    )
-                    print(
-                        f"Found checkpoint to resume from: {resume_from_checkpoint.name} "
-                        f"(step {resume_step})"
-                    )
+            if checkpoint_files:
+                resume_from_checkpoint, resume_step = max(
+                    checkpoint_files, key=lambda x: x[1]
+                )
+                print(
+                    f"Found checkpoint to resume from: {resume_from_checkpoint.name} "
+                    f"(step {resume_step})"
+                )
         else:
             chkp_pfx = None
-            is_gcs = False
 
         # Resume from checkpoint if found
         if resume_from_checkpoint is not None:
@@ -445,20 +439,20 @@ class TrainerBase:
             checkpoint_data = load_model(resume_from_checkpoint)
 
             # Update training state
-            nnx.update(trainer.train_state, checkpoint_data.state)
+            nnx.update(self.train_state, checkpoint_data.state)
 
             # Restore progress tracking
             if (stats := checkpoint_data.metadata.get("stats")) is not None:
-                trainer.step = stats.get("training_step", resume_step)
-                data_step = stats.get("data_step", trainer.step)
+                self.step = stats.get("training_step", resume_step)
+                data_step = stats.get("data_step", self.step)
                 resume_accumulated_weight = stats.get("accumulated_weight")
-                trainer.examples_seen = stats.get("examples_seen", 0)
+                self.examples_seen = stats.get("examples_seen", 0)
                 print(
-                    f"Checkpoint loaded. Resuming from step {trainer.step} (data: {data_step}, "
-                    f"examples seen: {trainer.examples_seen})"
+                    f"Checkpoint loaded. Resuming from step {self.step} (data: {data_step}, "
+                    f"examples seen: {self.examples_seen})"
                 )
             else:
-                trainer.step = resume_step
+                self.step = resume_step
                 data_step = resume_step
                 print(f"Checkpoint loaded. Resuming from step {resume_step}")
 
@@ -469,7 +463,7 @@ class TrainerBase:
 
             # Fast-forward collator
             print(f"Fast-forwarding data pipeline by {data_step} steps...")
-            trainer.collator.fast_forward(data_step)
+            self.collator.fast_forward(data_step)
             print("Data pipeline synchronized")
 
         # Initialize wandb if project name provided
@@ -490,16 +484,9 @@ class TrainerBase:
             base_metadata["wandb_run_id"] = wandb_run.id
 
         # Helper function to save checkpoints
-        def save_checkpoint(checkpoint_path: Path, metadata: dict) -> None:
-            """Save checkpoint, uploading to GCS if needed."""
-            if is_gcs:
-                gcp.save_and_upload_to_gcs(
-                    lambda f: save_model(trainer.train_state, f, metadata=metadata),
-                    checkpoint_path,
-                    checkpoint_path.name,
-                )
-            else:
-                save_model(trainer.train_state, checkpoint_path, metadata=metadata)
+        def save_checkpoint(checkpoint_path: etils.epath.Path, metadata: dict) -> None:
+            """Save checkpoint (works for both local and GCS paths)."""
+            save_model(self.train_state, checkpoint_path, metadata=metadata)
 
         print("Starting training...")
         start_time = time.monotonic()
@@ -525,9 +512,9 @@ class TrainerBase:
             elapsed_time = time.monotonic() - start_time
 
             training_step = stats["training_step"]
-            training_progress = stats["accumulated_weight"] / trainer.config.ref_batch
+            training_progress = stats["accumulated_weight"] / self.config.ref_batch
             prev_progress = (
-                all_stats[-1]["accumulated_weight"] / trainer.config.ref_batch
+                all_stats[-1]["accumulated_weight"] / self.config.ref_batch
                 if all_stats
                 else 0
             )
@@ -557,7 +544,7 @@ class TrainerBase:
             all_stats.append(stats)
 
             # Periodic evaluation (task-specific)
-            eval_result = trainer.periodic_evaluation(
+            eval_result = self.periodic_evaluation(
                 stats, training_progress, prev_progress
             )
             if eval_result is not None:
@@ -568,7 +555,7 @@ class TrainerBase:
             # Checkpointing (periodic)
             if (
                 checkpoint_dir is not None
-                and not training_step % trainer.config.checkpoint_every_steps
+                and not training_step % self.config.checkpoint_every_steps
             ):
                 checkpoint_path = (
                     checkpoint_dir / f"{chkp_pfx}-{training_step:06d}.msgpack.xz"
@@ -602,9 +589,9 @@ class TrainerBase:
             if wandb_run is not None:
                 wandb_run.log(stats, step=training_step)
 
-        with tqdm.auto.tqdm(total=int(trainer.total_steps), desc="Training") as pbar:
+        with tqdm.auto.tqdm(total=int(self.total_steps), desc="Training") as pbar:
             try:
-                for stats_dev, is_jit_step in trainer.train(
+                for stats_dev, is_jit_step in self.train(
                     start_weight=resume_accumulated_weight
                 ):
                     # Process pending stats from previous step
@@ -646,4 +633,4 @@ class TrainerBase:
         )
         print(f"Average throughput: {wps:.1f} weight/s")
 
-        return trainer, all_stats
+        return all_stats

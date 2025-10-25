@@ -11,11 +11,23 @@ import click
 import json5
 
 
-def _is_config_class(type_hint):
+def _get_config_class(type_hint) -> type | None:
     """Check if a type is an attrs class or dataclass."""
-    if isinstance(type_hint, type):
-        return attrs.has(type_hint) or dataclasses.is_dataclass(type_hint)
-    return False
+    origin = typing.get_origin(type_hint)
+    if origin in {types.UnionType, typing.Union, typing.Optional}:
+        # we can only handle effective "optinals"
+        alternatives = typing.get_args(type_hint)
+        non_none = [t for t in alternatives if t is not type(None)]
+        if len(non_none) != 1:
+            raise ValueError(f"Cannot handle union {type_hint}")
+        (inner,) = non_none
+        type_hint = inner
+
+    if isinstance(type_hint, type) and (
+        attrs.has(type_hint) or dataclasses.is_dataclass(type_hint)
+    ):
+        return type_hint
+    return None
 
 
 def _get_fields(cls):
@@ -63,9 +75,9 @@ def _flatten_config_fields(cls, prefix_path=()):
         field_path = prefix_path + (info.name,)
 
         # Check if field is a nested config class
-        if _is_config_class(info.type):
+        if nested := _get_config_class(info.type):
             # Recurse into nested config
-            flattened.extend(_flatten_config_fields(info.type, field_path))
+            flattened.extend(_flatten_config_fields(nested, field_path))
         else:
             flattened.append((field_path, info))
 
@@ -106,7 +118,7 @@ def attrs_to_click_options(func):
     DRY approach - single source of truth for configuration parameters.
     """
     (args_cls,) = inspect.get_annotations(func).values()
-    assert _is_config_class(args_cls)
+    assert _get_config_class(args_cls)
 
     # Flatten hierarchical structure
     flat_fields = _flatten_config_fields(args_cls)
@@ -275,9 +287,9 @@ def reconstruct_hierarchical_config(cls, config_dict):
         value = config_dict[field_name]
 
         # If field is a nested config class, recurse
-        if _is_config_class(info.type):
+        if nested := _get_config_class(info.type):
             if isinstance(value, dict):
-                kwargs[field_name] = reconstruct_hierarchical_config(info.type, value)
+                kwargs[field_name] = reconstruct_hierarchical_config(nested, value)
             else:
                 # Value is already an instance (shouldn't happen with CLI, but handle it)
                 kwargs[field_name] = value
