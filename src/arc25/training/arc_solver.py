@@ -38,8 +38,11 @@ from .saving import save_model
 class ArcSolverConfig(ImageTrainConfigBase):
     """Configuration for ArcSolver training."""
 
+    loss_focus: float = 0.1
 
-_adaptive_lim = np.log([0.01, 100]).astype(np.float32)
+
+_adaptive_lim = np.log([1e-2, 1e2]).astype(np.float32)
+_adaptation_lim = np.log([1e-10, 1e10]).astype(np.float32)
 
 
 class TrainState(TrainStateBase):
@@ -107,6 +110,7 @@ class TrainState(TrainStateBase):
         rel_logprob = reference_entropy - pair_crossentropy
         lolim, hilim = _adaptive_lim
         loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
+        lolim, hilim = _adaptation_lim
         relprob = jnp.exp(jnp.clip(rel_logprob, lolim, hilim))
         if image_weights is not None:
             loss_weight = loss_weight * image_weights
@@ -180,9 +184,9 @@ class TrainState(TrainStateBase):
         self.optimizer.update(self.model, grads, learning_rate=learning_rate)
 
         # Apply EMA update to reference entropy
-        beta = 0.05
+        beta = 0.02
         log_relprob = jnp.log(relprob)
-        lolim, hilim = _adaptive_lim
+        lolim, hilim = _adaptation_lim
         is_clipped = (log_relprob <= lolim + 0.05) | (log_relprob >= hilim - 0.05)
         decay = beta * self.reference_entropy_weight
         norm = self.reference_entropy_weight.value + beta - decay
@@ -448,7 +452,7 @@ class ArcSolverTrainer(TrainerBase):
 
         params = dict(
             reference_entropy=self.train_state.reference_entropy.value,
-            loss_focus=self._warmup_factor(),
+            loss_focus=self.config.loss_focus * self._warmup_factor(),
         )
 
         if params_separate:
@@ -729,7 +733,7 @@ class ArcSolverTrainer(TrainerBase):
         wandb_project: str | None = None,
         run_name: str | None = None,
         num_devices: int | None = None,
-        with_progress_bars: bool = False,
+        **kw,
     ):
         # Detect available devices
         if num_devices is None:
@@ -793,7 +797,7 @@ class ArcSolverTrainer(TrainerBase):
             rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
             eval_dataset=eval_dataset,
-            with_progress_bars=with_progress_bars,
+            **kw,
         )
 
         # Run common training loop
