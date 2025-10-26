@@ -245,11 +245,15 @@ class TrainState(TrainStateBase):
             **kw,
         ).astype(jnp.float32)
 
-        # Loss on ALL output cells
-        pair_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
+        # Loss on ALL output cells (not masked like MAE)
+        cell_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
             logits=logits, labels=outputs, axis=-1
         )
+
         # Mask to valid output regions and weight by pre-normalized cell weights
+        pair_crossentropy = jnp.where(output_masks, cell_crossentropy, 0).sum(
+            axis=(-2, -1)
+        )
         rel_logprob = reference_entropy - pair_crossentropy
         lolim = jnp.array(np.log(0.01), jnp.float32)
         hilim = jnp.array(np.log(100), jnp.float32)
