@@ -39,6 +39,9 @@ class ArcSolverConfig(ImageTrainConfigBase):
     """Configuration for ArcSolver training."""
 
 
+_adaptive_lim = np.log([0.01, 100]).astype(np.float32)
+
+
 class TrainState(TrainStateBase):
     """Training state for ArcSolver with encoder-decoder architecture.
 
@@ -54,8 +57,8 @@ class TrainState(TrainStateBase):
         rngs: nnx.Rngs,
     ) -> typing.Self:
         self = super().make(model, config, rngs=rngs)
-        self.reference_entropy = nnx.Variable(jnp.array(0, jnp.float32))
-        self.reference_entropy_weight = nnx.Variable(jnp.array(0.05, jnp.float32))
+        self.reference_entropy = nnx.Variable(jnp.array(500, jnp.float32))
+        self.reference_entropy_weight = nnx.Variable(jnp.array(0, jnp.float32))
         return self
 
     @staticmethod
@@ -102,8 +105,7 @@ class TrainState(TrainStateBase):
             axis=(-2, -1)
         )
         rel_logprob = reference_entropy - pair_crossentropy
-        lolim = jnp.array(np.log(0.01), jnp.float32)
-        hilim = jnp.array(np.log(100), jnp.float32)
+        lolim, hilim = _adaptive_lim
         loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
         relprob = jnp.exp(jnp.clip(rel_logprob, lolim, hilim))
         if image_weights is not None:
@@ -179,14 +181,26 @@ class TrainState(TrainStateBase):
 
         # Apply EMA update to reference entropy
         beta = 0.05
-        self.reference_entropy_weight.value += beta * (
-            1 - self.reference_entropy_weight
-        )
+        log_relprob = jnp.log(relprob)
+        lolim, hilim = _adaptive_lim
+        is_clipped = (log_relprob <= lolim + 0.05) | (log_relprob >= hilim - 0.05)
+        decay = beta * self.reference_entropy_weight
+        norm = self.reference_entropy_weight.value + beta - decay
+        self.reference_entropy_weight.value += jnp.where(is_clipped, 0, beta) - decay
         # note relprob ~ -log(entropy) !
-        self.reference_entropy.value += jnp.log1p(
-            -beta / self.reference_entropy_weight * (jnp.log(relprob) + 1)
-        )
+        delta = -(fac := beta / norm) * log_relprob
+        self.reference_entropy.value += delta
         stats["reference_entropy"] = self.reference_entropy.value
+        if False:
+            stats["debug"] = dict(
+                reference_entropy=self.reference_entropy.value,
+                is_clipped=is_clipped,
+                relprob=relprob,
+                delta=delta,
+                fac=fac,
+                log_relprob=log_relprob,
+                reference_entropy_weight=self.reference_entropy_weight.value,
+            )
 
         return stats
 
@@ -255,8 +269,7 @@ class TrainState(TrainStateBase):
             axis=(-2, -1)
         )
         rel_logprob = reference_entropy - pair_crossentropy
-        lolim = jnp.array(np.log(0.01), jnp.float32)
-        hilim = jnp.array(np.log(100), jnp.float32)
+        lolim, hilim = _adaptive_lim
         loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
         if image_weights is not None:
             loss_weight = loss_weight * image_weights
