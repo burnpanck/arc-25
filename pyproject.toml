@@ -50,7 +50,14 @@ cuda12-local = [
 cuda13-local = [
     "jax[cuda13-local]>=0.7.2",
 ]
-
+train = [
+    "google-cloud-aiplatform",
+    "google-cloud-secret-manager",
+    "google-cloud-storage",
+    "wandb",
+    "etils[epath]",
+    "gcsfs",
+]
 
 [dependency-groups]
 test = [
@@ -60,14 +67,6 @@ test = [
 deploy = [
     "kaggle>=1.7.4.5",
     "asyncclick>=8.2.2.2",
-]
-train = [
-    "google-cloud-aiplatform",
-    "google-cloud-secret-manager",
-    "google-cloud-storage",
-    "wandb",
-    "etils[epath]",
-    "gcsfs",
 ]
 
 [build-system]

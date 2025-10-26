@@ -243,7 +243,7 @@ class TrainerBase:
         return total_weight / config.batch_size
 
     @abstractmethod
-    def prepare_batch(self, minibatches: tuple[MiniBatchData, ...]) -> tuple[dict, ...]:
+    def prepare_batch(self, batch: BatchData) -> tuple[dict, ...]:
         """Prepare minibatches for training (task-specific).
 
         Args:
@@ -267,6 +267,11 @@ class TrainerBase:
             Eval results are merged into stats for logging.
         """
         return None
+
+    def _warmup_factor(self) -> float:
+        if self.step >= self.config.warmup_steps:
+            return 1.0
+        return (self.step + 1) / self.config.warmup_steps
 
     def train(
         self, *, start_weight: float | None = None
@@ -292,7 +297,7 @@ class TrainerBase:
             self._seen_bucket_shapes.update(bucket_shapes)
 
             # Prepare batch (task-specific)
-            prepared_minibatches = self.prepare_batch(batch_data.minibatches)
+            prepared_minibatches = self.prepare_batch(batch_data)
 
             # Compute learning rate based on total example weight seen so far
             target_lr = self.lr_schedule(
@@ -300,8 +305,7 @@ class TrainerBase:
             )
 
             # Apply warmup
-            if self.step < self.config.warmup_steps:
-                target_lr *= (self.step + 1) / self.config.warmup_steps
+            target_lr *= self._warmup_factor()
 
             # Linearly scale learning rate with respect to batch weight fluctuations
             weighted_lr = (
@@ -643,5 +647,8 @@ class TrainerBase:
             elapsed_time - excluded_time
         )
         print(f"Average throughput: {wps:.1f} weight/s")
+
+        if wandb_run is not None:
+            wandb_run.finish(0)
 
         return all_stats

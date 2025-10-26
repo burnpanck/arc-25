@@ -45,6 +45,19 @@ class TrainState(TrainStateBase):
     The encoder is frozen (stop_gradient applied), only decoder is trained.
     """
 
+    @classmethod
+    def make(
+        cls,
+        model: nnx.Module,
+        config: ArcSolverConfig,
+        *,
+        rngs: nnx.Rngs,
+    ) -> typing.Self:
+        self = super().make(model, config, rngs=rngs)
+        self.reference_entropy = nnx.Variable(jnp.array(0, jnp.float32))
+        self.reference_entropy_weight = nnx.Variable(jnp.array(0.05, jnp.float32))
+        return self
+
     @staticmethod
     def loss_fn(model, minibatch_dict, **kw):
         """Compute ArcSolver loss for a single minibatch.
@@ -65,6 +78,11 @@ class TrainState(TrainStateBase):
         latent_program_idx = minibatch_dict["latent_program_idx"]
         image_weights = minibatch_dict["image_weight"]
         cell_weights = minibatch_dict["cell_weight"]
+        reference_entropy = minibatch_dict["reference_entropy"]
+        loss_focus = minibatch_dict["loss_focus"]
+
+        assert reference_entropy.size == 1
+        assert loss_focus.size == 1
 
         # Decode to predict outputs
         logits = model(
@@ -72,23 +90,41 @@ class TrainState(TrainStateBase):
             input_sizes,
             latent_program_idx=latent_program_idx,
             **kw,
-        )
+        ).astype(jnp.float32)
 
         # Loss on ALL output cells (not masked like MAE)
-        per_cell_loss = optax.softmax_cross_entropy_with_integer_labels(
+        cell_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
             logits=logits, labels=outputs, axis=-1
         )
 
         # Mask to valid output regions and weight by pre-normalized cell weights
-        loss = (jnp.where(output_masks, per_cell_loss, 0) * cell_weights).sum()
+        pair_crossentropy = jnp.where(output_masks, cell_crossentropy, 0).sum(
+            axis=(-2, -1)
+        )
+        rel_logprob = reference_entropy - pair_crossentropy
+        lolim = jnp.array(np.log(0.01), jnp.float32)
+        hilim = jnp.array(np.log(100), jnp.float32)
+        loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
+        relprob = jnp.exp(jnp.clip(rel_logprob, lolim, hilim))
+        if image_weights is not None:
+            loss_weight = loss_weight * image_weights
+            loss = loss_weight * pair_crossentropy
+            relprob = relprob * image_weights
+            pair_crossentropy = pair_crossentropy * image_weights
+        else:
+            loss = loss_weight * pair_crossentropy
+        total_loss = loss.sum()
+        total_loss_weight = loss_weight.sum()
+        total_relprob = relprob.sum()
+        total_pair_crossentropy = pair_crossentropy.sum()
 
         # Per-cell accuracy
         predictions = jnp.argmax(logits, axis=-1)
-        per_cell_correct = (predictions == outputs) * output_masks * cell_weights
-        per_cell_accuracy = per_cell_correct.sum()
+        cell_correct = (predictions == outputs) * output_masks * cell_weights
+        total_cell_accuracy = cell_correct.sum()
 
         # Per-pair accuracy (all cells in output must be correct)
-        per_pair_correct = (
+        pair_correct = (
             (
                 # Padding doesn't count against accuracy
                 (predictions == outputs)
@@ -97,20 +133,62 @@ class TrainState(TrainStateBase):
             .all(axis=(-2, -1))
             .astype(jnp.float32)
         )
-        per_pair_accuracy = (
-            per_pair_correct * image_weights
-            if image_weights is not None
-            else per_pair_correct
+        total_pair_accuracy = (
+            pair_correct * image_weights if image_weights is not None else pair_correct
         ).sum()
 
-        return loss, dict(
-            loss=loss,
-            cell_accuracy=per_cell_accuracy,
-            pair_accuracy=per_pair_accuracy,
+        return total_loss, dict(
+            loss=total_loss,
+            loss_weight=total_loss_weight,
+            relprob=total_relprob,
+            pair_crossentropy=total_pair_crossentropy,
+            cell_accuracy=total_cell_accuracy,
+            pair_accuracy=total_pair_accuracy,
         )
 
-    def embed_inputs(self, minibatch_dict, **kw):
-        return self._embed_inputs(self.model, minibatch_dict, tuple(kw.items()))
+    @nnx.pmap(
+        axis_name="data",
+        in_axes=(
+            nnx.StateAxes({...: None}),
+            0,
+            0,
+            None,
+            None,
+        ),
+        out_axes=None,
+    )
+    def _apply_update(self, grads, stats, total_weight, learning_rate):
+        """Apply accumulated gradients (pmap'd, with pmean)."""
+        print("Tracing _apply_update")
+
+        grads = jax.lax.psum(grads, axis_name="data")
+        stats = jax.lax.psum(stats, axis_name="data")
+
+        loss_weight = stats.pop("loss_weight")
+        loss = stats.pop("loss")
+
+        lw = 1 / loss_weight
+        grads = jax.tree.map(lambda a: a * jnp.array(lw, dtype=a.dtype), grads)
+        sw = jnp.array(1 / total_weight, jnp.float32)
+        stats = jax.tree.map(lambda a: a * sw, stats)
+        relprob = stats.pop("relprob")
+        stats["loss"] = loss * lw
+
+        # Apply optimizer update
+        self.optimizer.update(self.model, grads, learning_rate=learning_rate)
+
+        # Apply EMA update to reference entropy
+        beta = 0.05
+        self.reference_entropy_weight.value += beta * (
+            1 - self.reference_entropy_weight
+        )
+        # note relprob ~ -log(entropy) !
+        self.reference_entropy.value += jnp.log1p(
+            -beta / self.reference_entropy_weight * (jnp.log(relprob) + 1)
+        )
+        stats["reference_entropy"] = self.reference_entropy.value
+
+        return stats
 
     @staticmethod
     @nnx.jit(static_argnums=2)
@@ -133,12 +211,9 @@ class TrainState(TrainStateBase):
             **kw,
         )
 
-    def evaluate(self, minibatch_dict, **kw):
-        return self._evaluate(self.model, minibatch_dict, tuple(kw.items()))
-
     @staticmethod
-    @nnx.jit(static_argnums=(2,))
-    def _evaluate(model, minibatch_dict, kw):
+    @nnx.jit(static_argnums=(3,))
+    def _evaluate(model, minibatch_dict, params, kw):
         kw = dict(kw)
         shapes = ", ".join(
             (
@@ -159,6 +234,8 @@ class TrainState(TrainStateBase):
         latent_program_idx = minibatch_dict["latent_program_idx"]
         image_weights = minibatch_dict["image_weight"]
         cell_weights = minibatch_dict["cell_weight"]
+        reference_entropy = params["reference_entropy"]
+        loss_focus = params["loss_focus"]
 
         # Decode to predict outputs
         logits = model.decode(
@@ -166,17 +243,23 @@ class TrainState(TrainStateBase):
             output_size=output_sizes,
             latent_program_idx=latent_program_idx,
             **kw,
-        )
+        ).astype(jnp.float32)
 
         # Loss on ALL output cells
-        per_cell_loss = optax.softmax_cross_entropy_with_integer_labels(
+        pair_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
             logits=logits, labels=outputs, axis=-1
         )
-
         # Mask to valid output regions and weight by pre-normalized cell weights
-        loss = (jnp.where(output_masks, per_cell_loss, 0) * cell_weights).sum(
-            axis=(-2, -1)
-        )
+        rel_logprob = reference_entropy - pair_crossentropy
+        lolim = jnp.array(np.log(0.01), jnp.float32)
+        hilim = jnp.array(np.log(100), jnp.float32)
+        loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
+        if image_weights is not None:
+            loss_weight = loss_weight * image_weights
+            loss = loss_weight * pair_crossentropy
+            pair_crossentropy = pair_crossentropy * image_weights
+        else:
+            loss = loss_weight * pair_crossentropy
 
         # Per-cell accuracy
         predictions = jnp.argmax(logits, axis=-1)
@@ -202,6 +285,8 @@ class TrainState(TrainStateBase):
         per_image_stats = jnp.stack(
             [
                 loss,
+                loss_weight,
+                pair_crossentropy,
                 cell_accuracy,
                 pair_accuracy,
             ],
@@ -210,19 +295,23 @@ class TrainState(TrainStateBase):
 
         K = model.latent_program_embeddings.shape[0]
         per_class_stats = (
-            jnp.zeros((K, 3), dtype=per_image_stats.dtype)
+            jnp.zeros((K, 5), dtype=per_image_stats.dtype)
             .at[latent_program_idx]
             .add(per_image_stats)
         )
 
         return dict(
             loss=loss.sum(),
+            loss_weight=loss_weight.sum(),
+            pair_crossentropy=pair_crossentropy.sum(),
             cell_accuracy=cell_accuracy.sum(),
             pair_accuracy=pair_accuracy.sum(),
             per_class=dict(
                 loss=per_class_stats[:, 0],
-                cell_accuracy=per_class_stats[:, 1],
-                pair_accuracy=per_class_stats[:, 2],
+                loss_weight=per_class_stats[:, 1],
+                pair_crossentropy=per_class_stats[:, 2],
+                cell_accuracy=per_class_stats[:, 3],
+                pair_accuracy=per_class_stats[:, 4],
             ),
         )
 
@@ -275,7 +364,7 @@ class ArcSolverTrainer(TrainerBase):
             **kw,
         )
 
-    def prepare_batch(self, minibatches: tuple[MiniBatchData, ...]) -> tuple[dict, ...]:
+    def prepare_batch(self, batch: BatchData) -> tuple[dict, ...]:
         """Prepare minibatches for ArcSolver training by looking up inputs.
 
         Args:
@@ -286,7 +375,7 @@ class ArcSolverTrainer(TrainerBase):
         """
         prepared = []
 
-        for output_mb in minibatches:
+        for output_mb in batch.minibatches:
             # Look up corresponding inputs from InputLookup
             input_mb = self.inputs_src.get_peer_batch(
                 output_mb,
@@ -295,7 +384,7 @@ class ArcSolverTrainer(TrainerBase):
             )
 
             # Create training dict
-            mb_dict = self._prepare_output_minibatch(output_mb)
+            mb_dict = self._prepare_output_minibatch(output_mb, params_separate=False)
             mb_dict.update(
                 inputs=input_mb.images,
                 input_sizes=input_mb.sizes,
@@ -305,7 +394,9 @@ class ArcSolverTrainer(TrainerBase):
 
         return tuple(prepared)
 
-    def _prepare_output_minibatch(self, output_mb: MiniBatchData) -> dict:
+    def _prepare_output_minibatch(
+        self, output_mb: MiniBatchData, *, params_separate: bool
+    ) -> dict:
 
         # Extract latent_program_idx from labels (challenge_id is labels[:, 0])
         latent_program_idx = output_mb.labels[..., 0].astype(np.int32)
@@ -330,13 +421,32 @@ class ArcSolverTrainer(TrainerBase):
         image_weight = weights
 
         # Create training dict
-        return dict(
+        ret = dict(
             outputs=output_mb.images,
             output_masks=output_masks,
             latent_program_idx=latent_program_idx,
             cell_weight=cell_weight,
             image_weight=image_weight,
         )
+
+        params = dict(
+            reference_entropy=self.train_state.reference_entropy.value,
+            loss_focus=self._warmup_factor(),
+        )
+
+        if params_separate:
+            return ret, params
+        # params are scalars, but `TrainerBase` distributes
+        # all attributes in minibatch_dict, we need to replicate here
+        replication_shape = (self.num_devices,)
+        ret.update(
+            {
+                k: jnp.tile(v, replication_shape).astype(jnp.float32)
+                for k, v in params.items()
+            }
+        )
+
+        return ret
 
     def _cache_embeddings(self):
         # setup buckets - borrow from the main bucketing
@@ -423,13 +533,15 @@ class ArcSolverTrainer(TrainerBase):
                 # reap embeddings back from the devices
                 embeddings = jax.tree.map(lambda a: jax.device_get(a), embeddings)
 
-                mb_dict = self._prepare_output_minibatch(output_mb)
+                mb_dict, params = self._prepare_output_minibatch(
+                    output_mb, params_separate=True
+                )
                 mb_dict.update(
                     embeddings=embeddings,
                     output_sizes=input_mb.sizes,
                 )
 
-                minibatches.append(mb_dict)
+                minibatches.append((mb_dict, params))
                 total_weight += (
                     output_mb.weight
                     if output_mb.weight is not None
@@ -468,14 +580,14 @@ class ArcSolverTrainer(TrainerBase):
             axis_types=(jax.sharding.AxisType.Auto,),
         )
 
-        model_graph, model_state = nnx.split(self.train_state.model)
-        model_state = jax.tree.map(
-            lambda a: jax.device_put(
+        def reshard(a, *args):
+            return jax.device_put(
                 a,
-                jax.NamedSharding(mesh, jax.sharding.PartitionSpec()),
-            ),
-            model_state,
-        )
+                jax.NamedSharding(mesh, jax.sharding.PartitionSpec(*args)),
+            )
+
+        model_graph, model_state = nnx.split(self.train_state.model)
+        model_state = jax.tree.map(lambda a: reshard(a), model_state)
         resharded_model = nnx.merge(model_graph, model_state)
 
         res = None
@@ -490,20 +602,13 @@ class ArcSolverTrainer(TrainerBase):
             else:
                 pbar = None
 
-            for minibatch in eval_data.minibatches:
-                minibatch = jax.tree.map(
-                    lambda a: jax.device_put(
-                        a,
-                        jax.NamedSharding(
-                            mesh,
-                            jax.sharding.PartitionSpec("batch", *[None] * (a.ndim - 1)),
-                        ),
-                    ),
-                    minibatch,
-                )
+            for minibatch, params in eval_data.minibatches:
+                minibatch = jax.tree.map(lambda a: reshard(a, "batch"), minibatch)
+                params = jax.tree.map(lambda a: reshard(a), params)
                 stats = self.train_state._evaluate(
                     resharded_model,
                     minibatch,
+                    params,
                     tuple(
                         dict(
                             mode=self.config.mode,
@@ -597,6 +702,7 @@ class ArcSolverTrainer(TrainerBase):
         wandb_project: str | None = None,
         run_name: str | None = None,
         num_devices: int | None = None,
+        with_progress_bars: bool = False,
     ):
         # Detect available devices
         if num_devices is None:
@@ -660,6 +766,7 @@ class ArcSolverTrainer(TrainerBase):
             rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
             eval_dataset=eval_dataset,
+            with_progress_bars=with_progress_bars,
         )
 
         # Run common training loop

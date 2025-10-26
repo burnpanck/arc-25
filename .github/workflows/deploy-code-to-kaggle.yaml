@@ -54,7 +54,7 @@ jobs:
         if: env.ACCELERATOR == 'gpu' || env.ACCELERATOR == 'all'
         run: |
           # Production deps + vision group + jax[cuda12-local]
-          pdm wheel -w wheelhouse --prod -v -G vision -G cuda12-local
+          pdm wheel -w wheelhouse --prod -v -G vision -G training -G cuda12-local
 
       - name: Remove heavy GPU libraries
         if: env.ACCELERATOR == 'gpu' || env.ACCELERATOR == 'all'
@@ -74,7 +74,7 @@ jobs:
         run: |
           pdm self add pdm-wheel
           # Production deps + vision group + jax[tpu]
-          pdm wheel -w wheelhouse --prod -v -G vision -G tpu
+          pdm wheel -w wheelhouse --prod -v -G vision -G training -G tpu
 
       - name: List wheelhouse contents
         run: ls -alh wheelhouse/

@@ -215,7 +215,7 @@ class MAETrainer(TrainerBase):
             knn_evaluator=knn_evaluator,
         )
 
-    def prepare_batch(self, minibatches: tuple[MiniBatchData, ...]) -> tuple[dict, ...]:
+    def prepare_batch(self, batch: BatchData) -> tuple[dict, ...]:
         """Prepare minibatches for MAE training by adding random masks.
 
         Uses the collator's RNG for reproducibility.
@@ -232,7 +232,7 @@ class MAETrainer(TrainerBase):
         randomise_fraction = self.config.randomise_fraction
         rng = self.collator.rng
 
-        for minibatch in minibatches:
+        for minibatch in batch.minibatches:
             # Convert to dict
             mb_dict = attrs.asdict(minibatch, recurse=False)
 
