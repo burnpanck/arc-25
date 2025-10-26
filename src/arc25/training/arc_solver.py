@@ -630,11 +630,21 @@ class ArcSolverTrainer(TrainerBase):
                 if pbar is not None:
                     pbar.update()
 
+        per_class = res.pop("per_class")
+        per_class_loss_weight = np.asarray(per_class.pop("loss_weight"))
+        per_class_loss = np.where(
+            per_class_loss_weight > 0,
+            np.asarray(per_class.pop("loss")) / per_class_loss_weight,
+            np.nan,
+        )
         per_class = {
             k: np.asarray(v) / np.maximum(1, eval_data.per_class_total_weight)
-            for k, v in res.pop("per_class").items()
+            for k, v in per_class.items()
         }
+        per_class["loss"] = per_class_loss
+        loss = res.pop("loss") / res.pop("loss_weight")
         stats = {k: float(v) / max(1, eval_data.total_weight) for k, v in res.items()}
+        stats["loss"] = loss
         per_class_accuracy = per_class["pair_accuracy"]
         class_accuracy_histogram, _ = np.histogram(
             per_class_accuracy,
