@@ -1,5 +1,7 @@
 """Training infrastructure for ArcSolver (encoder-decoder for ARC tasks)."""
 
+import contextlib
+import time
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +16,7 @@ from flax import nnx
 
 from ..serialisation import serialisable
 from ..vision2.arc_solver import ARCSolver
+from ..vision2.fields import Field
 from .base import TrainerBase, TrainStateBase
 from .config import ImageTrainConfigBase, describe_config_json
 from .dataset import (
@@ -102,8 +105,125 @@ class TrainState(TrainStateBase):
 
         return loss, dict(
             loss=loss,
-            per_cell_accuracy=per_cell_accuracy,
-            per_pair_accuracy=per_pair_accuracy,
+            cell_accuracy=per_cell_accuracy,
+            pair_accuracy=per_pair_accuracy,
+        )
+
+    def embed_inputs(self, minibatch_dict, **kw):
+        return self._embed_inputs(self.model, minibatch_dict, tuple(kw.items()))
+
+    @staticmethod
+    @nnx.jit(static_argnums=2)
+    def _embed_inputs(model, minibatch_dict, kw):
+        kw = dict(kw)
+        shapes = ", ".join(
+            f"{k}=({','.join(str(i) for i in v.shape)})"
+            for k, v in minibatch_dict.items()
+            if v is not None
+        )
+        kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
+        print(f"Tracing _embed_inputs for shape dict({shapes}) (kw=dict({kwstr}))")
+
+        inputs = minibatch_dict["inputs"]
+        input_sizes = minibatch_dict["input_sizes"]
+        # Decode to predict outputs
+        return model.encoder(
+            inputs,
+            input_sizes,
+            **kw,
+        )
+
+    def evaluate(self, minibatch_dict, **kw):
+        return self._evaluate(self.model, minibatch_dict, tuple(kw.items()))
+
+    @staticmethod
+    @nnx.jit(static_argnums=(2,))
+    def _evaluate(model, minibatch_dict, kw):
+        kw = dict(kw)
+        shapes = ", ".join(
+            (
+                f"{k}=({','.join(str(i) for i in v.shape)})"
+                if not isinstance(v, Field)
+                else f"{k}={v.batch_shape}"
+            )
+            for k, v in minibatch_dict.items()
+            if v is not None
+        )
+        kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
+        print(f"Tracing _evaluate for shape dict({shapes}) (kw=dict({kwstr}))")
+
+        embeddings = minibatch_dict["embeddings"]
+        outputs = minibatch_dict["outputs"]
+        output_sizes = minibatch_dict["output_sizes"]
+        output_masks = minibatch_dict["output_masks"]
+        latent_program_idx = minibatch_dict["latent_program_idx"]
+        image_weights = minibatch_dict["image_weight"]
+        cell_weights = minibatch_dict["cell_weight"]
+
+        # Decode to predict outputs
+        logits = model.decode(
+            embeddings,
+            output_size=output_sizes,
+            latent_program_idx=latent_program_idx,
+            **kw,
+        )
+
+        # Loss on ALL output cells
+        per_cell_loss = optax.softmax_cross_entropy_with_integer_labels(
+            logits=logits, labels=outputs, axis=-1
+        )
+
+        # Mask to valid output regions and weight by pre-normalized cell weights
+        loss = (jnp.where(output_masks, per_cell_loss, 0) * cell_weights).sum(
+            axis=(-2, -1)
+        )
+
+        # Per-cell accuracy
+        predictions = jnp.argmax(logits, axis=-1)
+        cell_correct = (predictions == outputs) * output_masks * cell_weights
+        cell_accuracy = cell_correct.sum(axis=(-2, -1))
+
+        # Per-pair accuracy (all cells in output must be correct)
+        pair_correct = (
+            (
+                # Padding doesn't count against accuracy
+                (predictions == outputs)
+                | ~output_masks
+            )
+            .all(axis=(-2, -1))
+            .astype(jnp.float32)
+        )
+        pair_accuracy = (
+            jnp.where(pair_correct, image_weights, 0)
+            if image_weights is not None
+            else pair_correct
+        )
+
+        per_image_stats = jnp.stack(
+            [
+                loss,
+                cell_accuracy,
+                pair_accuracy,
+            ],
+            axis=-1,
+        )
+
+        K = model.latent_program_embeddings.shape[0]
+        per_class_stats = (
+            jnp.zeros((K, 3), dtype=per_image_stats.dtype)
+            .at[latent_program_idx]
+            .add(per_image_stats)
+        )
+
+        return dict(
+            loss=loss.sum(),
+            cell_accuracy=cell_accuracy.sum(),
+            pair_accuracy=pair_accuracy.sum(),
+            per_class=dict(
+                loss=per_class_stats[:, 0],
+                cell_accuracy=per_class_stats[:, 1],
+                pair_accuracy=per_class_stats[:, 2],
+            ),
         )
 
 
@@ -112,7 +232,13 @@ class ArcSolverTrainer(TrainerBase):
     """Manages the ArcSolver training pipeline."""
 
     # ArcSolver-specific: input lookup for matching outputs to inputs
-    inputs_src: OnDemandBucketDataset
+    inputs_src: OnDemandBucketDataset = attrs.field(on_setattr=attrs.setters.frozen)
+
+    eval_dataset: ImagesDataset | None = attrs.field(
+        default=None, on_setattr=attrs.setters.frozen
+    )
+    # minibatches of evaluation data, already with pre-computed input embeddings
+    _eval_data_cache: tuple[dict, ...] | None = None
 
     @classmethod
     def make(
@@ -120,11 +246,12 @@ class ArcSolverTrainer(TrainerBase):
         config: ArcSolverConfig,
         model: ARCSolver,
         collator: BucketedCollator,
+        *,
         inputs_src: OnDemandBucketDataset,
         num_devices: int = 1,
-        *,
         lr_schedule: typing.Callable | None = None,
         rngs: nnx.Rngs,
+        **kw,
     ) -> typing.Self:
         """Create an ArcSolverTrainer instance."""
         # Create training state
@@ -145,6 +272,7 @@ class ArcSolverTrainer(TrainerBase):
             lr_schedule=lr_schedule,
             num_devices=num_devices,
             total_steps=total_steps,
+            **kw,
         )
 
     def prepare_batch(self, minibatches: tuple[MiniBatchData, ...]) -> tuple[dict, ...]:
@@ -166,42 +294,294 @@ class ArcSolverTrainer(TrainerBase):
                 transpose="match",
             )
 
-            # Extract latent_program_idx from labels (challenge_id is labels[:, 0])
-            latent_program_idx = output_mb.labels[..., 0].astype(np.int32)
-
-            # Compute weights
-            # output_mb.weight is per-example, pre-normalized across all minibatches
-            weights = output_mb.weight
-            output_masks = output_mb.masks
-
-            # Compute per-cell weights (uniform across valid cells in each example)
-            # Normalized so each example contributes proportionally to weights
-            cell_weight_per_example = output_masks / jnp.maximum(
-                output_masks.sum(axis=(-2, -1), keepdims=True), 1
-            )
-            cell_weight = (
-                weights[..., None, None] * cell_weight_per_example
-                if weights is not None
-                else cell_weight_per_example
-            )
-
-            # Per-image weight (for per-pair accuracy)
-            image_weight = weights
-
             # Create training dict
-            mb_dict = dict(
+            mb_dict = self._prepare_output_minibatch(output_mb)
+            mb_dict.update(
                 inputs=input_mb.images,
                 input_sizes=input_mb.sizes,
-                outputs=output_mb.images,
-                output_masks=output_masks,
-                latent_program_idx=latent_program_idx,
-                cell_weight=cell_weight,
-                image_weight=image_weight,
             )
 
             prepared.append(mb_dict)
 
         return tuple(prepared)
+
+    def _prepare_output_minibatch(self, output_mb: MiniBatchData) -> dict:
+
+        # Extract latent_program_idx from labels (challenge_id is labels[:, 0])
+        latent_program_idx = output_mb.labels[..., 0].astype(np.int32)
+
+        # Compute weights
+        # output_mb.weight is per-example, pre-normalized across all minibatches
+        weights = output_mb.weight
+        output_masks = output_mb.masks
+
+        # Compute per-cell weights (uniform across valid cells in each example)
+        # Normalized so each example contributes proportionally to weights
+        cell_weight_per_example = output_masks / jnp.maximum(
+            output_masks.sum(axis=(-2, -1), keepdims=True), 1
+        )
+        cell_weight = (
+            weights[..., None, None] * cell_weight_per_example
+            if weights is not None
+            else cell_weight_per_example
+        )
+
+        # Per-image weight (for per-pair accuracy)
+        image_weight = weights
+
+        # Create training dict
+        return dict(
+            outputs=output_mb.images,
+            output_masks=output_masks,
+            latent_program_idx=latent_program_idx,
+            cell_weight=cell_weight,
+            image_weight=image_weight,
+        )
+
+    def _cache_embeddings(self):
+        # setup buckets - borrow from the main bucketing
+
+        challenge_order = self.inputs_src.challenges
+        bucket_shapes = self.inputs_src.bucket_shapes
+
+        input_ds, output_ds = self.eval_dataset.split_input_output()
+
+        (eval_ds,) = [
+            BucketedDataset.make(
+                ds,
+                bucket_shapes,
+                challenges=challenge_order,
+            )
+            for ds in [output_ds]
+        ]
+
+        input_src = OnDemandBucketDataset(
+            input_ds,
+            bucket_shapes=bucket_shapes,
+            challenges=challenge_order,
+            weight_fun=lambda area: None,
+        )
+
+        mesh = jax.make_mesh(
+            (self.num_devices,),
+            ("batch",),
+            axis_types=(jax.sharding.AxisType.Auto,),
+        )
+
+        model_graph, model_state = nnx.split(self.train_state.model)
+        model_state = jax.tree.map(
+            lambda a: jax.device_put(
+                a,
+                jax.NamedSharding(mesh, jax.sharding.PartitionSpec()),
+            ),
+            model_state,
+        )
+        resharded_model = nnx.merge(model_graph, model_state)
+
+        total_weight = 0
+        per_class_total_weight = 0
+        minibatches = []
+
+        num_devices = self.num_devices
+        rgen = np.random.default_rng(self.config.seed)
+
+        with jax.set_mesh(mesh):
+            for bucket_shape, _batch_idx, output_mb in eval_ds.all_data_in_batches(
+                lambda _image_area: 256,  # heuristic, constant, large batch size
+                num_devices=num_devices,
+                rgen=rgen,
+                with_progress=self.with_progress_bars,
+            ):
+                input_mb = input_src.get_peer_batch(
+                    output_mb, target_shape=bucket_shape, transpose="match"
+                )
+
+                # shard input data onto devices
+                input_data = jax.tree.map(
+                    lambda a: jax.device_put(
+                        a,
+                        jax.NamedSharding(
+                            mesh,
+                            jax.sharding.PartitionSpec("batch", *[None] * (a.ndim - 1)),
+                        ),
+                    ),
+                    dict(inputs=input_mb.images, input_sizes=input_mb.sizes),
+                )
+
+                embeddings = self.train_state._embed_inputs(
+                    resharded_model,
+                    input_data,
+                    tuple(
+                        dict(
+                            mode=self.config.mode,
+                            remat=self.config.remat,
+                            unroll=self.config.unroll,
+                            deterministic=True,
+                        ).items()
+                    ),
+                )
+                # reap embeddings back from the devices
+                embeddings = jax.tree.map(lambda a: jax.device_get(a), embeddings)
+
+                mb_dict = self._prepare_output_minibatch(output_mb)
+                mb_dict.update(
+                    embeddings=embeddings,
+                    output_sizes=input_mb.sizes,
+                )
+
+                minibatches.append(mb_dict)
+                total_weight += (
+                    output_mb.weight
+                    if output_mb.weight is not None
+                    else output_mb.n_examples
+                )
+                per_class_total_weight = (
+                    np.bincount(
+                        output_mb.labels[..., 0].ravel(),
+                        minlength=self.train_state.model.latent_program_embeddings.shape[
+                            0
+                        ],
+                        weights=(
+                            output_mb.weight.ravel()
+                            if output_mb.weight is not None
+                            else None
+                        ),
+                    )
+                    + per_class_total_weight
+                )
+
+        self._eval_data_cache = SimpleNamespace(
+            minibatches=minibatches,
+            total_weight=total_weight,
+            per_class_total_weight=per_class_total_weight,
+        )
+
+    def _evaluate(self):
+        if self._eval_data_cache is None:
+            self._cache_embeddings()
+
+        eval_data = self._eval_data_cache
+
+        mesh = jax.make_mesh(
+            (self.num_devices,),
+            ("batch",),
+            axis_types=(jax.sharding.AxisType.Auto,),
+        )
+
+        model_graph, model_state = nnx.split(self.train_state.model)
+        model_state = jax.tree.map(
+            lambda a: jax.device_put(
+                a,
+                jax.NamedSharding(mesh, jax.sharding.PartitionSpec()),
+            ),
+            model_state,
+        )
+        resharded_model = nnx.merge(model_graph, model_state)
+
+        res = None
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(jax.set_mesh(mesh))
+            if self.with_progress_bars:
+                import tqdm.auto
+
+                pbar = stack.enter_context(
+                    tqdm.auto.tqdm(total=len(eval_data.minibatches), leave=False)
+                )
+            else:
+                pbar = None
+
+            for minibatch in eval_data.minibatches:
+                minibatch = jax.tree.map(
+                    lambda a: jax.device_put(
+                        a,
+                        jax.NamedSharding(
+                            mesh,
+                            jax.sharding.PartitionSpec("batch", *[None] * (a.ndim - 1)),
+                        ),
+                    ),
+                    minibatch,
+                )
+                stats = self.train_state._evaluate(
+                    resharded_model,
+                    minibatch,
+                    tuple(
+                        dict(
+                            mode=self.config.mode,
+                            remat=self.config.remat,
+                            unroll=self.config.unroll,
+                            deterministic=True,
+                        ).items()
+                    ),
+                )
+                if res is None:
+                    res = stats
+                else:
+                    res = jax.tree.map(lambda a, b: a + b, res, stats)
+
+                if pbar is not None:
+                    pbar.update()
+
+        per_class = {
+            k: np.asarray(v) / np.maximum(1, eval_data.per_class_total_weight)
+            for k, v in res.pop("per_class").items()
+        }
+        stats = {k: float(v) / max(1, eval_data.total_weight) for k, v in res.items()}
+        per_class_accuracy = per_class["pair_accuracy"]
+        class_accuracy_histogram, _ = np.histogram(
+            per_class_accuracy,
+            bins=10,
+            range=(0, 1),
+        )
+        stats.update(
+            class_accuracy_histogram=class_accuracy_histogram,
+            per_class=per_class,
+        )
+        return stats
+
+    def periodic_evaluation(self, stats: dict) -> tuple[dict, float] | None:
+        """Run evaluation periodically."""
+        if self.eval_dataset is None:
+            return None
+
+        training_step = stats["training_step"]
+
+        ret = dict()
+
+        if self._eval_data_cache is None:
+            print(
+                f"\n[Step {training_step}] Preparing input embeddings for evaluation..."
+            )
+            embed_start = time.monotonic()
+            self._cache_embeddings()
+            embed_time = time.monotonic() - embed_start
+            ret.update(eval_prep_time=embed_time)
+            print(f"Embedding inputs for evaluation completed in {embed_time:.1f}s")
+        else:
+            embed_time = 0
+
+        print(f"\n[Step {training_step}] Running evaluation...")
+        eval_start = time.monotonic()
+        eval_results = self._evaluate()
+        eval_results.pop("per_class")  # not suitable for wandb
+        eval_time = time.monotonic() - eval_start
+        ret.update(eval=eval_results, eval_time=eval_time)
+
+        # Print results
+        print(
+            f"Evaluation completed in {eval_time:.1f}s: "
+            + " ".join(
+                f"{kk}: "
+                + (
+                    f"[{','.join(f'{v:.0f}' for k,v in enumerate(vv))}]"
+                    if isinstance(vv, np.ndarray)
+                    else f"{vv:.3f}"
+                )
+                for kk, vv in eval_results.items()
+            )
+        )
+
+        # Return results for wandb logging
+        return ret, eval_time + embed_time
 
     @classmethod
     def main(
@@ -222,15 +602,16 @@ class ArcSolverTrainer(TrainerBase):
         if num_devices is None:
             num_devices = jax.local_device_count()
 
-        input_ds, output_ds = [
-            dataset.filtered(lambda img: img.example_type == k)
-            for k in ["input", "output"]
-        ]
+        challenges = dataset.challenges
+        if eval_dataset is not None:
+            challenges |= eval_dataset.challenges
 
-        challenge_order = tuple(sorted(dataset.challenges))
+        challenge_order = tuple(sorted(challenges))
         bucket_shapes = tuple(
             sorted(bucket_shapes, key=lambda sh: (sh[0] * sh[1], abs(sh[0] - sh[1])))
         )
+
+        input_ds, output_ds = dataset.split_input_output()
 
         (training_ds,) = [
             BucketedDataset.make(
@@ -252,8 +633,7 @@ class ArcSolverTrainer(TrainerBase):
         batch_spec = BatchSpec(
             target_batch_weight=config.batch_size,
             reference_image_size=config.reference_image_size,
-            # Hard-code area_weight_exponent=0.5 (heuristic: sqrt scaling)
-            area_weight_exponent=0.5,
+            area_weight_exponent=None,
         )
 
         collator = BucketedCollator.make(
@@ -279,6 +659,7 @@ class ArcSolverTrainer(TrainerBase):
             num_devices=num_devices,
             rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
+            eval_dataset=eval_dataset,
         )
 
         # Run common training loop

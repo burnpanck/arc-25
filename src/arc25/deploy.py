@@ -29,7 +29,9 @@ class KaggleDatasetMeta:
         return ret
 
 
-async def get_data_files_for_deployment(data_root: anyio.Path) -> list[anyio.Path]:
+async def get_data_files_for_deployment(
+    data_root: anyio.Path, *, with_models: bool = True
+) -> list[anyio.Path]:
     """
     Returns list of data files to include in deployments.
     Single source of truth for what data gets deployed to Docker, Kaggle, etc.
@@ -56,12 +58,13 @@ async def get_data_files_for_deployment(data_root: anyio.Path) -> list[anyio.Pat
     async for fn in ssrc.glob("*.py"):
         files.append(fn)
 
-    # Pretrained models
-    models_root = data_root / "models"
-    for fn in [
-        "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-006912.msgpack.xz",
-    ]:
-        files.append(models_root / fn)
+    if with_models:
+        # Pretrained models
+        models_root = data_root / "models"
+        for fn in [
+            "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-006912.msgpack.xz",
+        ]:
+            files.append(models_root / fn)
 
     return files
 
@@ -161,7 +164,7 @@ async def prepare_docker_context(build_context: Path):
             await anyio.to_thread.run_sync(shutil.copy2, src, dst)
 
     # Get data files
-    data_files = await get_data_files_for_deployment(data_root)
+    data_files = await get_data_files_for_deployment(data_root, with_models=False)
 
     async with anyio.create_task_group() as tg:
         # Copy data files

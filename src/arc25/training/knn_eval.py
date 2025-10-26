@@ -1,7 +1,6 @@
 """k-NN evaluation for learned representations."""
 
 import typing
-from contextlib import ExitStack
 
 import attrs
 import jax
@@ -119,83 +118,32 @@ class KNNEvaluator:
         num_devices = self.batch_size.granularity
         rgen = np.random.default_rng(self.seed)
 
-        with ExitStack() as stack:
-            if with_progress:
-                n_batches_tot = 0
-                for bucket_shape, minibatch_data in self.dataset.buckets.items():
-                    n_examples = minibatch_data.n_examples
-                    batch_size = self.batch_size(int(np.prod(bucket_shape)))
-                    assert batch_size > 0
-                    assert not batch_size % num_devices
-                    n_batches_tot += n_examples // batch_size
-                    if (n_examples - n_examples % num_devices) % batch_size:
-                        # there are extra examples remaining; these will get their own batch size
-                        n_batches_tot += 1
+        for _bucket_shape, _batch_idx, minibatch in self.dataset.all_data_in_batches(
+            self.batch_size,
+            num_devices=num_devices,
+            rgen=rgen,
+            with_progress=with_progress,
+        ):
+            # Extract batch
+            batch_images = minibatch.images
+            batch_sizes = minibatch.sizes
+            batch_labels = minibatch.labels[..., [0, 2]]  # (Challenge ID, Image Type)
 
-                import tqdm.auto
+            # Encode batch
+            embeddings = self._encode(
+                encoder,
+                batch_images,
+                batch_sizes,
+                mode,
+            )
+            embeddings = embeddings.reshape(-1, embeddings.shape[-1])
+            batch_labels = batch_labels.reshape(-1, 2)
 
-                pbar = stack.enter_context(
-                    tqdm.auto.tqdm(total=n_batches_tot, leave=False)
-                )
-            else:
-                pbar = None
+            all_embeddings.append(jax.copy_to_host_async(embeddings))
+            all_challenge_labels.append(batch_labels)
 
-            # Iterate over all buckets
-            for bucket_shape, minibatch_data in sorted(
-                self.dataset.buckets.items(), key=lambda kv: kv[0]
-            ):
-                n_examples = minibatch_data.n_examples
-                batch_size = self.batch_size(int(np.prod(bucket_shape)))
-                assert batch_size > 0
-                assert not batch_size % num_devices
-                n_batches = n_examples // batch_size
-                assert n_batches > 0
-                seq = rgen.permutation(n_examples)
-                n_rem = (n_examples - n_examples % num_devices) % batch_size
-                if n_rem:
-                    batches = [seq[:n_rem].reshape(num_devices, -1)]
-                    seq = seq[n_rem:]
-                else:
-                    batches = []
-                batches.extend(
-                    seq[: n_batches * batch_size].reshape(n_batches, num_devices, -1)
-                )
-
-                pbar.set_postfix(
-                    bucket_shape=bucket_shape, bucket_progress=f"0/{len(batches)}"
-                )
-
-                # Process in batches
-                for i, batch in enumerate(batches):
-                    # Extract batch
-                    batch_images = minibatch_data.images[batch]
-                    batch_sizes = minibatch_data.sizes[batch]
-                    batch_labels = minibatch_data.labels[batch, :][
-                        ..., [0, 2]
-                    ]  # (Challenge ID, Image Type)
-
-                    # Encode batch
-                    embeddings = self._encode(
-                        encoder,
-                        batch_images,
-                        batch_sizes,
-                        mode,
-                    )
-                    embeddings = embeddings.reshape(-1, embeddings.shape[-1])
-                    batch_labels = batch_labels.reshape(-1, 2)
-
-                    all_embeddings.append(jax.copy_to_host_async(embeddings))
-                    all_challenge_labels.append(batch_labels)
-
-                    if pbar:
-                        pbar.update()
-                        pbar.set_postfix(
-                            bucket_shape=bucket_shape,
-                            bucket_progress=f"{i+1}/{len(batches)}",
-                        )
-
-            # Concatenate all batches
-            embeddings = np.concatenate(all_embeddings, axis=0)
-            challenge_labels = np.concatenate(all_challenge_labels, axis=0)
+        # Concatenate all batches
+        embeddings = np.concatenate(all_embeddings, axis=0)
+        challenge_labels = np.concatenate(all_challenge_labels, axis=0)
 
         return embeddings, challenge_labels

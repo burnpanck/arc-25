@@ -1,5 +1,6 @@
 """Base classes for training infrastructure shared between MAE and ArcSolver."""
 
+import contextlib
 import datetime
 import time
 import typing
@@ -211,6 +212,8 @@ class TrainerBase:
     # Track seen bucket shapes for JIT detection
     _seen_bucket_shapes: set[tuple[int, int]] = attrs.field(factory=set, init=False)
 
+    with_progress_bars: bool = False
+
     @classmethod
     def _make_lr_schedule(
         cls, config: ImageTrainConfigBase, total_steps: float
@@ -251,17 +254,13 @@ class TrainerBase:
         """
         pass
 
-    def periodic_evaluation(
-        self, stats: dict, training_progress: float, prev_progress: float
-    ) -> tuple[dict, float] | None:
+    def periodic_evaluation(self, stats: dict) -> tuple[dict, float] | None:
         """Periodic evaluation hook (task-specific).
 
         Called during training loop to perform periodic evaluations.
 
         Args:
             stats: Current training statistics
-            training_progress: Current training progress (accumulated_weight / ref_batch)
-            prev_progress: Previous training progress
 
         Returns:
             Tuple of (eval_results_dict, eval_time_seconds) or None if no evaluation performed.
@@ -346,7 +345,7 @@ class TrainerBase:
         checkpoint_dir: etils.epath.Path | str | None = None,
         wandb_project: str | None = None,
         run_name: str | None = None,
-    ) -> tuple[typing.Self, list[dict]]:
+    ) -> list[dict]:
         """Common checkpoint/wandb/training loop logic.
 
         Args:
@@ -371,7 +370,7 @@ class TrainerBase:
         # Print training info
         print(f"--- {type(self).__name__} ---")
         print(f"Run: {run_name}")
-        print(f"Devices: {len(devices)} × {devices[0].device_kind}")
+        print(f"Devices: {self.num_devices} × {devices[0].device_kind}")
         print(f"Training batch data weight: {config.batch_size} (1 optimizer step)")
         print(
             f"Reference step data weight: {config.ref_batch} (~{config.ref_batch/config.batch_size:.2f} optimizer steps)"
@@ -543,10 +542,14 @@ class TrainerBase:
             # Store stats
             all_stats.append(stats)
 
-            # Periodic evaluation (task-specific)
-            eval_result = self.periodic_evaluation(
-                stats, training_progress, prev_progress
-            )
+            # Check if it's time for Periodic evaluation (task-specific)
+            if (
+                training_progress // config.eval_every_ref_batch
+                > prev_progress // config.eval_every_ref_batch
+            ):
+                eval_result = self.periodic_evaluation(stats)
+            else:
+                eval_result = None
             if eval_result is not None:
                 eval_dict, eval_time = eval_result
                 stats.update(eval_dict)
@@ -575,21 +578,29 @@ class TrainerBase:
 
             # Update progress bar
             n_step_done = max(0, training_step - last_training_step)
-            pbar.update(n_step_done)
             last_training_step += n_step_done
-            pbar.set_postfix(
-                rstep=f"{training_progress:.1f}",
-                loss=f"{stats['loss']:.3f}",
-                wps=f"{weight_per_sec:.1f}",
-                lr=f"{stats['learning_rate']:.2e}",
-                ep=f"{stats['epoch']+stats['epoch_progress']:.2f}",
-            )
+            if pbar is not None:
+                pbar.update(n_step_done)
+                pbar.set_postfix(
+                    rstep=f"{training_progress:.1f}",
+                    loss=f"{stats['loss']:.3f}",
+                    wps=f"{weight_per_sec:.1f}",
+                    lr=f"{stats['learning_rate']:.2e}",
+                    ep=f"{stats['epoch']+stats['epoch_progress']:.2f}",
+                )
 
             # Log to wandb
             if wandb_run is not None:
                 wandb_run.log(stats, step=training_step)
 
-        with tqdm.auto.tqdm(total=int(self.total_steps), desc="Training") as pbar:
+        with contextlib.ExitStack() as stack:
+            if self.with_progress_bars:
+                pbar = stack.enter_context(
+                    tqdm.auto.tqdm(total=int(self.total_steps), desc="Training")
+                )
+            else:
+                pbar = None
+
             try:
                 for stats_dev, is_jit_step in self.train(
                     start_weight=resume_accumulated_weight

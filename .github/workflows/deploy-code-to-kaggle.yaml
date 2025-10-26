@@ -5,9 +5,14 @@ on:
     tags: ["v*"]     # e.g. v0.3.2
   workflow_dispatch:
     inputs:
-      python-version:
-        description: "Target Python version (match Kaggle)"
-        default: "3.11"
+      accelerator:
+        description: "Target Kaggle accelerator"
+        type: choice
+        options:
+          - gpu
+          - tpu
+          - all
+        default: "all"
         required: true
 
 jobs:
@@ -16,7 +21,7 @@ jobs:
     permissions:
       contents: read
     env:
-      PYTHON_VERSION: ${{ inputs.python-version || '3.11' }}
+      ACCELERATOR: ${{ inputs.accelerator || 'all' }}
 
     steps:
       - name: Checkout
@@ -25,53 +30,54 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Set up PDM + Python
+      - name: Create wheelhouse directory
+        run: mkdir -p wheelhouse
+
+      # Build project wheel (pure Python, version-independent)
+      - name: Set up PDM + Python (for project build)
         uses: pdm-project/setup-pdm@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.11"
           cache: true
 
-      - name: Show tool versions
-        run: |
-          python -V
-          pdm -V
-
       - name: Install pdm-wheel plugin
-        run: |
-          pdm self add pdm-wheel
-          pdm wheel --help | head -n 20
+        run: pdm self add pdm-wheel
 
-      # Optional but recommended for faster pdm wheel runs (keeps URLs in the lock)
-      # - name: Ensure lock has static URLs
-      #   run: pdm lock --static-urls --check
-
-      # --- Test gate ---------------------------------------------------------
-      - name: Install project + test deps from lock (no solving)
-        run: |
-          pdm install --frozen-lockfile -G test
-
-      - name: Run tests
-        if: false
-        run: |
-          pdm run pytest
-      # ----------------------------------------------------------------------
-
-      - name: Build project wheel with PDM
+      - name: Build project wheel
         run: |
           pdm build
-          mkdir -p wheelhouse
           cp dist/*.whl wheelhouse/
+          rm -rf dist/
 
-      - name: Build dependency wheels from pdm.lock with pdm-wheel
+      # --- GPU build (Python 3.11) ---
+      - name: Build GPU dependency wheels
+        if: env.ACCELERATOR == 'gpu' || env.ACCELERATOR == 'all'
         run: |
-          # Production deps only:
-          pdm wheel -w wheelhouse --prod -v -G vision
+          # Production deps + vision group + jax[cuda12-local]
+          pdm wheel -w wheelhouse --prod -v -G vision -G cuda12-local
 
-      - name: Remove excessively heavy libraries (nvidia*, torch)
+      - name: Remove heavy GPU libraries
+        if: env.ACCELERATOR == 'gpu' || env.ACCELERATOR == 'all'
         run: |
           rm wheelhouse/torch-* || true
-          rm wheelhouse/nvidia* || true
-          ls -al wheelhouse/
+
+      # --- TPU build (Python 3.12) ---
+      - name: Set up PDM + Python 3.12 for TPU
+        if: env.ACCELERATOR == 'tpu' || env.ACCELERATOR == 'all'
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: "3.12"
+          cache: true
+
+      - name: Build TPU dependency wheels
+        if: env.ACCELERATOR == 'tpu' || env.ACCELERATOR == 'all'
+        run: |
+          pdm self add pdm-wheel
+          # Production deps + vision group + jax[tpu]
+          pdm wheel -w wheelhouse --prod -v -G vision -G tpu
+
+      - name: List wheelhouse contents
+        run: ls -alh wheelhouse/
 
       - name: Resolve project metadata
         run: |

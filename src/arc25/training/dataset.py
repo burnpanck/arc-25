@@ -1,3 +1,4 @@
+import contextlib
 import dataclasses
 import lzma
 import typing
@@ -62,6 +63,25 @@ class ImagesDataset:
             examples=tuple(examples),
             challenges=frozenset(src_data),
             max_size=tuple(int(v) for v in max_size),
+        )
+
+    def split_input_output(self) -> tuple[Self, Self]:
+        known = dict(input=set(), output=set())
+        for img in self.examples:
+            known[img.example_type].add((img.challenge, img.example_idx))
+        paired = known["input"] & known["output"]
+        for k, v in known.items():
+            unpaired = v - paired
+            if unpaired:
+                print(f"WARNING: Ignoring {len(unpaired)} unpaired {k} images")
+        return tuple(
+            [
+                self.filtered(
+                    lambda img: img.example_type == k
+                    and (img.challenge, img.example_idx) in paired
+                )
+                for k in ["input", "output"]
+            ]
         )
 
     def filtered(self, filter: typing.Callable[[ImageExample], bool]) -> Self:
@@ -163,7 +183,15 @@ class MiniBatchData:
 
     @property
     def n_examples(self) -> int:
-        return len(self.images)
+        return int(self.sizes.size // self.sizes.shape[-1])
+
+    def batch_select(self, idx) -> Self:
+        return type(self)(
+            **{
+                k: v[idx] if v is not None else v
+                for k, v in attrs.asdict(self, recurse=False).items()
+            }
+        )
 
 
 @attrs.frozen
@@ -230,7 +258,7 @@ class OnDemandBucketDataset:
             img = self.index[
                 ImageKey(
                     challenge=self.challenges[chal_idx],
-                    example_idx=example_idx,
+                    example_idx=int(example_idx),
                     example_type=["output", "input"][io],
                 )
             ]
@@ -283,7 +311,7 @@ class OnDemandBucketDataset:
             sizes=sizes,
             labels=labels,
             transpose=transpose_flags,
-            weight=self.weight_fun(sizes[0] * sizes[1]),
+            weight=self.weight_fun(sizes[..., 0] * sizes[..., 1]),
         )
 
 
@@ -393,6 +421,81 @@ class BucketedDataset:
             allow_transpose=allow_transpose,
             challenges=challenges,
         )
+
+    def all_data_in_batches(
+        self,
+        batch_size_fun: typing.Callable[[int], int],
+        *,
+        num_devices: int,
+        rgen: np.random.Generator,
+        with_progress: bool = False,
+        allow_short_batch: bool = True,
+    ):
+        with contextlib.ExitStack() as stack:
+            if with_progress:
+                n_batches_tot = 0
+                for bucket_shape, minibatch_data in self.buckets.items():
+                    n_examples = minibatch_data.n_examples
+                    batch_size = batch_size_fun(int(np.prod(bucket_shape)))
+                    assert batch_size > 0
+                    assert not batch_size % num_devices
+                    n_batches_tot += n_examples // batch_size
+                    if (n_examples - n_examples % num_devices) % batch_size:
+                        # there are extra examples remaining; these will get their own batch size
+                        n_batches_tot += 1
+
+                import tqdm.auto
+
+                pbar = stack.enter_context(
+                    tqdm.auto.tqdm(total=n_batches_tot, leave=False)
+                )
+            else:
+                pbar = None
+
+            # Iterate over all buckets
+            for bucket_shape, minibatch_data in sorted(
+                self.buckets.items(), key=lambda kv: kv[0]
+            ):
+                n_examples = minibatch_data.n_examples
+                batch_size = batch_size_fun(int(np.prod(bucket_shape)))
+                assert batch_size > 0
+                assert not batch_size % num_devices
+                n_batches = n_examples // batch_size
+                seq = rgen.permutation(n_examples)
+                n_rem = (n_examples - n_examples % num_devices) % batch_size
+                if n_rem:
+                    batches = (
+                        [seq[:n_rem].reshape(num_devices, -1)]
+                        if allow_short_batch
+                        else []
+                    )
+                    seq = seq[n_rem:]
+                else:
+                    batches = []
+                if n_batches:
+                    batches.extend(
+                        seq[: n_batches * batch_size].reshape(
+                            n_batches, num_devices, -1
+                        )
+                    )
+                assert batches
+
+                if pbar is not None:
+                    pbar.set_postfix(
+                        bucket_shape=bucket_shape, bucket_progress=f"0/{len(batches)}"
+                    )
+
+                # Process in batches
+                for i, batch in enumerate(batches):
+
+                    yield bucket_shape, i, minibatch_data.batch_select(batch)
+
+                    if pbar is not None:
+                        pbar.update()
+                        pbar.set_postfix(
+                            bucket_shape=bucket_shape,
+                            bucket_progress=f"{i+1}/{len(batches)}",
+                        )
 
 
 @attrs.frozen
@@ -598,6 +701,7 @@ class BucketedCollator:
 
         # Capture epoch info at start of batch
         start_epoch = self.epoch
+        start_weight = self.weight_in_epoch
 
         while True:
             # Check if we need to start a new epoch
@@ -659,7 +763,7 @@ class BucketedCollator:
                 batch_data = BatchData(
                     step=self.step,
                     epoch=start_epoch,
-                    epoch_progress=self.weight_in_epoch / self.total_example_weight,
+                    epoch_progress=start_weight / self.total_example_weight,
                     accumulated_weight=self.accumulated_weight,
                     total_weight=total_weight,
                     total_examples=total_examples,
@@ -670,6 +774,7 @@ class BucketedCollator:
 
                 # Prepare next batch - capture new epoch info
                 start_epoch = self.epoch
+                start_weight = self.weight_in_epoch
                 minibatches = []
                 total_weight = 0.0
                 total_examples = 0

@@ -41,6 +41,16 @@ vision = [
     "flax>=0.12",
     "jaxtyping",
 ]
+tpu = [
+    "jax[tpu]>=0.7.2",
+]
+cuda12-local = [
+    "jax[cuda12-local]>=0.7.2",
+]
+cuda13-local = [
+    "jax[cuda13-local]>=0.7.2",
+]
+
 
 [dependency-groups]
 test = [

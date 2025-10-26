@@ -102,6 +102,8 @@ class TrainState(TrainStateBase):
     def batch_stats(
         self, batch_size: int | None = None, shape: tuple[int, int] = (30, 30)
     ):
+        raise NotImplementedError("The implementation below is outdated")
+
         graph, state = nnx.split(self)
 
         def inference(state, batch):
@@ -267,7 +269,7 @@ class MAETrainer(TrainerBase):
             # Compute cell weights from class histograms per example
             targets = (images[..., None] == np.r_[:10]) & prediction_mask[..., None]
             mask_hist = targets.sum(axis=(-3, -2), keepdims=True)
-            # weight inversely proportional to frequeny
+            # weight inversely proportional to frequency
             cell_weight = jnp.where(targets, 1 / jnp.maximum(1, mask_hist), 0).sum(-1)
             # normalise weight
             cell_weight = cell_weight / jnp.maximum(
@@ -280,41 +282,33 @@ class MAETrainer(TrainerBase):
 
         return tuple(prepared)
 
-    def periodic_evaluation(
-        self, stats: dict, training_progress: float, prev_progress: float
-    ) -> tuple[dict, float] | None:
+    def periodic_evaluation(self, stats: dict) -> tuple[dict, float] | None:
         """Run k-NN evaluation periodically."""
-        config = self.config
-
         # Check if it's time for k-NN evaluation
-        if (
-            self.knn_evaluator is not None
-            and training_progress // config.eval_every_ref_batch
-            > prev_progress // config.eval_every_ref_batch
-        ):
-            training_step = stats["training_step"]
-            print(f"\n[Step {training_step}] Running k-NN evaluation...")
-            eval_start = time.monotonic()
-            knn_results = self.knn_evaluator.evaluate(
-                self.train_state.model.encoder,
-                mode=config.mode,
-                with_progress=True,
+        if self.knn_evaluator is None:
+            return None
+
+        training_step = stats["training_step"]
+        print(f"\n[Step {training_step}] Running k-NN evaluation...")
+        eval_start = time.monotonic()
+        knn_results = self.knn_evaluator.evaluate(
+            self.train_state.model.encoder,
+            mode=self.config.mode,
+            with_progress=self.with_progress_bars,
+        )
+        eval_time = time.monotonic() - eval_start
+
+        # Print results
+        print(
+            f"k-NN evaluation completed in {eval_time:.1f}s: "
+            + " ".join(
+                f"{kk}: [{','.join(f'{k}={v:.3f}' for k,v in sorted(vv.items()))}]"
+                for kk, vv in knn_results.items()
             )
-            eval_time = time.monotonic() - eval_start
+        )
 
-            # Print results
-            print(
-                f"k-NN evaluation completed in {eval_time:.1f}s: "
-                + " ".join(
-                    f"{kk}: [{','.join(f'{k}={v:.3f}' for k,v in sorted(vv.items()))}]"
-                    for kk, vv in knn_results.items()
-                )
-            )
-
-            # Return results for wandb logging
-            return dict(knn=knn_results, knn_eval_time=eval_time), eval_time
-
-        return None
+        # Return results for wandb logging
+        return dict(knn=knn_results, knn_eval_time=eval_time), eval_time
 
     @classmethod
     def main(

@@ -295,8 +295,11 @@ class ARCSolver(nnx.Module):
         )
 
         if latent_program is None:
-            latent_program = self.latent_program_embeddings[latent_program_idx, :, :]
-
+            # explicit sharding help for the new explicit sharding mode in JAX
+            # (though other parts of the model are still not compatible)
+            latent_program = self.latent_program_embeddings.at[latent_program_idx].get(
+                out_sharding=jax.typeof(latent_program_idx).sharding
+            )
         if output_grid is None:
             output_grid = embeddings.grid
 

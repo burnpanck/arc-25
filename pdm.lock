@@ -2,10 +2,10 @@
 # It is not intended for manual editing.
 
 [metadata]
-groups = ["default", "deploy", "explorer", "huggingface", "test", "train", "vision"]
+groups = ["default", "cuda12-local", "cuda13-local", "deploy", "explorer", "huggingface", "test", "tpu", "train", "vision"]
 strategy = ["inherit_metadata", "static_urls"]
 lock_version = "4.5.0"
-content_hash = "sha256:9d3fe64cb0a4410729927f7ab1fb1f7a1806306e53cbc574e8a8147e0ee76eee"
+content_hash = "sha256:0c95d2a13083487b2a465dcb030d0ccca1a9d7119d0287d1813c6cef5f132772"
 
 [[metadata.targets]]
 requires_python = ">=3.11,<3.13"
@@ -373,7 +373,7 @@ name = "certifi"
 version = "2025.10.5"
 requires_python = ">=3.7"
 summary = "Python package for providing Mozilla's CA Bundle."
-groups = ["deploy", "explorer", "huggingface", "train"]
+groups = ["deploy", "explorer", "huggingface", "tpu", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/4c/5b/b6ce21586237c77ce67d01dc5507039d444b630dd76611bbca2d8e5dcd91/certifi-2025.10.5.tar.gz", hash = "sha256:47c09d31ccf2acf0be3f701ea53595ee7e0b8fa08801c6624be771df09ae7b43"},
@@ -385,7 +385,7 @@ name = "charset-normalizer"
 version = "3.4.4"
 requires_python = ">=3.7"
 summary = "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet."
-groups = ["deploy", "huggingface", "train"]
+groups = ["deploy", "huggingface", "tpu", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/03/86/bde4ad8b4d0e9429a4e82c1e8f5c659993a9a863ad62c7df05cf7b678d75/charset_normalizer-3.4.4-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:d9c7f57c3d666a53421049053eaacdd14bbd0a528e2186fcb2e672effd053bb0"},
@@ -1530,7 +1530,7 @@ name = "idna"
 version = "3.11"
 requires_python = ">=3.8"
 summary = "Internationalized Domain Names in Applications (IDNA)"
-groups = ["default", "deploy", "explorer", "huggingface", "train"]
+groups = ["default", "deploy", "explorer", "huggingface", "tpu", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/0e/61/66938bbb5fc52dbdf84594873d5b51fb1f7c7794e9c0f5bd885f30bc507b/idna-3.11-py3-none-any.whl", hash = "sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea"},
@@ -1592,7 +1592,7 @@ name = "jax"
 version = "0.8.0"
 requires_python = ">=3.11"
 summary = "Differentiate, compile, and transform Numpy code."
-groups = ["vision"]
+groups = ["cuda12-local", "cuda13-local", "tpu", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "jaxlib<=0.8.0,>=0.8.0",
@@ -1607,11 +1607,138 @@ files = [
 ]
 
 [[package]]
+name = "jax-cuda12-pjrt"
+version = "0.8.0"
+summary = "JAX XLA PJRT Plugin for NVIDIA GPUs"
+groups = ["cuda12-local"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+files = [
+    {url = "https://files.pythonhosted.org/packages/1c/0b/e397b4cb3c6c6337755bc47445e4321e4772e28497e0a1cfcfcd69d0b774/jax_cuda12_pjrt-0.8.0-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:9e99c3e546f6be00ffc6a4edd2cf5b76d4c59aa34a8d8396d8239ab8fd8ebfd3"},
+    {url = "https://files.pythonhosted.org/packages/5b/32/509874b59e05449a0d3db3fafd3f3329ce7a51416d79db3ae76d18132e32/jax_cuda12_pjrt-0.8.0-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:500bbc5bd9abbdccb238fe1381b900cd577264500d1470351f68e5dbdb5235c2"},
+]
+
+[[package]]
+name = "jax-cuda12-plugin"
+version = "0.8.0"
+requires_python = ">=3.11"
+summary = "JAX Plugin for NVIDIA GPUs"
+groups = ["cuda12-local"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+dependencies = [
+    "jax-cuda12-pjrt==0.8.0",
+]
+files = [
+    {url = "https://files.pythonhosted.org/packages/09/d0/505fbe1a5d189ea683b7b4fcbb44d0d666f842bc5c7c13eae93b22bca50d/jax_cuda12_plugin-0.8.0-cp313-cp313t-manylinux_2_27_aarch64.whl", hash = "sha256:049ad4e714125d91cf824d9bc062a964f9d7ecca027726be79620f4e3242be13"},
+    {url = "https://files.pythonhosted.org/packages/17/95/a7ae638fe8746d0afae2d91952f21a0afad0a19c6859d66fdae6cf370655/jax_cuda12_plugin-0.8.0-cp314-cp314-manylinux_2_27_x86_64.whl", hash = "sha256:ffde5115b4d212c327b77161ec493c0b027e220ce1409644dc985804cc566103"},
+    {url = "https://files.pythonhosted.org/packages/19/e0/25f1bc3aa44ef19268f4cc2549c4c9c454ea58e37004f45f35614a71c760/jax_cuda12_plugin-0.8.0-cp314-cp314-manylinux_2_27_aarch64.whl", hash = "sha256:ce2a938b67c688705d04c5a6949ee3db538eda996ba02c72a573e0f59bfcc0cf"},
+    {url = "https://files.pythonhosted.org/packages/27/92/e1726782ceeb7e0c7a34927d1c1682c7fc60a2ceabda83bf17dece52ba2a/jax_cuda12_plugin-0.8.0-cp314-cp314t-manylinux_2_27_aarch64.whl", hash = "sha256:b95f22f30354b6620157cc772f074a49ea6d9bbbec851c8dfa10f49837ebe2b3"},
+    {url = "https://files.pythonhosted.org/packages/2b/ae/4262ce2196dc45e0761943c5f45c058021b994f9058601da657a86f92b5c/jax_cuda12_plugin-0.8.0-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:5556e3f48cbe1df608d9d0d3400308649ddecaa8d0e2439490c6f88b418031cb"},
+    {url = "https://files.pythonhosted.org/packages/2e/28/bb995362a393dc19deb100e0b3bf3e996dc38c8783fa53c57cf64c154cf9/jax_cuda12_plugin-0.8.0-cp312-cp312-manylinux_2_27_aarch64.whl", hash = "sha256:49d04c1542eaa408b7bad0170120bcda832a02fb944fc893dce8826ee6e5a493"},
+    {url = "https://files.pythonhosted.org/packages/3b/b7/4f9e72bb878c30a63a5aed8254e32505833deb139852f23e370e69ac2509/jax_cuda12_plugin-0.8.0-cp313-cp313t-manylinux_2_27_x86_64.whl", hash = "sha256:64c8b41b00f21b0a165ec5fbd3b543fee71cc4a05681c2b1dced482f0afa210c"},
+    {url = "https://files.pythonhosted.org/packages/57/ee/f11cc48cf3a3b8131a7670df5f0d8b8a99e2359efea99013ff804040981d/jax_cuda12_plugin-0.8.0-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:470e96e7ea4db0f3758da6e7d15c45e8102662924fe3a847215ee65cac92c68d"},
+    {url = "https://files.pythonhosted.org/packages/5f/67/33b1e10fdd9ed81b30963e780bcdbe110cf34042676eb89bc0ac57c528ee/jax_cuda12_plugin-0.8.0-cp313-cp313-manylinux_2_27_aarch64.whl", hash = "sha256:20699535d79a2ccf97f121060b604053386f411ccb30c125c66b6a5a026c8921"},
+    {url = "https://files.pythonhosted.org/packages/61/ab/562c98363b737fd6d9d685795f94ce382d0e3b31e13bc5e1284b41740ebc/jax_cuda12_plugin-0.8.0-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:c7ea5db752194b8a3fbf4c564bb7bbc24f24e07109bb59e659fd4b11314bba76"},
+    {url = "https://files.pythonhosted.org/packages/80/05/cd98eccd06c04578f4b76b83484983ef3bf3087cb1f6b8ee814f8ae5f972/jax_cuda12_plugin-0.8.0-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:70beb015933b472103481a27521d4db41cf592008705f4412cbf3a1ecaf35c2e"},
+    {url = "https://files.pythonhosted.org/packages/fb/3a/5db040e28b068400c89c7b8f5f2a5b18b60f4b59b876f8f6b79a812563e4/jax_cuda12_plugin-0.8.0-cp314-cp314t-manylinux_2_27_x86_64.whl", hash = "sha256:2f1e678f29af953ab3542bea370ef59604cd4e4487694bce64b15e038c51c045"},
+]
+
+[[package]]
+name = "jax-cuda13-pjrt"
+version = "0.8.0"
+summary = "JAX XLA PJRT Plugin for NVIDIA GPUs"
+groups = ["cuda13-local"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+files = [
+    {url = "https://files.pythonhosted.org/packages/90/3a/45b9b9d34ca93c2f5e09e5d2ab4cb69a07e32249e7a77f4a89ef5aa3ca18/jax_cuda13_pjrt-0.8.0-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:04a5f9d8bd7ad568c22047c46f73ddc9ea15e1ee421a5be27aaf2c7a288d4e4a"},
+    {url = "https://files.pythonhosted.org/packages/b6/de/312e9d2b0173eae542562729ac830018c16bffa2bd35b60cc86c55b10565/jax_cuda13_pjrt-0.8.0-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:1bcaf9694ec6cdf1d945bed355ca60beaa3e7517d4e51ce44cc637b083873cc0"},
+]
+
+[[package]]
+name = "jax-cuda13-plugin"
+version = "0.8.0"
+requires_python = ">=3.11"
+summary = "JAX Plugin for NVIDIA GPUs"
+groups = ["cuda13-local"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+dependencies = [
+    "jax-cuda13-pjrt==0.8.0",
+]
+files = [
+    {url = "https://files.pythonhosted.org/packages/3c/88/1cdfaef395685f7e1c85cebe794d009cd26df982a1c44fe93b5f4e863840/jax_cuda13_plugin-0.8.0-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:82ce9baaea7b047a6e2f64006be6770de45990af24922cb3a6048b1e03e7a4fd"},
+    {url = "https://files.pythonhosted.org/packages/3f/33/47fbf89efdb754055de5074b32d67c04239b2fe04c007e6c66cd3071beb4/jax_cuda13_plugin-0.8.0-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:018b9b9de5eb062404982cb2acb1ae6ab48024d019065f41cc9f99782c3453f7"},
+    {url = "https://files.pythonhosted.org/packages/55/3c/f8b94ba76544002a76d7fb9c2045dd41bd897de81c8d07a2f1da5ab4e67c/jax_cuda13_plugin-0.8.0-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:7ea9af921e840e237e331e18ac7585d080d01abac16f3cba6afb2798587cccd3"},
+    {url = "https://files.pythonhosted.org/packages/5d/91/ded76881eda5bec0a432cd763da671b4a6f61afc389b4e90e5cad2898ce8/jax_cuda13_plugin-0.8.0-cp312-cp312-manylinux_2_27_aarch64.whl", hash = "sha256:f9c3dcd49bd36ac3da17aba9308298d9c3cd2b595e3156f32e94c45d63f5542f"},
+    {url = "https://files.pythonhosted.org/packages/7b/4c/83da56ccaac2ac86381444e340499fe8bb582a696f45c8dfddf94be7445b/jax_cuda13_plugin-0.8.0-cp314-cp314-manylinux_2_27_aarch64.whl", hash = "sha256:1fcb607307cd60900f3313e0cd3cadfe3defc8fbca6973c976431c79bb12cb49"},
+    {url = "https://files.pythonhosted.org/packages/7c/e4/7bf82fdecc49bd1293f5e08753e0701d758803b78a3a5279b19aac611694/jax_cuda13_plugin-0.8.0-cp313-cp313t-manylinux_2_27_aarch64.whl", hash = "sha256:9dad64e15b0966d94158f6c6eead47b36415fb2e97f56100ce82758a7aff6d65"},
+    {url = "https://files.pythonhosted.org/packages/80/29/c60ceffdabd46b908221d3d2980fad6fba42ce2ad0a7e9f6cca990ffc824/jax_cuda13_plugin-0.8.0-cp313-cp313-manylinux_2_27_aarch64.whl", hash = "sha256:c2d10145ffe408d8af8890120f70eda6c773383196dfdfe6845ac47e34d958e9"},
+    {url = "https://files.pythonhosted.org/packages/96/00/c601d0816f9eb686c0f28436f9cb5c019af2efcf9636d1c8c263551764bc/jax_cuda13_plugin-0.8.0-cp313-cp313t-manylinux_2_27_x86_64.whl", hash = "sha256:4ed960719a67ed8c2acc3430f14123af8e73a9baacc781e8a786ef904aea39ed"},
+    {url = "https://files.pythonhosted.org/packages/9c/da/d4a3a2a12bafc58dac3496ef1c356dbdf1c39874a0a10343bc77abb76a9c/jax_cuda13_plugin-0.8.0-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:8e3b461f9dbaea2b160c4a3c4cc0709fe3fc2e50215d66117c503db3f007e030"},
+    {url = "https://files.pythonhosted.org/packages/a0/b7/26e3190cb028afac185138507119e0fe0cac63e28494a432aa2148a08d2c/jax_cuda13_plugin-0.8.0-cp314-cp314t-manylinux_2_27_aarch64.whl", hash = "sha256:2ffdb1a1826d9790ae9b7bb9c76eb8b4819b8e44ed635630267b6d7211d8e22a"},
+    {url = "https://files.pythonhosted.org/packages/b3/fd/de2db2345d66fc3f295c98ede112edccea67d570799724dcbf18835d678f/jax_cuda13_plugin-0.8.0-cp314-cp314t-manylinux_2_27_x86_64.whl", hash = "sha256:7410ce5cad281c8cff7d5f2b7bf1f5842bc01d26b7acd35c29c97d3b18ffaa50"},
+    {url = "https://files.pythonhosted.org/packages/f4/4e/cf3dd40e11e731d4ffcf18d4fd8fc1e3bea5537ed721a555a0330d2b1e84/jax_cuda13_plugin-0.8.0-cp314-cp314-manylinux_2_27_x86_64.whl", hash = "sha256:76227bdc9b8d8fb6200f5b78d48a14941bc2abb80388bccdee6a295651100a48"},
+]
+
+[[package]]
+name = "jax"
+version = "0.8.0"
+extras = ["cuda12-local"]
+requires_python = ">=3.11"
+summary = "Differentiate, compile, and transform Numpy code."
+groups = ["cuda12-local"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+dependencies = [
+    "jax-cuda12-plugin<=0.8.0,>=0.8.0",
+    "jax==0.8.0",
+    "jaxlib<=0.8.0,>=0.8.0",
+]
+files = [
+    {url = "https://files.pythonhosted.org/packages/22/1c/9baf805e6c969a1a7afeb37d359e8a10585e8b2621f103626998b42ae838/jax-0.8.0.tar.gz", hash = "sha256:0ea5a7be7068c25934450dfd87d7d80a18a5d30e0a53454e7aade525b23accd5"},
+    {url = "https://files.pythonhosted.org/packages/b3/77/4e6c9a54247810eff8ac8a1af7dc1be0779b52df0d82f3fc8586061914f3/jax-0.8.0-py3-none-any.whl", hash = "sha256:d190158bc019756c6a0f6b3d5fc8783471fb407e6deaff559eaac60dd5ee850a"},
+]
+
+[[package]]
+name = "jax"
+version = "0.8.0"
+extras = ["cuda13-local"]
+requires_python = ">=3.11"
+summary = "Differentiate, compile, and transform Numpy code."
+groups = ["cuda13-local"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+dependencies = [
+    "jax-cuda13-plugin<=0.8.0,>=0.8.0",
+    "jax==0.8.0",
+    "jaxlib<=0.8.0,>=0.8.0",
+]
+files = [
+    {url = "https://files.pythonhosted.org/packages/22/1c/9baf805e6c969a1a7afeb37d359e8a10585e8b2621f103626998b42ae838/jax-0.8.0.tar.gz", hash = "sha256:0ea5a7be7068c25934450dfd87d7d80a18a5d30e0a53454e7aade525b23accd5"},
+    {url = "https://files.pythonhosted.org/packages/b3/77/4e6c9a54247810eff8ac8a1af7dc1be0779b52df0d82f3fc8586061914f3/jax-0.8.0-py3-none-any.whl", hash = "sha256:d190158bc019756c6a0f6b3d5fc8783471fb407e6deaff559eaac60dd5ee850a"},
+]
+
+[[package]]
+name = "jax"
+version = "0.8.0"
+extras = ["tpu"]
+requires_python = ">=3.11"
+summary = "Differentiate, compile, and transform Numpy code."
+groups = ["tpu"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+dependencies = [
+    "jax==0.8.0",
+    "jaxlib<=0.8.0,>=0.8.0",
+    "libtpu==0.0.24.*",
+    "requests",
+]
+files = [
+    {url = "https://files.pythonhosted.org/packages/22/1c/9baf805e6c969a1a7afeb37d359e8a10585e8b2621f103626998b42ae838/jax-0.8.0.tar.gz", hash = "sha256:0ea5a7be7068c25934450dfd87d7d80a18a5d30e0a53454e7aade525b23accd5"},
+    {url = "https://files.pythonhosted.org/packages/b3/77/4e6c9a54247810eff8ac8a1af7dc1be0779b52df0d82f3fc8586061914f3/jax-0.8.0-py3-none-any.whl", hash = "sha256:d190158bc019756c6a0f6b3d5fc8783471fb407e6deaff559eaac60dd5ee850a"},
+]
+
+[[package]]
 name = "jaxlib"
 version = "0.8.0"
 requires_python = ">=3.11"
 summary = "XLA library for JAX"
-groups = ["vision"]
+groups = ["cuda12-local", "cuda13-local", "tpu", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "ml-dtypes>=0.5.0",
@@ -1807,6 +1934,22 @@ files = [
 ]
 
 [[package]]
+name = "libtpu"
+version = "0.0.24"
+requires_python = ">=3.11"
+summary = "Google Cloud TPU runtime library."
+groups = ["tpu"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+files = [
+    {url = "https://files.pythonhosted.org/packages/29/f5/7bcb3334389f1dd0926f61a831bedf36758650bfb81a6e858ccb7c24e58c/libtpu-0.0.24-cp313-cp313t-manylinux_2_31_x86_64.whl", hash = "sha256:d30862a59310fbc1728b673f983e06b21477443ff74e5aae193f70a96629ff70"},
+    {url = "https://files.pythonhosted.org/packages/5a/40/cc4392b33977518b827a0c4831fef4988a37b2568b34289e5610f8283271/libtpu-0.0.24-cp313-cp313-manylinux_2_31_x86_64.whl", hash = "sha256:001faafaea8d06119adb18126efd591776cb790a08fa94a7ee077f81197bea46"},
+    {url = "https://files.pythonhosted.org/packages/82/e7/d7d7ca82253d8055c284e63d0d3f815666403f6158436c9ee2a84dd5ea50/libtpu-0.0.24-cp314-cp314t-manylinux_2_31_x86_64.whl", hash = "sha256:4923dc5d939d9935a7d944a538a6874bfbf59f6b90b5743e16a6ba319bba2dc2"},
+    {url = "https://files.pythonhosted.org/packages/95/1f/6d9303c08b8e660364b290ca2a674d39736b087394f0dda0ae7ad66bcaef/libtpu-0.0.24-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:7f0e12f7d8fc5f720d791baaa30dcfb5897fd757d0a9c7cf59cde54f570e9caa"},
+    {url = "https://files.pythonhosted.org/packages/b2/be/bc7215b05d477b376a57cef58f7935e9c604d217e63abebba440691f4f90/libtpu-0.0.24-cp314-cp314-manylinux_2_31_x86_64.whl", hash = "sha256:3ff475f497a5665542629726b552bf6f55c758e0b1cf3e64165c153622600842"},
+    {url = "https://files.pythonhosted.org/packages/fc/2f/71323b140d5c109f18f41b10115b64733c5cde6e8c3bff1403d96c92f8f5/libtpu-0.0.24-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:a0c4f1e0da4a6df2eb64363c5754a1e5e8a8924618505d4151097c427b664165"},
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 requires_python = ">=3.10"
@@ -1994,7 +2137,7 @@ name = "ml-dtypes"
 version = "0.5.3"
 requires_python = ">=3.9"
 summary = "ml_dtypes is a stand-alone implementation of several NumPy dtype extensions used in machine learning."
-groups = ["vision"]
+groups = ["cuda12-local", "cuda13-local", "tpu", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "numpy>=1.21",
@@ -2286,7 +2429,7 @@ name = "numpy"
 version = "2.3.4"
 requires_python = ">=3.11"
 summary = "Fundamental package for array computing in Python"
-groups = ["default", "huggingface", "train", "vision"]
+groups = ["default", "cuda12-local", "cuda13-local", "huggingface", "tpu", "train", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/06/f2/2e06a0f2adf23e3ae29283ad96959267938d0efd20a2e25353b70065bfec/numpy-2.3.4-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:65611ecbb00ac9846efe04db15cbe6186f562f6bb7e5e05f077e53a599225d16"},
@@ -2587,7 +2730,7 @@ name = "opt-einsum"
 version = "3.4.0"
 requires_python = ">=3.8"
 summary = "Path optimization of einsum functions."
-groups = ["vision"]
+groups = ["cuda12-local", "cuda13-local", "tpu", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl", hash = "sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd"},
@@ -3447,7 +3590,7 @@ name = "requests"
 version = "2.32.5"
 requires_python = ">=3.9"
 summary = "Python HTTP for Humans."
-groups = ["deploy", "huggingface", "train"]
+groups = ["deploy", "huggingface", "tpu", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "certifi>=2017.4.17",
@@ -3537,7 +3680,7 @@ name = "scipy"
 version = "1.16.2"
 requires_python = ">=3.11"
 summary = "Fundamental algorithms for scientific computing in Python"
-groups = ["default", "vision"]
+groups = ["default", "cuda12-local", "cuda13-local", "tpu", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "numpy<2.6,>=1.25.2",
@@ -4050,7 +4193,7 @@ name = "urllib3"
 version = "2.5.0"
 requires_python = ">=3.9"
 summary = "HTTP library with thread-safe connection pooling, file post, and more."
-groups = ["deploy", "huggingface", "train"]
+groups = ["deploy", "huggingface", "tpu", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760"},
