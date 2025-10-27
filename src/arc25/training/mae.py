@@ -61,8 +61,7 @@ class TrainState(TrainStateBase):
 
         return SimpleNamespace(**stats)
 
-    @staticmethod
-    def loss_fn(model, minibatch_dict, **kw):
+    def loss_fn(self, model, minibatch_dict, params, **kw):
         """Compute MAE loss for a single minibatch.
 
         Args:
@@ -215,16 +214,15 @@ class MAETrainer(TrainerBase):
             knn_evaluator=knn_evaluator,
         )
 
-    def prepare_batch(self, batch: BatchData) -> tuple[dict, ...]:
+    def prepare_batch(self, batch: BatchData) -> tuple[tuple[dict, ...], dict]:
         """Prepare minibatches for MAE training by adding random masks.
 
-        Uses the collator's RNG for reproducibility.
-
         Args:
-            minibatches: Tuple of MiniBatchData from collator
+            batch: BatchData from collator
 
         Returns:
-            Tuple of dicts with added input_mask and prediction_mask fields
+            minibatch_dicts: Tuple of dicts ready for train_step()
+            params: dict ready for train_step()
         """
         prepared = []
         test_ratio = self.config.test_ratio
@@ -280,7 +278,9 @@ class MAETrainer(TrainerBase):
 
             prepared.append(mb_dict)
 
-        return tuple(prepared)
+        params = dict()
+
+        return tuple(prepared), params
 
     def periodic_evaluation(self, stats: dict) -> tuple[dict, float] | None:
         """Run k-NN evaluation periodically."""

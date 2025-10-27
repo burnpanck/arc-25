@@ -25,7 +25,7 @@ from .saving import load_model, save_model
 class TrainStateBase(nnx.Module):
     """Base training state with distributed training logic.
 
-    Subclasses must implement the loss_fn() static method.
+    Subclasses must implement the loss_fn() method.
     """
 
     model: nnx.Module
@@ -53,10 +53,12 @@ class TrainStateBase(nnx.Module):
         self.optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
         return self
 
-    @staticmethod
     @abstractmethod
-    def loss_fn(model, minibatch_dict, **kw):
+    def loss_fn(self, model, minibatch_dict, params, **kw):
         """Compute loss for a single minibatch.
+
+        Gradients will be computed against `model`, but not any other
+        arguments (in particular, not against `self`).
 
         Args:
             model: The model to evaluate
@@ -77,10 +79,9 @@ class TrainStateBase(nnx.Module):
     def train_step(
         self,
         minibatch_dicts: tuple[dict, ...],
-        total_weight: float,
-        learning_rate: float,
+        params: dict,
         num_devices: int,
-        **kw,
+        loss_kw: dict,
     ) -> dict:
         """Perform one training step with gradient accumulation over minibatches.
 
@@ -94,11 +95,11 @@ class TrainStateBase(nnx.Module):
         Returns:
             Dictionary of training statistics
         """
-        kw_tuple = tuple(sorted(kw.items()))
+        kw_tuple = tuple(sorted(loss_kw.items()))
 
         @nnx.split_rngs(splits=num_devices)
         def compute_grads(state, sharded_minibatch):
-            return state._compute_grads(sharded_minibatch, kw_tuple)
+            return state._compute_grads(sharded_minibatch, params, kw_tuple)
 
         # Accumulate gradients over minibatches (outside pmap)
         accumulated_grads = None
@@ -123,9 +124,7 @@ class TrainStateBase(nnx.Module):
                 accumulated_stats = self._tree_accumulate(accumulated_stats, stats)
 
         # Apply optimizer update (pmap'd, with psum)
-        stats_dev = self._apply_update(
-            accumulated_grads, accumulated_stats, total_weight, learning_rate
-        )
+        stats_dev = self._apply_update(accumulated_grads, accumulated_stats, params)
 
         # Initiate async to-host transfer
         stats = jax.tree.map(lambda x: jax.copy_to_host_async(x), stats_dev)
@@ -139,13 +138,15 @@ class TrainStateBase(nnx.Module):
             0,
             0,
             None,
-            None,
         ),
         out_axes=None,
     )
-    def _apply_update(self, grads, stats, total_weight, learning_rate):
+    def _apply_update(self, grads, stats, params):
         """Apply accumulated gradients (pmap'd, with pmean)."""
         print("Tracing _apply_update")
+
+        total_weight = params["total_weight"]
+        learning_rate = params["learning_rate"]
 
         grads = jax.lax.psum(grads, axis_name="data")
         stats = jax.lax.psum(stats, axis_name="data")
@@ -165,22 +166,23 @@ class TrainStateBase(nnx.Module):
             nnx.StateAxes({nnx.RngState: 0, ...: None}),
             0,
             None,
+            None,
         ),
-        static_broadcasted_argnums=2,
+        static_broadcasted_argnums=3,
     )
-    def _compute_grads(self, minibatch_dict, kw):
+    def _compute_grads(self, minibatch_dict, params, loss_kw):
         """Compute gradients for one minibatch (pmap'd, no update)."""
-        kw = dict(kw)
+        loss_kw = dict(loss_kw)
         shapes = ", ".join(
             f"{k}=({','.join(str(i) for i in v.shape)})"
             for k, v in minibatch_dict.items()
             if v is not None
         )
-        kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
+        kwstr = ", ".join(f"{k}={v!r}" for k, v in loss_kw.items())
         print(f"Tracing _compute_grads for shape dict({shapes}) (kw=dict({kwstr}))")
 
         def loss_fn(model):
-            return self.loss_fn(model, minibatch_dict, **kw)
+            return self.loss_fn(model, minibatch_dict, params, **loss_kw)
 
         grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
         (_, stats), grads = grad_fn(self.model)
@@ -243,14 +245,15 @@ class TrainerBase:
         return total_weight / config.batch_size
 
     @abstractmethod
-    def prepare_batch(self, batch: BatchData) -> tuple[dict, ...]:
+    def prepare_batch(self, batch: BatchData) -> tuple[tuple[dict, ...], dict]:
         """Prepare minibatches for training (task-specific).
 
         Args:
-            minibatches: Tuple of MiniBatchData from collator
+            batch: BatchData from collator
 
         Returns:
-            Tuple of dicts ready for train_step()
+            minibatch_dicts: Tuple of dicts ready for train_step()
+            params: dict ready for train_step()
         """
         pass
 
@@ -297,7 +300,7 @@ class TrainerBase:
             self._seen_bucket_shapes.update(bucket_shapes)
 
             # Prepare batch (task-specific)
-            prepared_minibatches = self.prepare_batch(batch_data)
+            prepared_minibatches, params = self.prepare_batch(batch_data)
 
             # Compute learning rate based on total example weight seen so far
             target_lr = self.lr_schedule(
@@ -317,12 +320,17 @@ class TrainerBase:
             # Perform training step (returns stats with async copy initiated)
             stats = self.train_state.train_step(
                 minibatch_dicts=prepared_minibatches,
-                total_weight=batch_data.total_weight,
-                learning_rate=weighted_lr,
+                params=params
+                | dict(
+                    total_weight=batch_data.total_weight,
+                    learning_rate=weighted_lr,
+                ),
                 num_devices=self.num_devices,
-                mode=self.config.mode,
-                remat=self.config.remat,
-                unroll=self.config.unroll,
+                loss_kw=dict(
+                    mode=self.config.mode,
+                    remat=self.config.remat,
+                    unroll=self.config.unroll,
+                ),
             )
 
             # Update tracking

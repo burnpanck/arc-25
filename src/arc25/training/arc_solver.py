@@ -38,11 +38,15 @@ from .saving import save_model
 class ArcSolverConfig(ImageTrainConfigBase):
     """Configuration for ArcSolver training."""
 
-    loss_focus: float = 0.1
-
-
-_adaptive_lim = np.log([1e-2, 1e2]).astype(np.float32)
-_adaptation_lim = np.log([1e-10, 1e10]).astype(np.float32)
+    # loss focus: weight example proportional to $\bar g^\alpha$
+    # where $\bar g$ is the *average* cell crossentropy in the example.
+    # Thus, easier examples are up-weighted in order not distract
+    # us from the hopeless cases. $\alpha$ is dynamically adapted
+    # as learning progresses such that on average $E((\alpha log g)^2) = loss_focus^2$.
+    loss_focus: float = float(np.log(10))
+    loss_focus_eps: float = 0.01
+    loss_focus_limit: float = float(np.log(10))
+    loss_focus_beta: float = 0.95
 
 
 class TrainState(TrainStateBase):
@@ -60,12 +64,15 @@ class TrainState(TrainStateBase):
         rngs: nnx.Rngs,
     ) -> typing.Self:
         self = super().make(model, config, rngs=rngs)
-        self.reference_entropy = nnx.Variable(jnp.array(500, jnp.float32))
+        self.reference_entropy = nnx.Variable(jnp.array(np.log(10), jnp.float32))
+        self.reference_entropy_var = nnx.Variable(
+            jnp.array(np.log(10) ** 2, jnp.float32)
+        )
         self.reference_entropy_weight = nnx.Variable(jnp.array(0, jnp.float32))
         return self
 
-    @staticmethod
-    def loss_fn(model, minibatch_dict, **kw):
+    @classmethod
+    def _loss_fn_impl(cls, logits, minibatch_dict, params, **kw):
         """Compute ArcSolver loss for a single minibatch.
 
         Args:
@@ -77,18 +84,81 @@ class TrainState(TrainStateBase):
         Returns:
             Tuple of (loss, stats_dict)
         """
-        inputs = minibatch_dict["inputs"]
-        input_sizes = minibatch_dict["input_sizes"]
         outputs = minibatch_dict["outputs"]
         output_masks = minibatch_dict["output_masks"]
-        latent_program_idx = minibatch_dict["latent_program_idx"]
-        image_weights = minibatch_dict["image_weight"]
+        example_weight = minibatch_dict["example_weight"]
         cell_weights = minibatch_dict["cell_weight"]
-        reference_entropy = minibatch_dict["reference_entropy"]
-        loss_focus = minibatch_dict["loss_focus"]
 
-        assert reference_entropy.size == 1
-        assert loss_focus.size == 1
+        reference_entropy = params["reference_entropy"]
+        loss_weight_scale = params["loss_weight_scale"]
+        loss_weight_scale_limit = params["loss_weight_scale_limit"]
+
+        # Loss on ALL output cells (not masked like MAE)
+        cell_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
+            logits=logits, labels=outputs, axis=-1
+        )
+
+        # Mask to valid output regions and weight by pre-normalized cell weights
+        pair_crossentropy = jnp.where(
+            output_masks, cell_crossentropy * cell_weights, 0
+        ).sum(axis=(-2, -1))
+
+        # Focal loss: focus on those examples where we have a reasonable shot at
+        # getting them right.
+        rel_logprob = reference_entropy - jax.lax.stop_gradient(pair_crossentropy)
+        loss_weight = jnp.exp(
+            jnp.clip(
+                loss_weight_scale * rel_logprob,
+                -loss_weight_scale_limit,
+                loss_weight_scale_limit,
+            )
+        )
+        loss = loss_weight * pair_crossentropy
+        relprob = jnp.exp(
+            jnp.clip(rel_logprob, -loss_weight_scale_limit, loss_weight_scale_limit)
+        )
+        rel_logprob_squared = jnp.square(rel_logprob)
+
+        # Per-cell accuracy
+        predictions = jnp.argmax(logits, axis=-1)
+        cell_correct = predictions == outputs
+        cell_accuracy = (
+            jnp.where(cell_correct & output_masks, cell_weights, 0)
+            .astype(jnp.float32)
+            .sum(axis=(-2, -1))
+        )
+
+        # Per-pair accuracy (all cells in output must be correct)
+        pair_accuracy = (
+            (
+                # Padding doesn't count against accuracy
+                cell_correct
+                | ~output_masks
+            )
+            .all(axis=(-2, -1))
+            .astype(jnp.float32)
+        )
+
+        res = dict(
+            loss=loss,
+            loss_weight=loss_weight,
+            relprob=relprob,
+            rel_logprob_squared=rel_logprob_squared,
+            pair_crossentropy=pair_crossentropy,
+            cell_accuracy=cell_accuracy,
+            pair_accuracy=pair_accuracy,
+        )
+
+        if example_weight is not None:
+            res = {k: v * example_weight for k, v in res.items()}
+
+        return res
+
+    @classmethod
+    def loss_fn(cls, model, minibatch_dict, params, **kw):
+        inputs = minibatch_dict["inputs"]
+        input_sizes = minibatch_dict["input_sizes"]
+        latent_program_idx = minibatch_dict["latent_program_idx"]
 
         # Decode to predict outputs
         logits = model(
@@ -98,59 +168,11 @@ class TrainState(TrainStateBase):
             **kw,
         ).astype(jnp.float32)
 
-        # Loss on ALL output cells (not masked like MAE)
-        cell_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
-            logits=logits, labels=outputs, axis=-1
-        )
-
-        # Mask to valid output regions and weight by pre-normalized cell weights
-        pair_crossentropy = jnp.where(output_masks, cell_crossentropy, 0).sum(
-            axis=(-2, -1)
-        )
-        rel_logprob = reference_entropy - pair_crossentropy
-        lolim, hilim = _adaptive_lim
-        loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
-        lolim, hilim = _adaptation_lim
-        relprob = jnp.exp(jnp.clip(rel_logprob, lolim, hilim))
-        if image_weights is not None:
-            loss_weight = loss_weight * image_weights
-            loss = loss_weight * pair_crossentropy
-            relprob = relprob * image_weights
-            pair_crossentropy = pair_crossentropy * image_weights
-        else:
-            loss = loss_weight * pair_crossentropy
-        total_loss = loss.sum()
-        total_loss_weight = loss_weight.sum()
-        total_relprob = relprob.sum()
-        total_pair_crossentropy = pair_crossentropy.sum()
-
-        # Per-cell accuracy
-        predictions = jnp.argmax(logits, axis=-1)
-        cell_correct = (predictions == outputs) * output_masks * cell_weights
-        total_cell_accuracy = cell_correct.sum()
-
-        # Per-pair accuracy (all cells in output must be correct)
-        pair_correct = (
-            (
-                # Padding doesn't count against accuracy
-                (predictions == outputs)
-                | ~output_masks
-            )
-            .all(axis=(-2, -1))
-            .astype(jnp.float32)
-        )
-        total_pair_accuracy = (
-            pair_correct * image_weights if image_weights is not None else pair_correct
-        ).sum()
-
-        return total_loss, dict(
-            loss=total_loss,
-            loss_weight=total_loss_weight,
-            relprob=total_relprob,
-            pair_crossentropy=total_pair_crossentropy,
-            cell_accuracy=total_cell_accuracy,
-            pair_accuracy=total_pair_accuracy,
-        )
+        res = cls._loss_fn_impl(logits, minibatch_dict, params, **kw)
+        res = {k: v.sum() for k, v in res.items()}
+        loss = res["loss"]
+        stats = res
+        return loss, stats
 
     @nnx.pmap(
         axis_name="data",
@@ -159,13 +181,16 @@ class TrainState(TrainStateBase):
             0,
             0,
             None,
-            None,
         ),
         out_axes=None,
     )
-    def _apply_update(self, grads, stats, total_weight, learning_rate):
+    def _apply_update(self, grads, stats, params):
         """Apply accumulated gradients (pmap'd, with pmean)."""
         print("Tracing _apply_update")
+
+        total_weight = params["total_weight"]
+        learning_rate = params["learning_rate"]
+        loss_focus_beta = params["loss_focus_beta"]
 
         grads = jax.lax.psum(grads, axis_name="data")
         stats = jax.lax.psum(stats, axis_name="data")
@@ -178,39 +203,45 @@ class TrainState(TrainStateBase):
         sw = jnp.array(1 / total_weight, jnp.float32)
         stats = jax.tree.map(lambda a: a * sw, stats)
         relprob = stats.pop("relprob")
-        stats["loss"] = loss * lw
+        rel_logprob_squared = stats.pop("rel_logprob_squared")
+        stats["loss"] = loss * jnp.array(lw, jnp.float32)
 
         # Apply optimizer update
         self.optimizer.update(self.model, grads, learning_rate=learning_rate)
 
         # Apply EMA update to reference entropy
-        beta = 0.02
-        log_relprob = jnp.log(relprob)
-        lolim, hilim = _adaptation_lim
-        is_clipped = (log_relprob <= lolim + 0.05) | (log_relprob >= hilim - 0.05)
-        decay = beta * self.reference_entropy_weight
-        norm = self.reference_entropy_weight.value + beta - decay
-        self.reference_entropy_weight.value += jnp.where(is_clipped, 0, beta) - decay
-        # note relprob ~ -log(entropy) !
-        delta = -(fac := beta / norm) * log_relprob
-        self.reference_entropy.value += delta
+        beta = loss_focus_beta
+        bb = 1 - beta
+        self.reference_entropy_weight.value += bb * (1 - self.reference_entropy_weight)
+        fac = bb / self.reference_entropy_weight
+        # note log(relprob) ~ -entropy !
+        # re' = -log( (1-f)*exp(-re) + f*relprob*exp(-re) )
+        #     = -log( (1-f)          + f*relprob          ) + re
+        #     = -log(  1             + f*(relprob-1)      ) + re
+        self.reference_entropy.value -= jnp.log1p(fac * (relprob - 1))
+        # rev = (1-f)*rev + f*rlps = rev + f*(rlps-rev)
+        self.reference_entropy_var.value += fac * (
+            rel_logprob_squared - self.reference_entropy_var
+        )
+
         stats["reference_entropy"] = self.reference_entropy.value
-        if False:
+        if True:
             stats["debug"] = dict(
                 reference_entropy=self.reference_entropy.value,
-                is_clipped=is_clipped,
-                relprob=relprob,
-                delta=delta,
-                fac=fac,
-                log_relprob=log_relprob,
+                reference_entropy_var=self.reference_entropy_var.value,
                 reference_entropy_weight=self.reference_entropy_weight.value,
+                fac=fac,
+                relprob=relprob,
+                log_relprob=jnp.log(relprob),
+                rel_logprob_squared=rel_logprob_squared,
+                loss_weight_scale=params["loss_weight_scale"],
             )
 
         return stats
 
-    @staticmethod
-    @nnx.jit(static_argnums=2)
-    def _embed_inputs(model, minibatch_dict, kw):
+    @classmethod
+    @nnx.jit(static_argnums=(0, 3))
+    def embed_inputs(cls, model, minibatch_dict, kw):
         kw = dict(kw)
         shapes = ", ".join(
             f"{k}=({','.join(str(i) for i in v.shape)})"
@@ -218,7 +249,7 @@ class TrainState(TrainStateBase):
             if v is not None
         )
         kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
-        print(f"Tracing _embed_inputs for shape dict({shapes}) (kw=dict({kwstr}))")
+        print(f"Tracing embed_inputs for shape dict({shapes}) (kw=dict({kwstr}))")
 
         inputs = minibatch_dict["inputs"]
         input_sizes = minibatch_dict["input_sizes"]
@@ -229,9 +260,9 @@ class TrainState(TrainStateBase):
             **kw,
         )
 
-    @staticmethod
-    @nnx.jit(static_argnums=(3,))
-    def _evaluate(model, minibatch_dict, params, kw):
+    @classmethod
+    @nnx.jit(static_argnums=(0, 4))
+    def evaluate(cls, model, minibatch_dict, params, kw):
         kw = dict(kw)
         shapes = ", ".join(
             (
@@ -243,17 +274,11 @@ class TrainState(TrainStateBase):
             if v is not None
         )
         kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
-        print(f"Tracing _evaluate for shape dict({shapes}) (kw=dict({kwstr}))")
+        print(f"Tracing evaluate for shape dict({shapes}) (kw=dict({kwstr}))")
 
         embeddings = minibatch_dict["embeddings"]
-        outputs = minibatch_dict["outputs"]
         output_sizes = minibatch_dict["output_sizes"]
-        output_masks = minibatch_dict["output_masks"]
         latent_program_idx = minibatch_dict["latent_program_idx"]
-        image_weights = minibatch_dict["image_weight"]
-        cell_weights = minibatch_dict["cell_weight"]
-        reference_entropy = params["reference_entropy"]
-        loss_focus = params["loss_focus"]
 
         # Decode to predict outputs
         logits = model.decode(
@@ -263,77 +288,23 @@ class TrainState(TrainStateBase):
             **kw,
         ).astype(jnp.float32)
 
-        # Loss on ALL output cells (not masked like MAE)
-        cell_crossentropy = optax.softmax_cross_entropy_with_integer_labels(
-            logits=logits, labels=outputs, axis=-1
-        )
+        res = cls._loss_fn_impl(logits, minibatch_dict, params, **kw)
 
-        # Mask to valid output regions and weight by pre-normalized cell weights
-        pair_crossentropy = jnp.where(output_masks, cell_crossentropy, 0).sum(
-            axis=(-2, -1)
-        )
-        rel_logprob = reference_entropy - pair_crossentropy
-        lolim, hilim = _adaptive_lim
-        loss_weight = jnp.exp(jnp.clip(loss_focus * rel_logprob, lolim, hilim))
-        if image_weights is not None:
-            loss_weight = loss_weight * image_weights
-            loss = loss_weight * pair_crossentropy
-            pair_crossentropy = pair_crossentropy * image_weights
-        else:
-            loss = loss_weight * pair_crossentropy
+        stats = {
+            k: v for k, v in res.items() if k not in {"relprob", "rel_logprob_squared"}
+        }
 
-        # Per-cell accuracy
-        predictions = jnp.argmax(logits, axis=-1)
-        cell_correct = (predictions == outputs) * output_masks * cell_weights
-        cell_accuracy = cell_correct.sum(axis=(-2, -1))
-
-        # Per-pair accuracy (all cells in output must be correct)
-        pair_correct = (
-            (
-                # Padding doesn't count against accuracy
-                (predictions == outputs)
-                | ~output_masks
-            )
-            .all(axis=(-2, -1))
-            .astype(jnp.float32)
-        )
-        pair_accuracy = (
-            jnp.where(pair_correct, image_weights, 0)
-            if image_weights is not None
-            else pair_correct
-        )
-
-        per_image_stats = jnp.stack(
-            [
-                loss,
-                loss_weight,
-                pair_crossentropy,
-                cell_accuracy,
-                pair_accuracy,
-            ],
-            axis=-1,
-        )
+        per_example_stats = jnp.stack(list(stats.values()), axis=-1)
 
         K = model.latent_program_embeddings.shape[0]
         per_class_stats = (
-            jnp.zeros((K, 5), dtype=per_image_stats.dtype)
+            jnp.zeros((K, len(stats)), dtype=per_example_stats.dtype)
             .at[latent_program_idx]
-            .add(per_image_stats)
+            .add(per_example_stats)
         )
 
-        return dict(
-            loss=loss.sum(),
-            loss_weight=loss_weight.sum(),
-            pair_crossentropy=pair_crossentropy.sum(),
-            cell_accuracy=cell_accuracy.sum(),
-            pair_accuracy=pair_accuracy.sum(),
-            per_class=dict(
-                loss=per_class_stats[:, 0],
-                loss_weight=per_class_stats[:, 1],
-                pair_crossentropy=per_class_stats[:, 2],
-                cell_accuracy=per_class_stats[:, 3],
-                pair_accuracy=per_class_stats[:, 4],
-            ),
+        return {k: v.sum() for k, v in stats.items()} | dict(
+            per_class={k: per_class_stats[..., i] for i, k in enumerate(stats)},
         )
 
 
@@ -385,7 +356,20 @@ class ArcSolverTrainer(TrainerBase):
             **kw,
         )
 
-    def prepare_batch(self, batch: BatchData) -> tuple[dict, ...]:
+    def prepare_params(self) -> dict:
+        re = self.train_state.reference_entropy.value
+        rev = self.train_state.reference_entropy_var.value
+        loss_weight_scale = self.config.loss_focus / jnp.sqrt(
+            jnp.maximum(0, rev) + self.config.loss_focus_eps
+        )
+        return dict(
+            reference_entropy=re,
+            loss_weight_scale=loss_weight_scale * self._warmup_factor(),
+            loss_weight_scale_limit=self.config.loss_focus_limit,
+            loss_focus_beta=self.config.loss_focus_beta,
+        )
+
+    def prepare_batch(self, batch: BatchData) -> tuple[tuple[dict, ...], dict]:
         """Prepare minibatches for ArcSolver training by looking up inputs.
 
         Args:
@@ -405,7 +389,7 @@ class ArcSolverTrainer(TrainerBase):
             )
 
             # Create training dict
-            mb_dict = self._prepare_output_minibatch(output_mb, params_separate=False)
+            mb_dict = self._prepare_output_minibatch(output_mb)
             mb_dict.update(
                 inputs=input_mb.images,
                 input_sizes=input_mb.sizes,
@@ -413,61 +397,38 @@ class ArcSolverTrainer(TrainerBase):
 
             prepared.append(mb_dict)
 
-        return tuple(prepared)
+        params = self.prepare_params()
 
-    def _prepare_output_minibatch(
-        self, output_mb: MiniBatchData, *, params_separate: bool
-    ) -> dict:
+        return tuple(prepared), params
+
+    def _prepare_output_minibatch(self, output_mb: MiniBatchData) -> dict:
 
         # Extract latent_program_idx from labels (challenge_id is labels[:, 0])
         latent_program_idx = output_mb.labels[..., 0].astype(np.int32)
 
-        # Compute weights
-        # output_mb.weight is per-example, pre-normalized across all minibatches
-        weights = output_mb.weight
         output_masks = output_mb.masks
 
-        # Compute per-cell weights (uniform across valid cells in each example)
-        # Normalized so each example contributes proportionally to weights
-        cell_weight_per_example = output_masks / jnp.maximum(
+        # Compute weights
+        # output_mb.weight is pre-computed from the image size
+        weights = output_mb.weight
+
+        # Compute cell weights; normalised per example.
+        # Here, we apply uniform weight to all cells.
+        cell_weight = output_masks / jnp.maximum(
             output_masks.sum(axis=(-2, -1), keepdims=True), 1
         )
-        cell_weight = (
-            weights[..., None, None] * cell_weight_per_example
-            if weights is not None
-            else cell_weight_per_example
-        )
 
-        # Per-image weight (for per-pair accuracy)
-        image_weight = weights
+        # Example prior weight
+        example_weight = weights
 
         # Create training dict
-        ret = dict(
+        return dict(
             outputs=output_mb.images,
             output_masks=output_masks,
             latent_program_idx=latent_program_idx,
             cell_weight=cell_weight,
-            image_weight=image_weight,
+            example_weight=example_weight,
         )
-
-        params = dict(
-            reference_entropy=self.train_state.reference_entropy.value,
-            loss_focus=self.config.loss_focus * self._warmup_factor(),
-        )
-
-        if params_separate:
-            return ret, params
-        # params are scalars, but `TrainerBase` distributes
-        # all attributes in minibatch_dict, we need to replicate here
-        replication_shape = (self.num_devices,)
-        ret.update(
-            {
-                k: jnp.tile(v, replication_shape).astype(jnp.float32)
-                for k, v in params.items()
-            }
-        )
-
-        return ret
 
     def _cache_embeddings(self):
         # setup buckets - borrow from the main bucketing
@@ -539,7 +500,7 @@ class ArcSolverTrainer(TrainerBase):
                     dict(inputs=input_mb.images, input_sizes=input_mb.sizes),
                 )
 
-                embeddings = self.train_state._embed_inputs(
+                embeddings = self.train_state.embed_inputs(
                     resharded_model,
                     input_data,
                     tuple(
@@ -554,15 +515,13 @@ class ArcSolverTrainer(TrainerBase):
                 # reap embeddings back from the devices
                 embeddings = jax.tree.map(lambda a: jax.device_get(a), embeddings)
 
-                mb_dict, params = self._prepare_output_minibatch(
-                    output_mb, params_separate=True
-                )
+                mb_dict = self._prepare_output_minibatch(output_mb)
                 mb_dict.update(
                     embeddings=embeddings,
                     output_sizes=input_mb.sizes,
                 )
 
-                minibatches.append((mb_dict, params))
+                minibatches.append(mb_dict)
                 total_weight += (
                     output_mb.weight
                     if output_mb.weight is not None
@@ -595,6 +554,8 @@ class ArcSolverTrainer(TrainerBase):
 
         eval_data = self._eval_data_cache
 
+        params = self.prepare_params()
+
         mesh = jax.make_mesh(
             (self.num_devices,),
             ("batch",),
@@ -611,6 +572,8 @@ class ArcSolverTrainer(TrainerBase):
         model_state = jax.tree.map(lambda a: reshard(a), model_state)
         resharded_model = nnx.merge(model_graph, model_state)
 
+        params = jax.tree.map(lambda a: reshard(a), params)
+
         res = None
         with contextlib.ExitStack() as stack:
             stack.enter_context(jax.set_mesh(mesh))
@@ -623,10 +586,9 @@ class ArcSolverTrainer(TrainerBase):
             else:
                 pbar = None
 
-            for minibatch, params in eval_data.minibatches:
+            for minibatch in eval_data.minibatches:
                 minibatch = jax.tree.map(lambda a: reshard(a, "batch"), minibatch)
-                params = jax.tree.map(lambda a: reshard(a), params)
-                stats = self.train_state._evaluate(
+                stats = self.train_state.evaluate(
                     resharded_model,
                     minibatch,
                     params,
