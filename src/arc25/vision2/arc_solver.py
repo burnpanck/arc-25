@@ -85,6 +85,8 @@ class ARCSolver(nnx.Module):
             **kw,
             **base_kw,
         )
+        nnx_compat.set_metadata(self.encoder, tag="encoder", only=nnx.Param)
+
         self.config = dict(self.encoder.config)
         self.config.update(
             num_decoder_layers=num_decoder_layers,
@@ -139,7 +141,8 @@ class ARCSolver(nnx.Module):
                         ehs.context.total_channels,
                     ),
                     param_dtype,
-                )
+                ),
+                tag="embedding",
             )
             if num_latent_programs is not None
             else nnx_compat.data(None)

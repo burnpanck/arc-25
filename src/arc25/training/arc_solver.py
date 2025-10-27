@@ -55,6 +55,11 @@ class TrainState(TrainStateBase):
     The encoder is frozen (stop_gradient applied), only decoder is trained.
     """
 
+    train_filter: typing.ClassVar = nnx.filterlib.All(
+        nnx.Param, nnx.filterlib.Not("encoder")
+    )
+    weight_decay_filter: typing.ClassVar = nnx.Not("embedding")
+
     @classmethod
     def make(
         cls,

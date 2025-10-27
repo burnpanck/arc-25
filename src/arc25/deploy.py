@@ -63,6 +63,7 @@ async def get_data_files_for_deployment(
         models_root = data_root / "models"
         for fn in [
             "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-006912.msgpack.xz",
+            "20251025-1452-vertex-ai-mae-small-4xL4-chkp-004096.msgpack.xz",
         ]:
             files.append(models_root / fn)
 

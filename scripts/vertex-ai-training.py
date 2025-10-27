@@ -57,7 +57,7 @@ match training, model_config:
         training_config = MAETaskConfig(
             seed=42,
             batch_size=512,
-            minibatch_size=128 * accelerator_count,
+            minibatch_size=dict(L4=128)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=5,
             warmup_steps=64,
@@ -69,8 +69,8 @@ match training, model_config:
     case ("arc-solver", "tiny"):
         training_config = ArcSolverConfig(
             seed=42,
-            batch_size=512,
-            minibatch_size=128 * accelerator_count,
+            batch_size=2048,
+            minibatch_size=dict(L4=128)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=5,
             warmup_steps=64,
@@ -82,7 +82,7 @@ match training, model_config:
         training_config = MAETaskConfig(
             seed=42,
             batch_size=1024,
-            minibatch_size=16 * accelerator_count,
+            minibatch_size=dict(L4=16)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=10,
             warmup_steps=64,

@@ -31,6 +31,9 @@ class TrainStateBase(nnx.Module):
     model: nnx.Module
     optimizer: nnx.Optimizer
 
+    train_filter: typing.ClassVar = nnx.Param
+    weight_decay_filter: typing.ClassVar = Ellipsis
+
     @classmethod
     def make(
         cls,
@@ -41,16 +44,20 @@ class TrainStateBase(nnx.Module):
     ) -> typing.Self:
         """Initialize training state with model and optimizer."""
         # Create the AdamW optimizer with gradient clipping
+        trainable_state = nnx.state(model, cls.train_filter)
+        weight_decay_mask = nnx.map_state(
+            nnx.filterlib.to_predicate(cls.weight_decay_filter), trainable_state
+        )
         tx = optax.chain(
             optax.clip_by_global_norm(config.grad_clip_norm),
             optax.scale_by_adam(b1=config.betas[0], b2=config.betas[1], eps=config.eps),
-            optax.add_decayed_weights(config.weight_decay),
+            optax.add_decayed_weights(config.weight_decay, mask=weight_decay_mask),
             scale_by_kwarg(),
         )
 
         self = cls()
         self.model = model
-        self.optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
+        self.optimizer = nnx.Optimizer(model, tx, wrt=cls.train_filter)
         return self
 
     @abstractmethod
@@ -184,7 +191,11 @@ class TrainStateBase(nnx.Module):
         def loss_fn(model):
             return self.loss_fn(model, minibatch_dict, params, **loss_kw)
 
-        grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+        grad_fn = nnx.value_and_grad(
+            loss_fn,
+            argnums=nnx.DiffState(0, self.train_filter),
+            has_aux=True,
+        )
         (_, stats), grads = grad_fn(self.model)
 
         grads = nnx.to_pure_dict(grads)
@@ -344,7 +355,7 @@ class TrainerBase:
                 epoch=batch_data.epoch,
                 epoch_progress=batch_data.epoch_progress,
                 examples_seen=self.examples_seen,
-                accumulated_weight=batch_data.accumulated_weight - start_weight,
+                accumulated_weight=batch_data.accumulated_weight,
                 learning_rate=weighted_lr,
                 batch_weight=batch_data.total_weight,
             )
@@ -503,7 +514,7 @@ class TrainerBase:
         start_time = time.monotonic()
 
         # Timing tracking (exclude JIT compilation time)
-        excluded_weight = 0.0
+        excluded_weight = None
         excluded_time = 0.0
 
         # For latency hiding
@@ -521,6 +532,9 @@ class TrainerBase:
             # Get stats from device (blocks if needed)
             stats = jax.device_get(stats_dev)
             elapsed_time = time.monotonic() - start_time
+
+            if excluded_weight is None:
+                excluded_weight = stats["accumulated_weight"] - stats["batch_weight"]
 
             training_step = stats["training_step"]
             training_progress = stats["accumulated_weight"] / self.config.ref_batch
