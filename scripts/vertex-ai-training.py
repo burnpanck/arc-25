@@ -17,8 +17,8 @@ training = "arc-solver"
 training = "mae"
 model_config = "small"
 
-accelerator = "cpu"
-accelerator_count = 1
+accelerator = "L4"
+accelerator_count = 8
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
