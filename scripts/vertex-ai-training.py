@@ -11,14 +11,14 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = False
+dry_run = True
 
 training = "arc-solver"
 training = "mae"
 model_config = "small"
 
 accelerator = "L4"
-accelerator_count = 4
+accelerator_count = 1
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
@@ -27,19 +27,18 @@ run_name = (
 )
 print(f"Run: {run_name}")
 
-checkpoint = (
-    (
-        "gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
-        "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
-        "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz"
-    )
-    if training != "mae"
-    else None
-)
+checkpoint = dict(
+    tiny="gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
+    "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
+    "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
+    small="gs://576e2361-arc-agi-2/checkpoints/"
+    "20251025-1452-vertex-ai-mae-small-4xL4/"
+    "20251025-1452-vertex-ai-mae-small-4xL4-chkp-004096.msgpack.xz",
+)[model_config]
+
 
 base_config = dict(
     reference_image_size=15,
-    base_cell_cost=0,
     ref_batch=256,
     max_num_ref_batches=None,
     mode="flat",
@@ -57,6 +56,7 @@ match training, model_config:
         training_config = MAETaskConfig(
             seed=42,
             batch_size=512,
+            base_cell_cost=0,
             minibatch_size=dict(L4=128)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=5,
@@ -70,10 +70,11 @@ match training, model_config:
         training_config = ArcSolverConfig(
             seed=42,
             batch_size=2048,
+            base_cell_cost=0,
             minibatch_size=dict(L4=128)[accelerator] * accelerator_count,
             learning_rate=1e-5,
-            max_num_epochs=5,
-            warmup_steps=64,
+            max_num_epochs=20,
+            warmup_steps=128,
             checkpoint_every_steps=512,
             eval_every_ref_batch=256,
             **base_config,
@@ -82,14 +83,28 @@ match training, model_config:
         training_config = MAETaskConfig(
             seed=42,
             batch_size=1024,
-            minibatch_size=dict(L4=16)[accelerator] * accelerator_count,
+            base_cell_cost=dict(L4=0, v6e=64)[accelerator],
+            minibatch_size=dict(L4=16, v6e=40)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=10,
-            warmup_steps=64,
+            warmup_steps=128,
             checkpoint_every_steps=256,
             eval_every_ref_batch=256,
             **base_config,
             **mae_config,
+        )
+    case ("arc-solver", "small"):
+        training_config = ArcSolverConfig(
+            seed=42,
+            batch_size=2048,
+            base_cell_cost=0,
+            minibatch_size=dict(L4=64, v5e=24)[accelerator] * accelerator_count,
+            learning_rate=1e-5,
+            max_num_epochs=20,
+            warmup_steps=128,
+            checkpoint_every_steps=512,
+            eval_every_ref_batch=256,
+            **base_config,
         )
     case _:
         raise NotImplementedError(f"{training=} {model_config=}")
@@ -181,7 +196,7 @@ job = aiplatform.CustomContainerTrainingJob(
     display_name=run_name,
     location="europe-west4",
     project="deep-time-358505",
-    container_uri=f"europe-west4-docker.pkg.dev/deep-time-358505/arc-agi/arc25:{accelerator_type}",
+    container_uri=f"europe-west4-docker.pkg.dev/deep-time-358505/arc-agi/arc25-{accelerator_type}:latest",
     staging_bucket="gs://576e2361-arc-agi-2",
 )
 

@@ -62,6 +62,8 @@ def describe_config_json(obj):
             }
         case tuple() | list():
             return type(obj)(describe_config_json(v) for v in obj)
+        case set() | frozenset():
+            return [describe_config_json(v) for v in obj]
         case RepSpec():
             return describe_config_json(
                 {k: getattr(obj, k) for k in ["space", "n_flavours"]}

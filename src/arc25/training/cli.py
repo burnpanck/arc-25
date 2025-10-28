@@ -28,7 +28,7 @@ from . import arc_solver as arc_solver_trainer
 from . import dataset, gcp
 from . import mae as mae_trainer
 from . import saving
-from .config import describe_config_json
+from .config import ImageTrainConfigBase, describe_config_json
 
 proj_root = Path(os.environ.get("ARC25_APP_ROOT", Path(__file__).parents[3])).resolve()
 data_root = proj_root / "data"
@@ -221,6 +221,7 @@ def train(task: Training):
     # Common setup
     data_file = data_root / "repack/re-arc.cbor.xz"
     print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
+    sys.stdout.flush()
     src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
 
     run_name = task.run_name
@@ -247,6 +248,7 @@ def train(task: Training):
 
     if checkpoint_dir is not None:
         print(f"Checkpoint directory: {checkpoint_dir}")
+        sys.stdout.flush()
 
     if wandb_key is not None:
         import wandb
@@ -327,16 +329,28 @@ def train(task: Training):
     if task.encoder_checkpoint is not None:
         chkp_path = etils.epath.Path(task.encoder_checkpoint)
         print(f"Loading encoder from checkpoint: {chkp_path}")
+        sys.stdout.flush()
+
         encoder_checkpoint = saving.load_model(chkp_path)
         nnx.update(model.encoder, encoder_checkpoint.state.model.encoder)
         print("Encoder loaded successfully")
 
+    run_metadata = dict(
+        task_setup={
+            k: v
+            for k, v in attrs.asdict(task, recurse=False).items()
+            if not isinstance(v, ImageTrainConfigBase)
+        },
+    )
+
+    sys.stdout.flush()
     trainer, stats = trainer_cls.main(
         model=model,
         config=config,
         wandb_project=wandb_project if wandb_key is not None else None,
         run_name=run_name,
         checkpoint_dir=checkpoint_dir,
+        run_metadata=run_metadata,
         **trainer_kw,
     )
 

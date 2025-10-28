@@ -368,6 +368,7 @@ class TrainerBase:
         checkpoint_dir: etils.epath.Path | str | None = None,
         wandb_project: str | None = None,
         run_name: str | None = None,
+        run_metadata: dict | None = None,
     ) -> list[dict]:
         """Common checkpoint/wandb/training loop logic.
 
@@ -409,11 +410,13 @@ class TrainerBase:
             **vars(config),
             model=describe_config_json(model.config),
             code_version=arc25.__version__,
+            **describe_config_json(run_metadata or {}),
         )
 
         base_metadata = dict(
             config=dict(self=config, model=model.config),
             code_version=arc25.__version__,
+            **(run_metadata or {}),
         )
 
         # Setup checkpoint directory and scan for existing checkpoints
@@ -620,7 +623,7 @@ class TrainerBase:
                 wandb_run.log(stats, step=training_step)
 
         with contextlib.ExitStack() as stack:
-            if self.with_progress_bars:
+            if self.with_progress_bars or True:
                 pbar = stack.enter_context(
                     tqdm.auto.tqdm(total=int(self.total_steps), desc="Training")
                 )

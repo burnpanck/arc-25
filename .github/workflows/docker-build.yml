@@ -3,6 +3,15 @@ name: Build and Push Docker Images
 on:
   workflow_dispatch:
     inputs:
+      build_target:
+        description: 'What to build'
+        required: true
+        type: choice
+        options:
+          - base
+          - training
+          - both
+        default: 'training'
       accelerator:
         description: 'Accelerator type'
         required: true
@@ -33,11 +42,94 @@ env:
   GCP_PROJECT_ID: deep-time-358505
   GCP_REGION: europe-west4
   GCP_REPOSITORY: arc-agi
-  IMAGE_NAME: arc25
 
 jobs:
-  build:
-    name: Build ${{ matrix.accelerator }} image
+  build-base:
+    name: Build base image for ${{ matrix.accelerator }}
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.build_target == 'base' || github.event.inputs.build_target == 'both')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        # For base images, exclude 'workbench' as it's a training-only variant
+        accelerator: ${{ github.event.inputs.accelerator == 'all' && fromJSON('["gpu", "tpu"]') || (github.event.inputs.accelerator == 'workbench' && fromJSON('[]') || fromJSON(format('["{0}"]', github.event.inputs.accelerator))) }}
+    outputs:
+      base_image_tag: ${{ steps.tags.outputs.image_tag }}
+    env:
+      IMAGE_NAME: arc25-${{ matrix.accelerator }}-base
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image tags for base
+        id: tags
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMAGE_TAG="${TIMESTAMP}-${SHORT_SHA}"
+
+          if [[ "${{ github.event.inputs.push }}" == "true" ]]; then
+            IMAGE_BASE_URL="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_REPOSITORY }}/"
+          else
+            IMAGE_BASE_URL=""
+          fi
+          TAGS="${IMAGE_BASE_URL}${IMAGE_NAME}:${IMAGE_TAG}"
+          TAGS="${TAGS},${IMAGE_BASE_URL}${IMAGE_NAME}:latest"
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "image_base_url=${IMAGE_BASE_URL}" >> $GITHUB_OUTPUT
+
+      - name: Authenticate to Google Cloud
+        if: ${{ github.event.inputs.push == 'true' }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: deep-time-358505
+          workload_identity_provider: 'projects/440754660445/locations/global/workloadIdentityPools/github-actions/providers/github-burnanck-only'
+
+      - name: Configure Docker for Artifact Registry
+        if: ${{ github.event.inputs.push == 'true' }}
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push base image
+        uses: docker/build-push-action@v5
+        with:
+          context: docker
+          file: docker/Dockerfile.base
+          platforms: linux/amd64
+          build-args: |
+            ACCELERATOR=${{ matrix.accelerator }}
+            PYTHON_VERSION=3.13
+          push: ${{ github.event.inputs.push == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.accelerator }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.accelerator }}
+
+      - name: Output image info
+        run: |
+          echo "Built base image: ${{ steps.tags.outputs.image_name }}:${{ steps.tags.outputs.image_tag }}"
+          if [[ "${{ github.event.inputs.push}}" == "true" ]]; then
+            echo "Pushed to: ${{ steps.tags.outputs.image_base_url}}${{ steps.tags.outputs.image_name }}:${{ steps.tags.outputs.image_tag }}"
+          fi
+
+  build-training:
+    name: Build training image for ${{ matrix.accelerator }}
+    needs: [build-base]
+    if: |
+      always() &&
+      (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.build_target == 'training' || github.event.inputs.build_target == 'both')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,6 +137,8 @@ jobs:
     strategy:
       matrix:
         accelerator: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.accelerator == 'all' && fromJSON('["gpu", "tpu", "workbench"]') || fromJSON(format('["{0}"]', github.event.inputs.accelerator))) || fromJSON('["gpu"]') }}
+    env:
+      IMAGE_NAME: arc25-${{ matrix.accelerator }}
 
     steps:
       - name: Checkout code
@@ -82,51 +176,44 @@ jobs:
         run: |
           pdm run python -m arc25.deploy prepare-docker-context docker/buildctxt
 
-      - name: Set Dockerfile and image name
+      - name: Set Dockerfile and generate image tags
         id: docker-config
         run: |
           if [[ "${{ matrix.accelerator }}" == "workbench" ]]; then
             echo "dockerfile=vertex-ai-workbench.dockerfile" >> $GITHUB_OUTPUT
-            echo "image_name=arc25-workbench" >> $GITHUB_OUTPUT
           else
             echo "dockerfile=Dockerfile" >> $GITHUB_OUTPUT
-            echo "image_name=${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Generate image tags
-        id: tags
-        run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           SHORT_SHA=$(git rev-parse --short HEAD)
           IMAGE_TAG="${TIMESTAMP}-${SHORT_SHA}"
 
           ARTIFACT_REGISTRY_URL="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_REPOSITORY }}"
+          echo "artifact_registry_url=${ARTIFACT_REGISTRY_URL}" >> $GITHUB_OUTPUT
 
-          IMAGE_NAME="${{ steps.docker-config.outputs.image_name }}"
-
-          if [[ "${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}" == "true" ]]; then
-            TAGS="${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}-${{ matrix.accelerator }}"
-            TAGS="${TAGS},${ARTIFACT_REGISTRY_URL}/${IMAGE_NAME}:${{ matrix.accelerator }}"
+          # Determine base image tag: use the one just built if base job succeeded, otherwise "latest"
+          if [[ "${{ needs.build-base.result }}" == "success" ]]; then
+            BASE_IMAGE_TAG="${{ needs.build-base.outputs.base_image_tag }}"
+            echo "Using base image tag from build-base job: ${BASE_IMAGE_TAG}"
           else
-            TAGS="${IMAGE_NAME}:${IMAGE_TAG}-${{ matrix.accelerator }}"
-            TAGS="${TAGS},${IMAGE_NAME}:${{ matrix.accelerator }}"
+            BASE_IMAGE_TAG="latest"
+            echo "Using base image tag: ${BASE_IMAGE_TAG}"
           fi
+          echo "base_image_tag=${BASE_IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+          if [[ "${{ github.event.inputs.push }}" == "true" ]]; then
+            IMAGE_BASE_URL="${ARTIFACT_REGISTRY_URL}/"
+          else
+            IMAGE_BASE_URL=""
+          fi
+          TAGS="${IMAGE_BASE_URL}${IMAGE_NAME}:${IMAGE_TAG}"
+          TAGS="${TAGS},${IMAGE_BASE_URL}${IMAGE_NAME}:latest"
 
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
           echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Inspect GitHub OIDC JWT claims
-        if: always()
-        env:
-          AUD: https://iam.googleapis.com/projects/440754660445/locations/global/workloadIdentityPools/github-actions/providers/github-burnanck-only
-        run: |
-          set -euo pipefail
-          tok=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
-
-          # decode payload (no signature verification; just for debugging)
-          jq -R 'split(".") | .[1] | @base64d | fromjson' <<< "$tok"
+          echo "image_base_url=${IMAGE_BASE_URL}" >> $GITHUB_OUTPUT
 
       - name: Authenticate to Google Cloud
         if: ${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}
@@ -140,7 +227,7 @@ jobs:
         run: |
           gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
-      - name: Build and push Docker image
+      - name: Build and push training image
         uses: docker/build-push-action@v5
         with:
           context: docker/buildctxt
@@ -149,14 +236,17 @@ jobs:
           build-args: |
             ACCELERATOR=${{ matrix.accelerator }}
             PYTHON_VERSION=3.13
+            BASE_IMAGE_REGISTRY=${{ steps.docker-config.outputs.artifact_registry_url }}
+            BASE_IMAGE_TAG=${{ steps.docker-config.outputs.base_image_tag }}
           push: ${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.docker-config.outputs.tags }}
           cache-from: type=gha,scope=${{ matrix.accelerator }}
           cache-to: type=gha,mode=max,scope=${{ matrix.accelerator }}
 
       - name: Output image info
         run: |
-          echo "Built image: ${{ steps.tags.outputs.image_name }}:${{ steps.tags.outputs.image_tag }}-${{ matrix.accelerator }}"
+          echo "Built training image: ${{ steps.docker-config.outputs.image_name }}:${{ steps.docker-config.outputs.image_tag }}"
+          echo "Using base image tag: ${{ steps.docker-config.outputs.base_image_tag }}"
           if [[ "${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}" == "true" ]]; then
-            echo "Pushed to: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_REPOSITORY }}/${{ steps.tags.outputs.image_name }}:${{ steps.tags.outputs.image_tag }}-${{ matrix.accelerator }}"
+            echo "Pushed to: ${{ steps.docker-config.outputs.image_base_url }}${{ steps.docker-config.outputs.image_name }}:${{ steps.docker-config.outputs.image_tag }}"
           fi

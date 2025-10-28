@@ -16,12 +16,38 @@ on:
         required: true
 
 jobs:
-  wheelhouse:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+    steps:
+      - id: mk
+        run: |
+          GPU='{"accelerator":"gpu","python-version":"3.11","pdm-groups":"-G vision -G train -G cuda12"}'
+          TPU='{"accelerator":"tpu","python-version":"3.12","pdm-groups":"-G vision -G train -G tpu"}'
+
+          case "${{ inputs.accelerator }}" in
+            gpu)
+              echo "matrix=[${GPU}]" >> "$GITHUB_OUTPUT"
+              ;;
+            tpu)
+              echo "matrix=[${TPU}]" >> "$GITHUB_OUTPUT"
+              ;;
+            all|*)
+              echo "matrix=[${GPU},${TPU}]" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+
+  build-wheels:
+    needs: prepare-matrix
+    name: Build wheels for ${{ matrix.accelerator }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      ACCELERATOR: ${{ inputs.accelerator || 'all' }}
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -30,18 +56,67 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Create wheelhouse directory
-        run: mkdir -p wheelhouse
+      - name: Set up PDM + Python ${{ matrix.python-version }}
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: true
 
-      # Build project wheel (pure Python, version-independent)
-      - name: Set up PDM + Python (for project build)
+      - name: Install pdm-wheel plugin
+        run: pdm self add pdm-wheel
+
+      - name: Build dependency wheels for ${{ matrix.accelerator }}
+        run: |
+          mkdir -p wheelhouse
+          # Production deps + specified groups
+          pdm wheel -w wheelhouse --prod -v ${{ matrix.pdm-groups }}
+
+      - name: Remove heavy libraries
+        run: |
+          rm wheelhouse/torch-* || true
+
+      - name: List wheels built
+        run: ls -alh wheelhouse/
+
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.accelerator }}
+          path: wheelhouse/
+          retention-days: 1
+
+  upload-to-kaggle:
+    name: Combine wheels and upload to Kaggle
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Set up PDM + Python
         uses: pdm-project/setup-pdm@v4
         with:
           python-version: "3.11"
           cache: true
 
-      - name: Install pdm-wheel plugin
-        run: pdm self add pdm-wheel
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Combine wheels into single directory
+        run: |
+          mkdir -p wheelhouse
+          # Copy wheels from all artifacts
+          find artifacts -name "*.whl" -exec cp {} wheelhouse/ \;
+          echo "Combined wheels:"
+          ls -alh wheelhouse/
 
       - name: Build project wheel
         run: |
@@ -49,34 +124,7 @@ jobs:
           cp dist/*.whl wheelhouse/
           rm -rf dist/
 
-      # --- GPU build (Python 3.11) ---
-      - name: Build GPU dependency wheels
-        if: env.ACCELERATOR == 'gpu' || env.ACCELERATOR == 'all'
-        run: |
-          # Production deps + vision group + jax[cuda12-local]
-          pdm wheel -w wheelhouse --prod -v -G vision -G train -G cuda12-local
-
-      - name: Remove heavy GPU libraries
-        if: env.ACCELERATOR == 'gpu' || env.ACCELERATOR == 'all'
-        run: |
-          rm wheelhouse/torch-* || true
-
-      # --- TPU build (Python 3.12) ---
-      - name: Set up PDM + Python 3.12 for TPU
-        if: env.ACCELERATOR == 'tpu' || env.ACCELERATOR == 'all'
-        uses: pdm-project/setup-pdm@v4
-        with:
-          python-version: "3.12"
-          cache: true
-
-      - name: Build TPU dependency wheels
-        if: env.ACCELERATOR == 'tpu' || env.ACCELERATOR == 'all'
-        run: |
-          pdm self add pdm-wheel
-          # Production deps + vision group + jax[tpu]
-          pdm wheel -w wheelhouse --prod -v -G vision -G train -G tpu
-
-      - name: List wheelhouse contents
+      - name: List final wheelhouse contents
         run: ls -alh wheelhouse/
 
       - name: Resolve project metadata

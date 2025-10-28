@@ -323,6 +323,7 @@ class MAETrainer(TrainerBase):
         wandb_project: str | None = None,
         run_name: str | None = None,
         num_devices: int | None = None,
+        **kw,
     ):
         """Main training entry point with progress tracking and logging.
 
@@ -390,5 +391,6 @@ class MAETrainer(TrainerBase):
             checkpoint_dir=checkpoint_dir,
             wandb_project=wandb_project,
             run_name=run_name,
+            **kw,
         )
         return self, res
