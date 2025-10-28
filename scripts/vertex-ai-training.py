@@ -13,18 +13,16 @@ from arc25.training.mae import MAETaskConfig
 
 dry_run = True
 
-training = "arc-solver"
 training = "mae"
-model_config = "small"
+training = "arc-solver"
+model_config = "tiny"
 
 accelerator = "L4"
 accelerator_count = 1
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
-run_name = (
-    f"{now:%Y%m%d-%H%M}-vertex-ai-mae-{model_config}-{accelerator_count}x{accelerator}"
-)
+run_name = f"{now:%Y%m%d-%H%M}-vertex-ai-{training}-{model_config}-{accelerator_count}x{accelerator}"
 print(f"Run: {run_name}")
 
 checkpoint = dict(

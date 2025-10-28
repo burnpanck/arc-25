@@ -339,7 +339,7 @@ def train(task: Training):
         task_setup={
             k: v
             for k, v in attrs.asdict(task, recurse=False).items()
-            if not isinstance(v, ImageTrainConfigBase)
+            if k not in {"mae_training", "arc_solver_training"}
         },
     )
 

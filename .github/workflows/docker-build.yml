@@ -19,9 +19,10 @@ on:
         options:
           - gpu
           - tpu
+          - both
           - workbench
           - all
-        default: 'all'
+        default: 'both'
       push:
         description: 'Push to Artifact Registry'
         required: true
@@ -136,7 +137,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        accelerator: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.accelerator == 'all' && fromJSON('["gpu", "tpu", "workbench"]') || fromJSON(format('["{0}"]', github.event.inputs.accelerator))) || fromJSON('["gpu"]') }}
+        accelerator: ${{ github.event_name == 'workflow_dispatch' && ((github.event.inputs.accelerator == 'all' && fromJSON('["gpu", "tpu", "workbench"]')) || (github.event.inputs.accelerator == 'both' && fromJSON('["gpu", "tpu"]')) || fromJSON(format('["{0}"]', github.event.inputs.accelerator))) || fromJSON('["gpu"]') }}
     env:
       IMAGE_NAME: arc25-${{ matrix.accelerator }}
 

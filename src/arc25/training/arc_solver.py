@@ -764,7 +764,6 @@ class ArcSolverTrainer(TrainerBase):
             rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
             eval_dataset=eval_dataset,
-            **kw,
         )
 
         # Run common training loop
@@ -772,5 +771,6 @@ class ArcSolverTrainer(TrainerBase):
             checkpoint_dir=checkpoint_dir,
             wandb_project=wandb_project,
             run_name=run_name,
+            **kw,
         )
         return self, res
