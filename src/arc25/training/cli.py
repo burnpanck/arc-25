@@ -224,9 +224,6 @@ def train(task: Training):
 
     # Common setup
     data_file = data_root / "repack/re-arc.cbor.xz"
-    print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
-    sys.stdout.flush()
-    src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
 
     run_name = task.run_name
 
@@ -267,6 +264,10 @@ def train(task: Training):
     match task.model.type:
         case "mae":
             # MAE pretraining
+            print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
+            sys.stdout.flush()
+            src_dataset = dataset.ImagesDataset.load_compressed_cbor(data_file)
+
             size_cuts = list(task.size_bins)
 
             full_eval_split, train_split = src_dataset.split_by_challenge(
@@ -286,6 +287,9 @@ def train(task: Training):
                 for s in [train_split, eval_split]
             ]
 
+            print(f"Creating MaskedAutoencoder model")
+            sys.stdout.flush()
+
             model = mae.MaskedAutoencoder(
                 **mae.configs[task.model.config],
                 dtype=getattr(jnp, task.model.dtype),
@@ -300,10 +304,21 @@ def train(task: Training):
 
         case "arc-solver":
             # ArcSolver training
+            print(f"Loading data from {data_file} ({data_file.stat().st_size} bytes)")
+            sys.stdout.flush()
+
+            src_dataset = dataset.ImagesDataset.load_compressed_cbor(
+                data_root / "repack/re-arc.cbor.xz",
+                filter=lambda iop, ex: iop.input.shape == iop.output.shape,
+            )
+
+            size_buckets = list(task.size_bins)
             num_latent_programs = len(src_dataset.challenges)
+
             print(
                 f"Creating ARCSolver model with {num_latent_programs} latent programs"
             )
+            sys.stdout.flush()
 
             model = arc_solver.ARCSolver(
                 **arc_solver.configs[task.model.config],
@@ -320,10 +335,12 @@ def train(task: Training):
             trainer_cls = arc_solver_trainer.ArcSolverTrainer
             trainer_kw = dict(
                 dataset=train_split,  # Pass raw dataset (with inputs and outputs)
+                eval_dataset=eval_split,
+                bucket_shapes=set(itertools.product(size_buckets, size_buckets)),
             )
 
             # Load encoder checkpoint (required for ArcSolver)
-            if task.encoder_checkpoint is None:
+            if task.starting_checkpoint is None:
                 raise RuntimeError(f"For ArcSolver, an encoder checkpoint is required")
 
         case _:

@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import json5
+import numpy as np
 from google.cloud import aiplatform, aiplatform_v1
 
 from arc25.lib.click_tools import _get_config_class, _get_fields
@@ -11,14 +12,14 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
-training = "arc-solver"
 training = "mae"
+training = "arc-solver"
 model_config = "small"
 
 accelerator = "L4"
-accelerator_count = 8
+accelerator_count = 4
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
@@ -48,6 +49,12 @@ mae_config = dict(
     nonmask_fraction=0.2,
     randomise_fraction=0.2,
 )
+arc_solver_config = dict(
+    loss_focus=float(np.log(10)),
+    loss_focus_eps=0.01,
+    loss_focus_limit=float(np.log(10)),
+    loss_focus_beta=0.95,
+)
 
 match training, model_config:
     case ("mae", "tiny"):
@@ -67,15 +74,16 @@ match training, model_config:
     case ("arc-solver", "tiny"):
         training_config = ArcSolverConfig(
             seed=42,
-            batch_size=2048,
+            batch_size=2048 if accelerator != "cpu" else 128,
             base_cell_cost=0,
-            minibatch_size=dict(L4=128)[accelerator] * accelerator_count,
+            minibatch_size=dict(L4=128, cpu=16)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=20,
             warmup_steps=128,
             checkpoint_every_steps=512,
             eval_every_ref_batch=256,
             **base_config,
+            **arc_solver_config,
         )
     case ("mae", "small"):
         training_config = MAETaskConfig(
@@ -103,6 +111,7 @@ match training, model_config:
             checkpoint_every_steps=512,
             eval_every_ref_batch=256,
             **base_config,
+            **arc_solver_config,
         )
     case _:
         raise NotImplementedError(f"{training=} {model_config=}")
@@ -111,7 +120,7 @@ match training, model_config:
 config = Training(
     run_name=run_name,
     checkpoint_base_uri=f"gs://576e2361-arc-agi-2/checkpoints/",
-    size_bins=[12, 20, 30] if accelerator != "cpu" else [15],
+    size_bins=[12, 20, 30] if accelerator != "cpu" else [30],
     model=ModelSelection(
         type=training,
         config=model_config,
