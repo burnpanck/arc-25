@@ -163,12 +163,16 @@ class Training:
 
     # Common parameters
     size_bins: frozenset[int] = frozenset([12, 20, 30])
-    encoder_checkpoint: str | None = attrs.field(
+    starting_checkpoint: str | None = attrs.field(
         default=None,
-        metadata=dict(
-            help="Path to encoder checkpoint (for arc_solver or MAE multi-stage)"
-        ),
+        metadata=dict(help="Path to the checkpoint to start from."),
     )
+    # starting-checkpoint type: What kind of model to expect, and what to do with it;
+    # - "mae" and "arc-solver" update all model weights, expecting a full matching checkpoint.
+    # - "with-encoder" and "encoder" only update the encoder, with the former looking for the encoder one layer within the model.
+    starting_checkpoint_type: (
+        Literal["with-encoder", "encoder", "mae", "arc-solver"] | None
+    ) = None
     wandb_secret_name: str | None = attrs.field(
         default=None,
         metadata=dict(
@@ -326,13 +330,25 @@ def train(task: Training):
             raise ValueError()
 
     # Load encoder checkpoint if provided (for multi-stage training)
-    if task.encoder_checkpoint is not None:
-        chkp_path = etils.epath.Path(task.encoder_checkpoint)
-        print(f"Loading encoder from checkpoint: {chkp_path}")
+    if task.starting_checkpoint is not None:
+        chkp_path = etils.epath.Path(task.starting_checkpoint)
+        schpt = task.starting_checkpoint_type or task.model.type
+
+        print(f"Loading {schpt} from checkpoint: {chkp_path}")
         sys.stdout.flush()
 
-        encoder_checkpoint = saving.load_model(chkp_path)
-        nnx.update(model.encoder, encoder_checkpoint.state.model.encoder)
+        starting_checkpoint = saving.load_model(chkp_path)
+        match schpt:
+            case "with-encoder":
+                nnx.update(model.encoder, starting_checkpoint.state.model.encoder)
+            case "encoder":
+                raise NotImplementedError
+                nnx.update(model.encoder, starting_checkpoint.state.model)
+            case "mae" | "arc-solver":
+                assert task.model.type == schpt
+                nnx.update(model, starting_checkpoint.state.model)
+            case _:
+                raise ValueError(schpt)
         print("Encoder loaded successfully")
 
     run_metadata = dict(

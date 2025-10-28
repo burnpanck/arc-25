@@ -13,11 +13,11 @@ from arc25.training.mae import MAETaskConfig
 
 dry_run = True
 
-training = "mae"
 training = "arc-solver"
-model_config = "tiny"
+training = "mae"
+model_config = "small"
 
-accelerator = "L4"
+accelerator = "cpu"
 accelerator_count = 1
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
@@ -80,9 +80,9 @@ match training, model_config:
     case ("mae", "small"):
         training_config = MAETaskConfig(
             seed=42,
-            batch_size=1024,
-            base_cell_cost=dict(L4=0, v6e=64)[accelerator],
-            minibatch_size=dict(L4=16, v6e=40)[accelerator] * accelerator_count,
+            batch_size=1024 if accelerator != "cpu" else 128,
+            base_cell_cost=dict(L4=0, v6e=64, cpu=0)[accelerator],
+            minibatch_size=dict(L4=16, v6e=40, cpu=8)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=10,
             warmup_steps=128,
@@ -94,9 +94,9 @@ match training, model_config:
     case ("arc-solver", "small"):
         training_config = ArcSolverConfig(
             seed=42,
-            batch_size=2048,
+            batch_size=2048 if accelerator != "cpu" else 128,
             base_cell_cost=0,
-            minibatch_size=dict(L4=64, v5e=24)[accelerator] * accelerator_count,
+            minibatch_size=dict(L4=64, v5e=24, cpu=16)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=20,
             warmup_steps=128,
@@ -111,13 +111,14 @@ match training, model_config:
 config = Training(
     run_name=run_name,
     checkpoint_base_uri=f"gs://576e2361-arc-agi-2/checkpoints/",
-    size_bins=[12, 20, 30],
+    size_bins=[12, 20, 30] if accelerator != "cpu" else [15],
     model=ModelSelection(
         type=training,
         config=model_config,
     ),
     wandb_secret_name="wandb-api-key",
-    encoder_checkpoint=checkpoint,
+    starting_checkpoint=checkpoint,
+    starting_checkpoint_type={"arc-solver": "with-encoder"}.get(training, training),
     **{
         MAETaskConfig: dict(mae_training=training_config),
         ArcSolverConfig: dict(arc_solver_training=training_config),
@@ -129,6 +130,7 @@ accelerator_type = dict(
     H100="gpu",
     RTX6000="gpu",
     v6e="tpu",
+    cpu="cpu",
 )[accelerator]
 
 # see https://docs.cloud.google.com/vertex-ai/docs/training/configure-compute#specifying_gpus
@@ -147,6 +149,8 @@ match accelerator_type:
         kw = dict(
             scheduling_strategy=aiplatform_v1.types.custom_job.Scheduling.Strategy.SPOT,
         )
+    case "cpu":
+        kw = dict()
     case _:
         raise KeyError(accelerator_type)
 
