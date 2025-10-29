@@ -70,7 +70,7 @@ jobs:
 
           DO_PUSH="${{ github.event_name == 'push' || github.event.inputs.push == 'true' }}"
           echo "do-push=${DO_PUSH}" >> $GITHUB_OUTPUT
-          if [[ "${DO_PUSH}"" == "true" ]]; then
+          if [[ "${DO_PUSH}" == "true" ]]; then
             IMAGE_REPO="${ARTIFACT_REGISTRY_URL}/"
           else
             IMAGE_REPO=""

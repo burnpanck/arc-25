@@ -30,6 +30,7 @@ from .dataset import (
     OnDemandBucketDataset,
 )
 from .learning_rate import scale_by_kwarg
+from .row_weighted_adam import scale_by_adam_with_step_weights
 from .saving import save_model
 
 
@@ -58,7 +59,30 @@ class TrainState(TrainStateBase):
     train_filter: typing.ClassVar = nnx.filterlib.All(
         nnx.Param, nnx.filterlib.Not("encoder")
     )
-    weight_decay_filter: typing.ClassVar = nnx.Not("embedding")
+
+    @classmethod
+    def _make_optimiser(cls, config: ImageTrainConfigBase, trainable_state: nnx.State):
+        embeddings = {"latent_program_embeddings"}
+        assert not embeddings - set(
+            trainable_state.keys()
+        ), "Embeddings seem to be missing"
+        main_opt_chain = optax.chain(*super()._make_optimiser(config, trainable_state))
+        # we currently don't do any weight-decay. If we did, we'd need to
+        # also scale it with the weight, perhaps easiest to just include in this custom Adam.
+        embedding_chain = scale_by_adam_with_step_weights(
+            b1=config.betas[0], b2=config.betas[1], eps=config.eps
+        )
+        partition_labels = nnx.State(
+            {
+                k: "embedding" if k in embeddings else "main"
+                for k in trainable_state.keys()
+            }
+        )
+        ret = optax.partition(
+            dict(main=main_opt_chain, embedding=embedding_chain),
+            partition_labels,
+        )
+        return (ret,)
 
     @classmethod
     def make(
@@ -174,9 +198,17 @@ class TrainState(TrainStateBase):
         ).astype(jnp.float32)
 
         res = cls._loss_fn_impl(logits, minibatch_dict, params, **kw)
+
+        weight = res["loss_weight"]
+        K = model.latent_program_embeddings.shape[0]
+        per_class_weight = (
+            jnp.zeros(K, dtype=weight.dtype).at[latent_program_idx].add(weight)
+        )
+
         res = {k: v.sum() for k, v in res.items()}
         loss = res["loss"]
         stats = res
+        stats["class_weight"] = per_class_weight
         return loss, stats
 
     @nnx.pmap(
@@ -202,17 +234,32 @@ class TrainState(TrainStateBase):
 
         loss_weight = stats.pop("loss_weight")
         loss = stats.pop("loss")
+        class_weight = stats.pop("class_weight")
 
-        lw = 1 / loss_weight
+        lw = jnp.array(1 / loss_weight, jnp.float32)
+
         grads = jax.tree.map(lambda a: a * jnp.array(lw, dtype=a.dtype), grads)
         sw = jnp.array(1 / total_weight, jnp.float32)
         stats = jax.tree.map(lambda a: a * sw, stats)
         relprob = stats.pop("relprob")
         rel_logprob_squared = stats.pop("rel_logprob_squared")
-        stats["loss"] = loss * jnp.array(lw, jnp.float32)
+        stats["loss"] = loss * lw
+
+        class_weight = class_weight * (class_weight.size * lw)
+        # class weight should now be scaled to mean 1 again
+
+        # normalise embedding gradients - will be undone by the row-adaptive optimiser afterwards.
+        grads["latent_program_embeddings"] /= jnp.where(
+            class_weight > 0, class_weight, 1
+        )[:, None, None]
+
+        # limit embedding update weights to a reasonable value
+        class_weight = jnp.minimum(class_weight, 3)
 
         # Apply optimizer update
-        self.optimizer.update(self.model, grads, learning_rate=learning_rate)
+        self.optimizer.update(
+            self.model, grads, learning_rate=learning_rate, row_weights=class_weight
+        )
 
         # Apply EMA update to reference entropy
         beta = loss_focus_beta
@@ -232,15 +279,23 @@ class TrainState(TrainStateBase):
         stats["reference_entropy"] = self.reference_entropy.value
         if True:
             stats["debug"] = dict(
-                reference_entropy=self.reference_entropy.value,
+                # reference_entropy=self.reference_entropy.value,
                 reference_entropy_var=self.reference_entropy_var.value,
-                reference_entropy_weight=self.reference_entropy_weight.value,
-                fac=fac,
+                # reference_entropy_weight=self.reference_entropy_weight.value,
+                # fac=fac,
                 relprob=relprob,
-                log_relprob=jnp.log(relprob),
+                # log_relprob=jnp.log(relprob),
                 rel_logprob_squared=rel_logprob_squared,
                 loss_weight_scale=params["loss_weight_scale"],
             )
+
+        # compute weight metrics/stats; for now just propgram embedding norms
+        embedding_norms = jnp.linalg.norm(
+            self.model.latent_program_embeddings, axis=-1
+        ).mean(-1)
+        stats["program_embedding_norms"] = {
+            k: getattr(embedding_norms, k)() for k in ["mean", "std", "min", "max"]
+        }
 
         return stats
 

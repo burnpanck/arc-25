@@ -18,9 +18,9 @@ def scale_by_kwarg() -> optax.GradientTransformationExtraArgs:
         del params
         return optax.EmptyState()
 
-    def update_fn(updates, state, params=None, **extra_args):
+    def update_fn(updates, state, params=None, *, learning_rate, **extra_args):
         del params
-        lr = extra_args["learning_rate"]
+        lr = learning_rate
         scale = -lr
         updates = jax.tree.map(lambda g: jnp.array(scale, dtype=g.dtype) * g, updates)
         return updates, state

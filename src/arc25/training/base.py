@@ -32,20 +32,9 @@ class TrainStateBase(nnx.Module):
     optimizer: nnx.Optimizer
 
     train_filter: typing.ClassVar = nnx.Param
-    weight_decay_filter: typing.ClassVar = Ellipsis
 
     @classmethod
-    def make(
-        cls,
-        model: nnx.Module,
-        config: ImageTrainConfigBase,
-        *,
-        rngs: nnx.Rngs,
-    ) -> typing.Self:
-        """Initialize training state with model and optimizer."""
-        # Create the AdamW optimizer with gradient clipping
-        trainable_state = nnx.state(model, cls.train_filter)
-        wd_filter = cls.weight_decay_filter
+    def _make_optimiser(cls, config: ImageTrainConfigBase, trainable_state: nnx.State):
         exclusions = []
         for e in config.exclude_from_wd:
             match e:
@@ -65,14 +54,32 @@ class TrainStateBase(nnx.Module):
                         f"Unknown weight group to exclude from weight decay: {e!r}"
                     )
         if exclusions:
-            wd_filter = nnx.All(wd_filter, nnx.Not(nnx.Any(*exclusions)))
+            wd_filter = nnx.Not(nnx.Any(*exclusions))
+        else:
+            wd_filter = Ellipsis
         weight_decay_mask = nnx.map_state(
-            nnx.filterlib.to_predicate(cls.weight_decay_filter), trainable_state
+            nnx.filterlib.to_predicate(wd_filter), trainable_state
         )
-        tx = optax.chain(
-            optax.clip_by_global_norm(config.grad_clip_norm),
+        return (
             optax.scale_by_adam(b1=config.betas[0], b2=config.betas[1], eps=config.eps),
             optax.add_decayed_weights(config.weight_decay, mask=weight_decay_mask),
+        )
+
+    @classmethod
+    def make(
+        cls,
+        model: nnx.Module,
+        config: ImageTrainConfigBase,
+        *,
+        rngs: nnx.Rngs,
+    ) -> typing.Self:
+        """Initialize training state with model and optimizer."""
+        # Create the AdamW optimizer with gradient clipping
+        trainable_state = nnx.state(model, cls.train_filter)
+
+        tx = optax.chain(
+            optax.clip_by_global_norm(config.grad_clip_norm),
+            *cls._make_optimiser(config, trainable_state),
             scale_by_kwarg(),
         )
 
