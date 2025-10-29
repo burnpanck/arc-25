@@ -66,12 +66,16 @@ class SymDecompLayerNorm(nnx.Module):
             {
                 k: ScaleBias(
                     scale=(
-                        nnx.Param(scale_init(rngs.params(), (v,), param_dtype))
+                        nnx.Param(
+                            scale_init(rngs.params(), (v,), param_dtype), tag="norm"
+                        )
                         if use_scale
                         else None
                     ),
                     bias=(
-                        nnx.Param(bias_init(rngs.params(), (v,), param_dtype))
+                        nnx.Param(
+                            bias_init(rngs.params(), (v,), param_dtype), tag="norm"
+                        )
                         if use_bias
                         else None
                     ),

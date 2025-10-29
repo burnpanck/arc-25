@@ -12,7 +12,7 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = False
+dry_run = True
 
 training = "arc-solver"
 training = "mae"
@@ -20,6 +20,11 @@ model_config = "small"
 
 accelerator = "L4"
 accelerator_count = 8
+
+if dry_run:
+    model_config = "tiny"
+    accelerator = "cpu"
+    accelerator_count = 1
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")

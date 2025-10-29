@@ -206,17 +206,21 @@ def attrs_to_click_options(func):
             if len(args) != 1:
                 raise ValueError(f"Cannot handle {field_type}")
             (inner_type,) = args
-            assert (
-                inner_type is int
-            ), f"{inner_type!r} is not currently supported in variable length arguments"
+            inner_origin = typing.get_origin(inner_type)
+            if inner_origin is Literal:
+                conv = str
+            else:
+                conv = inner_type
+            assert conv in {
+                int,
+                str,
+            }, f"{inner_type!r} is not currently supported in variable length arguments"
             click_kwargs["callback"] = (
-                lambda ctx, param, v, *, origin=origin, inner_type=inner_type: (
+                lambda ctx, param, v, *, conv=conv, origin=origin, inner_type=inner_type: (
                     None
                     if v is None
                     else origin(
-                        [inner_type(n.strip()) for n in v.split(",")]
-                        if v.strip()
-                        else []
+                        [conv(n.strip()) for n in v.split(",")] if v.strip() else []
                     )
                 )
             )

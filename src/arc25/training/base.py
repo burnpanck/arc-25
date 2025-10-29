@@ -45,6 +45,27 @@ class TrainStateBase(nnx.Module):
         """Initialize training state with model and optimizer."""
         # Create the AdamW optimizer with gradient clipping
         trainable_state = nnx.state(model, cls.train_filter)
+        wd_filter = cls.weight_decay_filter
+        exclusions = []
+        for e in config.exclude_from_wd:
+            match e:
+                case "embedding":
+                    exclusions.append(
+                        nnx.Any(
+                            "embedding",
+                            lambda path, v: any("embedding" in p.lower() for p in path),
+                        )
+                    )
+                case "norm":
+                    exclusions.append("norm")
+                case "bias":
+                    exclusions.append(nnx.PathContains("bias"))
+                case _:
+                    raise ValueError(
+                        f"Unknown weight group to exclude from weight decay: {e!r}"
+                    )
+        if exclusions:
+            wd_filter = nnx.All(wd_filter, nnx.Not(nnx.Any(*exclusions)))
         weight_decay_mask = nnx.map_state(
             nnx.filterlib.to_predicate(cls.weight_decay_filter), trainable_state
         )
@@ -406,11 +427,13 @@ class TrainerBase:
         print("----------------------------\n")
 
         # Build metadata/config dicts
-        wandb_config = dict(
-            **vars(config),
-            model=describe_config_json(model.config),
-            code_version=arc25.__version__,
-            **describe_config_json(run_metadata or {}),
+        wandb_config = describe_config_json(
+            dict(
+                **vars(config),
+                model=model.config,
+                code_version=arc25.__version__,
+                **run_metadata or {},
+            )
         )
 
         base_metadata = dict(

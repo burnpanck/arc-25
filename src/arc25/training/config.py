@@ -30,6 +30,9 @@ class ImageTrainConfigBase:
     betas: tuple[float, float] = (0.9, 0.95)
     eps: float = 1e-8
     weight_decay: float = 0.05
+    exclude_from_wd: frozenset[Literal["embedding", "bias", "norm"]] = frozenset(
+        ["embedding", "bias", "norm"]
+    )
     grad_clip_norm: float = 1.0
     # Schedule
     learning_rate: float = 1e-5
