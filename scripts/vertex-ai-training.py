@@ -12,7 +12,7 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
 training = "arc-solver"
 training = "mae"
