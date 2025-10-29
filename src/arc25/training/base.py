@@ -30,6 +30,7 @@ class TrainStateBase(nnx.Module):
 
     model: nnx.Module
     optimizer: nnx.Optimizer
+    rngs: nnx.Rngs
 
     train_filter: typing.ClassVar = nnx.Param
 
@@ -86,6 +87,7 @@ class TrainStateBase(nnx.Module):
         self = cls()
         self.model = model
         self.optimizer = nnx.Optimizer(model, tx, wrt=cls.train_filter)
+        self.rngs = rngs
         return self
 
     @abstractmethod

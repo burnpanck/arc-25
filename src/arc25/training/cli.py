@@ -315,15 +315,17 @@ def train(task: Training):
             size_buckets = list(task.size_bins)
             num_latent_programs = len(src_dataset.challenges)
 
+            num_solution_attempts = config.num_solution_attempts
+
             print(
-                f"Creating ARCSolver model with {num_latent_programs} latent programs"
+                f"Creating ARCSolver model with {num_latent_programs}×{num_solution_attempts} latent programs"
             )
             sys.stdout.flush()
 
             model = arc_solver.ARCSolver(
                 **arc_solver.configs[task.model.config],
                 dtype=getattr(jnp, task.model.dtype),
-                num_latent_programs=num_latent_programs,
+                num_latent_programs=num_latent_programs * num_solution_attempts,
                 rngs=nnx.Rngs(config.seed),
             )
 

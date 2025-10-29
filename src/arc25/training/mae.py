@@ -228,7 +228,7 @@ class MAETrainer(TrainerBase):
         test_ratio = self.config.test_ratio
         nonmask_fraction = self.config.nonmask_fraction
         randomise_fraction = self.config.randomise_fraction
-        rng = self.collator.rng
+        rngs = self.train_state.rngs
 
         for minibatch in batch.minibatches:
             # Convert to dict
@@ -240,7 +240,7 @@ class MAETrainer(TrainerBase):
 
             # Generate random input mask using collator's numpy RNG
             # Each visible cell has (1 - mask_ratio) chance of being in input
-            random_vals = rng.uniform(size=images.shape)
+            random_vals = jax.random.uniform(rngs.data(), shape=images.shape)
             prediction_mask = (random_vals < test_ratio) & masks
             unmasked_prediction = masks & (random_vals < nonmask_fraction * test_ratio)
             input_mask = unmasked_prediction | (masks & ~prediction_mask)
@@ -252,8 +252,12 @@ class MAETrainer(TrainerBase):
                 changeup_mask,
                 (
                     images
-                    + rng.integers(
-                        low=1, high=10, size=images.shape, dtype=images.dtype
+                    + jax.random.randint(
+                        rngs.data(),
+                        minval=1,
+                        maxval=10,
+                        shape=images.shape,
+                        dtype=images.dtype,
                     )
                 )
                 % 10,

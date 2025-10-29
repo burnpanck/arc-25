@@ -14,12 +14,14 @@ from arc25.training.mae import MAETaskConfig
 
 dry_run = True
 
-training = "mae"
 training = "arc-solver"
+training = "mae"
 model_config = "small"
 
-accelerator = "L4"
-accelerator_count = 8
+accelerator = "v6e"
+accelerator_count = 4
+
+use_spot = False
 
 if dry_run:
     model_config = "tiny"
@@ -85,7 +87,7 @@ match training, model_config:
             learning_rate=1e-5,
             max_num_epochs=20,
             warmup_steps=128,
-            checkpoint_every_steps=512,
+            checkpoint_every_steps=256,
             eval_every_ref_batch=256,
             **base_config,
             **arc_solver_config,
@@ -160,8 +162,12 @@ match accelerator_type:
             boot_disk_type="hyperdisk-balanced",  # needed for v6e
         )
     case "gpu":
-        kw = dict(
-            scheduling_strategy=aiplatform_v1.types.custom_job.Scheduling.Strategy.SPOT,
+        kw = (
+            dict(
+                scheduling_strategy=aiplatform_v1.types.custom_job.Scheduling.Strategy.SPOT,
+            )
+            if use_spot
+            else dict()
         )
     case "cpu":
         kw = dict()

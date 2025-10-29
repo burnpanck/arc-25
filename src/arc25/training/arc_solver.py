@@ -49,6 +49,8 @@ class ArcSolverConfig(ImageTrainConfigBase):
     loss_focus_limit: float = float(np.log(10))
     loss_focus_beta: float = 0.95
 
+    num_solution_attempts: int = 1
+
 
 class TrainState(TrainStateBase):
     """Training state for ArcSolver with encoder-decoder architecture.
@@ -336,9 +338,19 @@ class TrainState(TrainStateBase):
         kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
         print(f"Tracing evaluate for shape dict({shapes}) (kw=dict({kwstr}))")
 
-        embeddings = minibatch_dict["embeddings"]
-        output_sizes = minibatch_dict["output_sizes"]
-        latent_program_idx = minibatch_dict["latent_program_idx"]
+        nsa = kw.pop("num_solution_attempts")
+
+        mbd = jax.tree.map(
+            lambda a: jnp.tile(a[:, None, ...], (1, nsa) + (1,) * (a.ndim - 1)),
+            minibatch_dict,
+        )
+
+        embeddings = mbd["embeddings"]
+        output_sizes = mbd["output_sizes"]
+        latent_program_idx = mbd["latent_program_idx"] * nsa
+        latent_program_idx += np.arange(nsa)[
+            None, :, *(None,) * (latent_program_idx.ndim - 2)
+        ]
 
         # Decode to predict outputs
         logits = model.decode(
@@ -347,8 +359,7 @@ class TrainState(TrainStateBase):
             latent_program_idx=latent_program_idx,
             **kw,
         ).astype(jnp.float32)
-
-        res = cls._loss_fn_impl(logits, minibatch_dict, params, **kw)
+        res = cls._loss_fn_impl(logits, mbd, params, **kw)
 
         stats = {
             k: v for k, v in res.items() if k not in {"relprob", "rel_logprob_squared"}
@@ -361,7 +372,7 @@ class TrainState(TrainStateBase):
             jnp.zeros((K, len(stats)), dtype=per_example_stats.dtype)
             .at[latent_program_idx]
             .add(per_example_stats)
-        )
+        ).reshape(-1, nsa, len(stats))
 
         return {k: v.sum() for k, v in stats.items()} | dict(
             per_class={k: per_class_stats[..., i] for i, k in enumerate(stats)},
@@ -440,6 +451,9 @@ class ArcSolverTrainer(TrainerBase):
         """
         prepared = []
 
+        n_sols = self.config.num_solution_attempts
+        rngs = self.train_state.rngs
+
         for output_mb in batch.minibatches:
             # Look up corresponding inputs from InputLookup
             input_mb = self.inputs_src.get_peer_batch(
@@ -450,7 +464,12 @@ class ArcSolverTrainer(TrainerBase):
 
             # Create training dict
             mb_dict = self._prepare_output_minibatch(output_mb)
+            base_pgm_idx = mb_dict.pop("latent_program_idx")
+            pgm_idx = base_pgm_idx * n_sols + jax.random.randint(
+                rngs.data(), minval=0, maxval=n_sols, shape=base_pgm_idx.shape
+            )
             mb_dict.update(
+                latent_program_idx=pgm_idx,
                 inputs=input_mb.images,
                 input_sizes=input_mb.sizes,
             )
@@ -474,7 +493,7 @@ class ArcSolverTrainer(TrainerBase):
 
         # Compute cell weights; normalised per example.
         # Here, we apply uniform weight to all cells.
-        cell_weight = output_masks / jnp.maximum(
+        cell_weight = output_masks / np.maximum(
             output_masks.sum(axis=(-2, -1), keepdims=True), 1
         )
 
@@ -647,7 +666,6 @@ class ArcSolverTrainer(TrainerBase):
                 pbar = None
 
             for minibatch in eval_data.minibatches:
-                minibatch = jax.tree.map(lambda a: reshard(a, "batch"), minibatch)
                 stats = self.train_state.evaluate(
                     resharded_model,
                     minibatch,
@@ -658,6 +676,7 @@ class ArcSolverTrainer(TrainerBase):
                             remat=self.config.remat,
                             unroll=self.config.unroll,
                             deterministic=True,
+                            num_solution_attempts=self.config.num_solution_attempts,
                         ).items()
                     ),
                 )
@@ -690,9 +709,15 @@ class ArcSolverTrainer(TrainerBase):
             bins=10,
             range=(0, 1),
         )
+        best_per_class_accuracy = per_class_accuracy.max(1)
+        mean_per_class_accuracy = per_class_accuracy.mean(1)
+        std_per_class_accuracy = per_class_accuracy.std(1)
         stats.update(
             class_accuracy_histogram=class_accuracy_histogram,
             per_class=per_class,
+            best_per_class_accuracy=best_per_class_accuracy.mean(),
+            mean_per_class_accuracy=mean_per_class_accuracy.mean(),
+            std_per_class_accuracy=std_per_class_accuracy.std(),
         )
         return stats
 

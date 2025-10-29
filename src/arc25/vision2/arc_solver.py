@@ -226,6 +226,7 @@ class ARCSolver(nnx.Module):
         latent_program: jt.Float[jt.Array, "... N C"] | None = None,
         with_stats: bool = False,
         with_attention_maps: bool = False,
+        deterministic: bool | None = None,
         **kw,
     ) -> jt.Float[jt.Array, "... F"]:
         skw = dict(
@@ -236,6 +237,7 @@ class ARCSolver(nnx.Module):
         res = self.encoder(
             x,
             size,
+            deterministic=True,
             **skw,
         )
 
@@ -251,6 +253,7 @@ class ARCSolver(nnx.Module):
             output_size=size,
             latent_program_idx=latent_program_idx,
             latent_program=latent_program,
+            deterministic=deterministic,
             **skw,
         )
 
