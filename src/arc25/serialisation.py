@@ -21,6 +21,11 @@ def serialise(obj):
             return {k: serialise(v) for k, v in obj.items()}
         case tuple() | list():
             return type(obj)(serialise(v) for v in obj)
+        case set() | frozenset():
+            return dict(
+                __type__=type(obj).__qualname__,
+                data=[serialise(v) for v in obj],
+            )
         case np.ndarray():
             return dict(
                 __type__=type(obj).__qualname__,
@@ -52,7 +57,7 @@ def serialise(obj):
 
 _known_types = {
     t.__qualname__: t
-    for t in [np.ndarray, D4, np.dtype] + list(PermRepBase._known_reps)
+    for t in [np.ndarray, set, frozenset, D4, np.dtype] + list(PermRepBase._known_reps)
 } | {
     t.__qualname__: t
     for k, t in vars(types).items()
@@ -112,6 +117,10 @@ def deserialise(data):
         return cls
     if cls is np.ndarray:
         return np.frombuffer(data["data"], dtype=data["dtype"]).reshape(data["shape"])
+    elif cls in {set, frozenset}:
+        d = data.pop("data")
+        assert not data
+        return cls(d)
     elif issubclass(cls, enum.Enum):
         return cls[data["name"]]
     else:

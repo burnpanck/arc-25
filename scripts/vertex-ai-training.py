@@ -14,12 +14,12 @@ from arc25.training.mae import MAETaskConfig
 
 dry_run = False
 
-training = "mae"
 training = "arc-solver"
+training = "mae"
 model_config = "small"
 
 accelerator = "L4"
-accelerator_count = 4
+accelerator_count = 8
 
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 # now = datetime.datetime.strptime("20251023-1137", "%Y%m%d-%H%M")
@@ -38,7 +38,7 @@ checkpoint = dict(
 
 base_config = dict(
     reference_image_size=15,
-    ref_batch=256,
+    ref_batch=256 if accelerator != "cpu" else 16,
     max_num_ref_batches=None,
     mode="flat",
     remat=True,
@@ -60,9 +60,9 @@ match training, model_config:
     case ("mae", "tiny"):
         training_config = MAETaskConfig(
             seed=42,
-            batch_size=512,
+            batch_size=512 if accelerator != "cpu" else 64,
             base_cell_cost=0,
-            minibatch_size=dict(L4=128)[accelerator] * accelerator_count,
+            minibatch_size=dict(L4=128, cpu=8)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=5,
             warmup_steps=64,
@@ -102,13 +102,13 @@ match training, model_config:
     case ("arc-solver", "small"):
         training_config = ArcSolverConfig(
             seed=42,
-            batch_size=2048 if accelerator != "cpu" else 128,
+            batch_size=1024 if accelerator != "cpu" else 128,
             base_cell_cost=0,
             minibatch_size=dict(L4=64, v5e=24, cpu=16)[accelerator] * accelerator_count,
             learning_rate=1e-5,
-            max_num_epochs=20,
+            max_num_epochs=10,
             warmup_steps=128,
-            checkpoint_every_steps=512,
+            checkpoint_every_steps=256,
             eval_every_ref_batch=256,
             **base_config,
             **arc_solver_config,

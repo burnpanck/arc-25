@@ -24,6 +24,7 @@ flax_version = tuple(int(v) for v in flax.__version__.split("."))
         pytest.param(symmetry.FullRep, id="PermRepBase"),
         pytest.param(np.float32, id="float32"),
         pytest.param(jnp.bfloat16, id="bfloat16"),
+        pytest.param(frozenset([1, 2, 3]), id="set"),
     ],
 )
 def test_serialisation(example):
