@@ -23,6 +23,7 @@ from ..lib.click_tools import (
     reconstruct_hierarchical_config,
     unflatten_config,
 )
+from ..serialisation import serialisable
 from ..vision2 import arc_solver, mae
 from . import arc_solver as arc_solver_trainer
 from . import dataset, gcp
@@ -34,6 +35,7 @@ proj_root = Path(os.environ.get("ARC25_APP_ROOT", Path(__file__).parents[3])).re
 data_root = proj_root / "data"
 
 
+@serialisable
 @attrs.frozen
 class ModelSelection:
     type: Literal["mae", "arc-solver"] = "mae"
@@ -150,6 +152,7 @@ def tune_batch_size(task: BatchSizeTuning):
         sys.stdout.flush()
 
 
+@serialisable
 @attrs.frozen
 class Training:
     """Unified training configuration for both MAE and ArcSolver."""

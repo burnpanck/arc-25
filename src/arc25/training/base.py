@@ -570,6 +570,8 @@ class TrainerBase:
             stats = jax.device_get(stats_dev)
             elapsed_time = time.monotonic() - start_time
 
+            stats = jax.tree.map(lambda a: np.asarray(a), stats)
+
             if excluded_weight is None:
                 excluded_weight = stats["accumulated_weight"] - stats["batch_weight"]
 

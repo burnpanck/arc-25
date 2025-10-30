@@ -12,19 +12,19 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = False
+dry_run = True
 
 training = "mae"
 training = "arc-solver"
 model_config = "small"
 
 accelerator = "v6e"
-accelerator_count = 1
+accelerator_count = 4
 
 use_spot = False
 
 if dry_run:
-    model_config = "tiny"
+    # model_config = "tiny"
     accelerator = "cpu"
     accelerator_count = 1
 
@@ -37,9 +37,12 @@ checkpoint = dict(
     tiny="gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
     "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
     "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
-    small="gs://576e2361-arc-agi-2/checkpoints/"
+    small_prev="gs://576e2361-arc-agi-2/checkpoints/"
     "20251025-1452-vertex-ai-mae-small-4xL4/"
     "20251025-1452-vertex-ai-mae-small-4xL4-chkp-004096.msgpack.xz",
+    small="gs://576e2361-arc-agi-2/checkpoints/"
+    "20251029-1911-vertex-ai-mae-small-4xv6e/"
+    "20251029-1911-vertex-ai-mae-small-4xv6e-chkp-004096.msgpack.xz",
 )[model_config]
 
 
@@ -118,23 +121,23 @@ match training, model_config:
         training_config = ArcSolverConfig(
             seed=42,
             batch_size=1024 if accelerator != "cpu" else 128,
-            base_cell_cost=0,
-            minibatch_size=dict(L4=64, v5e=24, v6e=128, cpu=16)[accelerator]
+            base_cell_cost=dict(L4=0, v6e=80, cpu=0)[accelerator],
+            minibatch_size=dict(L4=64, v5e=24, v6e=64, cpu=16)[accelerator]
             * accelerator_count,
             eval_batch_size=dict(L4=32, v6e=128, cpu=8)[accelerator]
             * accelerator_count
             // num_solution_attempts,
             learning_rate=1e-5,
-            #            max_num_epochs=10,
+            max_num_epochs=10,
             warmup_steps=128,
             checkpoint_every_steps=256,
-            #            eval_every_ref_batch=256,
+            # on 1xv6e and 4 attempts, eval takes about 320s, and we have ~32 ex/s.
+            # At batch size 256 ex/refbatch, that is 8s/refbatch.
+            # Thus, eval breakeven is at 40 refbatches
+            eval_every_ref_batch=128,
             num_solution_attempts=num_solution_attempts,
-            #            **base_config,
+            **base_config,
             **arc_solver_config,
-            **{k: v for k, v in base_config.items() if k != "max_num_ref_batches"},
-            max_num_ref_batches=10,
-            eval_every_ref_batch=1,
         )
     case _:
         raise NotImplementedError(f"{training=} {model_config=}")
