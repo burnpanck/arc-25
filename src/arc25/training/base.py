@@ -503,10 +503,10 @@ class TrainerBase:
 
             # Restore progress tracking
             if (stats := checkpoint_data.metadata.get("stats")) is not None:
-                self.step = stats.get("training_step", resume_step)
-                data_step = stats.get("data_step", self.step)
-                resume_accumulated_weight = stats.get("accumulated_weight")
-                self.examples_seen = stats.get("examples_seen", 0)
+                self.step = int(stats.get("training_step", resume_step))
+                data_step = int(stats.get("data_step", self.step))
+                resume_accumulated_weight = float(stats.get("accumulated_weight"))
+                self.examples_seen = int(stats.get("examples_seen", 0))
                 print(
                     f"Checkpoint loaded. Resuming from step {self.step} (data: {data_step}, "
                     f"examples seen: {self.examples_seen})"

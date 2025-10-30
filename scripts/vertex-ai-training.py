@@ -18,8 +18,8 @@ training = "mae"
 training = "arc-solver"
 model_config = "small"
 
-accelerator = "L4"
-accelerator_count = 8
+accelerator = "v6e"
+accelerator_count = 4
 
 use_spot = False
 
