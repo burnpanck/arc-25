@@ -271,6 +271,7 @@ class TrainerBase:
             init_value=lr,
             decay_steps=total_steps,
             alpha=0.001,
+            exponent=0.5,
         )
 
     @classmethod

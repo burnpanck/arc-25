@@ -201,6 +201,7 @@ class MAETrainer(TrainerBase):
             knn_evaluator = KNNEvaluator(
                 dataset=eval_dataset,
                 batch_size=eval_batch_size,
+                num_devices=num_devices,
                 seed=config.seed,
             )
 

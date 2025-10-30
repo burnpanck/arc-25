@@ -430,7 +430,10 @@ class BucketedDataset:
         rgen: np.random.Generator,
         with_progress: bool = False,
         allow_short_batch: bool = True,
+        allow_narrow_batch: bool = False,
     ):
+        if allow_narrow_batch:
+            raise NotImplementedError
         with contextlib.ExitStack() as stack:
             if with_progress:
                 n_batches_tot = 0

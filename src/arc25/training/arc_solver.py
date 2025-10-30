@@ -376,7 +376,7 @@ class TrainState(TrainStateBase):
             jnp.zeros((K, len(stats)), dtype=per_example_stats.dtype)
             .at[latent_program_idx]
             .add(per_example_stats)
-        ).reshape(-1, nsa, len(stats))
+        ).reshape(-1, nsa, per_example_stats.shape[-1])
 
         return {k: v.sum() for k, v in stats.items()} | dict(
             per_class={k: per_class_stats[..., i] for i, k in enumerate(stats)},
