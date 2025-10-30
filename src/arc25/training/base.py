@@ -2,6 +2,7 @@
 
 import contextlib
 import datetime
+import sys
 import time
 import typing
 from abc import abstractmethod
@@ -217,6 +218,7 @@ class TrainStateBase(nnx.Module):
         )
         kwstr = ", ".join(f"{k}={v!r}" for k, v in loss_kw.items())
         print(f"Tracing _compute_grads for shape dict({shapes}) (kw=dict({kwstr}))")
+        sys.stdout.flush()
 
         def loss_fn(model):
             return self.loss_fn(model, minibatch_dict, params, **loss_kw)

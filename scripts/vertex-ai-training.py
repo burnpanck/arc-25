@@ -12,14 +12,14 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
-training = "arc-solver"
 training = "mae"
+training = "arc-solver"
 model_config = "small"
 
 accelerator = "v6e"
-accelerator_count = 4
+accelerator_count = 1
 
 use_spot = False
 
@@ -86,7 +86,7 @@ match training, model_config:
             batch_size=2048 if accelerator != "cpu" else 128,
             base_cell_cost=0,
             minibatch_size=dict(L4=128, v5e=48, cpu=8)[accelerator] * accelerator_count,
-            eval_batch_size=dict(L4=256, v5e=64, cpu=8)[accelerator]
+            eval_batch_size=dict(L4=128, v5e=64, cpu=8)[accelerator]
             * accelerator_count
             // num_solution_attempts,
             learning_rate=1e-5,
@@ -114,23 +114,27 @@ match training, model_config:
             **mae_config,
         )
     case ("arc-solver", "small"):
-        num_solution_attempts = 8
+        num_solution_attempts = 4
         training_config = ArcSolverConfig(
             seed=42,
             batch_size=1024 if accelerator != "cpu" else 128,
             base_cell_cost=0,
-            minibatch_size=dict(L4=64, v5e=24, cpu=16)[accelerator] * accelerator_count,
-            eval_batch_size=dict(L4=256, cpu=8)[accelerator]
+            minibatch_size=dict(L4=64, v5e=24, v6e=128, cpu=16)[accelerator]
+            * accelerator_count,
+            eval_batch_size=dict(L4=32, v6e=128, cpu=8)[accelerator]
             * accelerator_count
             // num_solution_attempts,
             learning_rate=1e-5,
-            max_num_epochs=10,
+            #            max_num_epochs=10,
             warmup_steps=128,
             checkpoint_every_steps=256,
-            eval_every_ref_batch=256,
+            #            eval_every_ref_batch=256,
             num_solution_attempts=num_solution_attempts,
-            **base_config,
+            #            **base_config,
             **arc_solver_config,
+            **{k: v for k, v in base_config.items() if k != "max_num_ref_batches"},
+            max_num_ref_batches=10,
+            eval_every_ref_batch=1,
         )
     case _:
         raise NotImplementedError(f"{training=} {model_config=}")

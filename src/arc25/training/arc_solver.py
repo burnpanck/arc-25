@@ -1,6 +1,7 @@
 """Training infrastructure for ArcSolver (encoder-decoder for ARC tasks)."""
 
 import contextlib
+import sys
 import time
 import typing
 from dataclasses import dataclass
@@ -226,6 +227,7 @@ class TrainState(TrainStateBase):
     def _apply_update(self, grads, stats, params):
         """Apply accumulated gradients (pmap'd, with pmean)."""
         print("Tracing _apply_update")
+        sys.stdout.flush()
 
         total_weight = params["total_weight"]
         learning_rate = params["learning_rate"]
@@ -312,6 +314,7 @@ class TrainState(TrainStateBase):
         )
         kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
         print(f"Tracing embed_inputs for shape dict({shapes}) (kw=dict({kwstr}))")
+        sys.stdout.flush()
 
         inputs = minibatch_dict["inputs"]
         input_sizes = minibatch_dict["input_sizes"]
@@ -337,6 +340,7 @@ class TrainState(TrainStateBase):
         )
         kwstr = ", ".join(f"{k}={v!r}" for k, v in kw.items())
         print(f"Tracing evaluate for shape dict({shapes}) (kw=dict({kwstr}))")
+        sys.stdout.flush()
 
         nsa = kw.pop("num_solution_attempts")
 
@@ -742,6 +746,7 @@ class ArcSolverTrainer(TrainerBase):
             print(
                 f"\n[Step {training_step}] Preparing input embeddings for evaluation..."
             )
+            sys.stdout.flush()
             embed_start = time.monotonic()
             self._cache_embeddings()
             embed_time = time.monotonic() - embed_start
@@ -751,6 +756,7 @@ class ArcSolverTrainer(TrainerBase):
             embed_time = 0
 
         print(f"\n[Step {training_step}] Running evaluation...")
+        sys.stdout.flush()
         eval_start = time.monotonic()
         eval_results = self._evaluate()
         eval_results.pop("per_class")  # not suitable for wandb
@@ -770,6 +776,7 @@ class ArcSolverTrainer(TrainerBase):
                 for kk, vv in eval_results.items()
             )
         )
+        sys.stdout.flush()
 
         # Return results for wandb logging
         return ret, eval_time + embed_time
