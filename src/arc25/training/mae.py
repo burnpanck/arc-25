@@ -176,7 +176,7 @@ class MAETrainer(TrainerBase):
         num_devices: int = 1,
         *,
         eval_dataset: BucketedDataset | None = None,
-        eval_batch_size_fn: MinibatchSizeFunction | None = None,
+        eval_batch_size: int | None = None,
         lr_schedule: typing.Callable | None = None,
         rngs: nnx.Rngs,
     ) -> typing.Self:
@@ -194,13 +194,13 @@ class MAETrainer(TrainerBase):
         # Create k-NN evaluator if eval_dataset provided (MAE-specific)
         knn_evaluator = None
         if eval_dataset is not None:
-            if eval_batch_size_fn is None:
+            if eval_batch_size is None:
                 raise ValueError(
-                    "minibatch_size_fn required when eval_dataset is provided"
+                    "eval_batch_size required when eval_dataset is provided"
                 )
             knn_evaluator = KNNEvaluator(
                 dataset=eval_dataset,
-                batch_size=eval_batch_size_fn,
+                batch_size=eval_batch_size,
                 seed=config.seed,
             )
 
@@ -327,6 +327,7 @@ class MAETrainer(TrainerBase):
         wandb_project: str | None = None,
         run_name: str | None = None,
         num_devices: int | None = None,
+        run_metadata: dict | None = None,
         **kw,
     ):
         """Main training entry point with progress tracking and logging.
@@ -356,13 +357,10 @@ class MAETrainer(TrainerBase):
             base_cost=config.base_cell_cost,
             granularity=num_devices,  # Ensure divisibility for pmap
         )
-        eval_batch_size_fn = MinibatchSizeFunction(
-            # heuristic, large batch size - eval has no gradients, so memory is usually not a problem.
-            reference_minibatch_size=8 * config.minibatch_size,
-            reference_image_size=config.reference_image_size,
-            base_cost=config.base_cell_cost,
-            granularity=num_devices,  # Ensure divisibility for pmap
-        )
+
+        eval_batch_size = config.eval_batch_size
+        if eval_batch_size is None:
+            eval_batch_size = 8 * minibatch_size_fn(30**2)
 
         batch_spec = BatchSpec(
             target_batch_weight=config.batch_size,
@@ -385,9 +383,10 @@ class MAETrainer(TrainerBase):
             collator=collator,
             num_devices=num_devices,
             eval_dataset=eval_dataset,
-            eval_batch_size_fn=eval_batch_size_fn,
+            eval_batch_size=eval_batch_size,
             rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
+            **kw,
         )
 
         # Run common training loop
@@ -395,6 +394,6 @@ class MAETrainer(TrainerBase):
             checkpoint_dir=checkpoint_dir,
             wandb_project=wandb_project,
             run_name=run_name,
-            **kw,
+            run_metadata=run_metadata,
         )
         return self, res

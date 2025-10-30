@@ -21,7 +21,7 @@ class KNNEvaluator:
     """
 
     dataset: BucketedDataset
-    batch_size: MinibatchSizeFunction
+    batch_size: int
     k_values: frozenset[int] = frozenset([1, 3, 5, 10])
     seed: int = 42
 
@@ -119,7 +119,7 @@ class KNNEvaluator:
         rgen = np.random.default_rng(self.seed)
 
         for _bucket_shape, _batch_idx, minibatch in self.dataset.all_data_in_batches(
-            self.batch_size,
+            lambda area: self.batch_size,
             num_devices=num_devices,
             rgen=rgen,
             with_progress=with_progress,

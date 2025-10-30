@@ -46,6 +46,7 @@ class ImageTrainConfigBase:
 
     # periodic evaluation every ref_batch/batch_size optimizer steps (i.e. counted in ref_batches)
     eval_every_ref_batch: float = 32
+    eval_batch_size: int | None = None
 
     # implementation
     mode: Literal["split", "flat"] | None = "flat"

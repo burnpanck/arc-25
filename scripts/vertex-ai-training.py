@@ -70,6 +70,7 @@ match training, model_config:
             batch_size=512 if accelerator != "cpu" else 64,
             base_cell_cost=0,
             minibatch_size=dict(L4=128, cpu=8)[accelerator] * accelerator_count,
+            eval_batch_size=dict(L4=256, cpu=8)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=5,
             warmup_steps=64,
@@ -79,16 +80,21 @@ match training, model_config:
             **mae_config,
         )
     case ("arc-solver", "tiny"):
+        num_solution_attempts = 4
         training_config = ArcSolverConfig(
             seed=42,
             batch_size=2048 if accelerator != "cpu" else 128,
             base_cell_cost=0,
-            minibatch_size=dict(L4=128, cpu=16)[accelerator] * accelerator_count,
+            minibatch_size=dict(L4=128, v5e=48, cpu=8)[accelerator] * accelerator_count,
+            eval_batch_size=dict(L4=256, v5e=64, cpu=8)[accelerator]
+            * accelerator_count
+            // num_solution_attempts,
             learning_rate=1e-5,
             max_num_epochs=20,
             warmup_steps=128,
-            checkpoint_every_steps=256,
+            checkpoint_every_steps=128,
             eval_every_ref_batch=256,
+            num_solution_attempts=num_solution_attempts,
             **base_config,
             **arc_solver_config,
         )
@@ -98,6 +104,7 @@ match training, model_config:
             batch_size=1024 if accelerator != "cpu" else 128,
             base_cell_cost=dict(L4=0, v6e=64, cpu=0)[accelerator],
             minibatch_size=dict(L4=16, v6e=40, cpu=8)[accelerator] * accelerator_count,
+            eval_batch_size=dict(L4=64, cpu=8)[accelerator] * accelerator_count,
             learning_rate=1e-5,
             max_num_epochs=10,
             warmup_steps=128,
@@ -107,16 +114,21 @@ match training, model_config:
             **mae_config,
         )
     case ("arc-solver", "small"):
+        num_solution_attempts = 8
         training_config = ArcSolverConfig(
             seed=42,
             batch_size=1024 if accelerator != "cpu" else 128,
             base_cell_cost=0,
             minibatch_size=dict(L4=64, v5e=24, cpu=16)[accelerator] * accelerator_count,
+            eval_batch_size=dict(L4=256, cpu=8)[accelerator]
+            * accelerator_count
+            // num_solution_attempts,
             learning_rate=1e-5,
             max_num_epochs=10,
             warmup_steps=128,
             checkpoint_every_steps=256,
             eval_every_ref_batch=256,
+            num_solution_attempts=num_solution_attempts,
             **base_config,
             **arc_solver_config,
         )

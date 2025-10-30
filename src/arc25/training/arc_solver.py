@@ -515,6 +515,12 @@ class ArcSolverTrainer(TrainerBase):
         challenge_order = self.inputs_src.challenges
         bucket_shapes = self.inputs_src.bucket_shapes
 
+        eval_batch_size = self.config.eval_batch_size
+        if eval_batch_size is None:
+            eval_batch_size = 8 * min(
+                b.minibatch_size for b in self.collator.buckets.values()
+            )
+
         input_ds, output_ds = self.eval_dataset.split_input_output()
 
         (eval_ds,) = [
@@ -558,7 +564,7 @@ class ArcSolverTrainer(TrainerBase):
 
         with jax.set_mesh(mesh):
             for bucket_shape, _batch_idx, output_mb in eval_ds.all_data_in_batches(
-                lambda _image_area: 256,  # heuristic, constant, large batch size
+                lambda _image_area: eval_batch_size,  # heuristic, constant, large batch size
                 num_devices=num_devices,
                 rgen=rgen,
                 with_progress=self.with_progress_bars,
@@ -695,8 +701,10 @@ class ArcSolverTrainer(TrainerBase):
             np.asarray(per_class.pop("loss")) / per_class_loss_weight,
             np.nan,
         )
+        shape = per_class_loss.shape
         per_class = {
-            k: np.asarray(v) / np.maximum(1, eval_data.per_class_total_weight)
+            k: np.asarray(v)
+            / np.maximum(1, eval_data.per_class_total_weight).reshape(*shape)
             for k, v in per_class.items()
         }
         per_class["loss"] = per_class_loss
@@ -780,6 +788,7 @@ class ArcSolverTrainer(TrainerBase):
         wandb_project: str | None = None,
         run_name: str | None = None,
         num_devices: int | None = None,
+        run_metadata: dict | None = None,
         **kw,
     ):
         # Detect available devices
@@ -844,6 +853,7 @@ class ArcSolverTrainer(TrainerBase):
             rngs=nnx.Rngs(config.seed),
             lr_schedule=lr_schedule,
             eval_dataset=eval_dataset,
+            **kw,
         )
 
         # Run common training loop
@@ -851,6 +861,6 @@ class ArcSolverTrainer(TrainerBase):
             checkpoint_dir=checkpoint_dir,
             wandb_project=wandb_project,
             run_name=run_name,
-            **kw,
+            run_metadata=run_metadata,
         )
         return self, res
