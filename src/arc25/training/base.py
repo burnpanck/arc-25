@@ -261,11 +261,25 @@ class TrainerBase:
 
     @classmethod
     def _make_lr_schedule(
-        cls, config: ImageTrainConfigBase, total_steps: float
+        cls,
+        config: ImageTrainConfigBase,
+        total_steps: float,
     ) -> typing.Callable:
         """Create default learning rate schedule."""
         lr_scale = np.sqrt(config.batch_size / config.ref_batch)
         lr = config.learning_rate * lr_scale
+
+        if config.lr_finder_range is not None:
+            assert total_steps > config.warmup_steps
+            warmup_rate = config.lr_finder_range ** (
+                config.warmup_steps / (total_steps - config.warmup_steps)
+            )
+            print(f"{warmup_rate=}")
+            return optax.schedules.exponential_decay(
+                init_value=lr / warmup_rate,
+                decay_rate=config.lr_finder_range * warmup_rate,
+                transition_steps=total_steps,
+            )
 
         return optax.cosine_decay_schedule(
             init_value=lr,
@@ -611,6 +625,7 @@ class TrainerBase:
             # Check if it's time for Periodic evaluation (task-specific)
             if (
                 allow_eval
+                and config.eval_every_ref_batch is not None
                 and training_progress // config.eval_every_ref_batch
                 > prev_progress // config.eval_every_ref_batch
             ):
@@ -627,6 +642,7 @@ class TrainerBase:
             if (
                 allow_eval
                 and checkpoint_dir is not None
+                and self.config.checkpoint_every_steps is not None
                 and not training_step % self.config.checkpoint_every_steps
             ):
                 checkpoint_path = (

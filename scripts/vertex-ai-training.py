@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 import os
 import subprocess
@@ -12,7 +13,7 @@ from arc25.training.arc_solver import ArcSolverConfig
 from arc25.training.cli import ModelSelection, Training
 from arc25.training.mae import MAETaskConfig
 
-dry_run = True
+dry_run = False
 
 training = "mae"
 training = "arc-solver"
@@ -25,6 +26,8 @@ use_spot = False
 
 from_scratch = False
 
+lr_finder = True
+
 if dry_run:
     # model_config = "tiny"
     accelerator = "cpu"
@@ -33,6 +36,8 @@ if dry_run:
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 
 run_name = f"{now:%Y%m%d-%H%M}-vertex-ai-{training}-{model_config}-{accelerator_count}x{accelerator}"
+if lr_finder:
+    run_name += "-LR-finder"
 print(f"Run: {run_name}")
 
 mae_checkpoint = dict(
@@ -40,7 +45,7 @@ mae_checkpoint = dict(
     "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
     "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
     small="gs://576e2361-arc-agi-2/checkpoints/20251030-2020-vertex-ai-mae-small-4xv6e/"
-    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-002304.msgpack.xz",
+    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-002816.msgpack.xz",
 )[model_config]
 arc_solver_checkpoint = dict(
     tiny=None,
@@ -134,7 +139,7 @@ match training, model_config:
             learning_rate=1e-5,
             max_num_epochs=10,
             warmup_steps=128,
-            checkpoint_every_steps=1,  # 256,
+            checkpoint_every_steps=256,
             # on 1xv6e and 4 attempts, eval takes about 320s, and we have ~32 ex/s.
             # At batch size 256 ex/refbatch, that is 8s/refbatch.
             # Thus, eval breakeven is at 40 refbatches
@@ -146,6 +151,20 @@ match training, model_config:
     case _:
         raise NotImplementedError(f"{training=} {model_config=}")
 
+
+if lr_finder:
+    training_config = dataclasses.replace(
+        training_config,
+        checkpoint_every_steps=None,
+        eval_every_ref_batch=None,
+        warmup_steps=20,
+        learning_rate=training_config.learning_rate * 0.5,
+        lr_finder_range=2e3,
+        max_num_epochs=None,
+        max_num_ref_batches=training_config.batch_size
+        / training_config.ref_batch
+        * (20 + 300),
+    )
 
 checkpoint_type, checkpoint = {
     ("mae", True): (None, None),

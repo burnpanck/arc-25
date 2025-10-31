@@ -38,6 +38,9 @@ class ImageTrainConfigBase:
     grad_clip_norm: float = 1.0
     # Schedule
     learning_rate: float = 1e-5
+    # if not None, will ramp LR exponentially from learning_rate to learning_rate*lr_finder_range
+    # (after warmup)
+    lr_finder_range: float | None = None
     max_num_ref_batches: float | None = None
     max_num_epochs: float | None = 10
     # measured in optimizer steps which are counted in batch_size increments
