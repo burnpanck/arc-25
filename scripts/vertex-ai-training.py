@@ -24,9 +24,9 @@ accelerator_count = 4
 
 use_spot = False
 
-from_scratch = False
+from_scratch = True
 
-lr_finder = True
+lr_finder = False
 
 if dry_run:
     # model_config = "tiny"
@@ -45,7 +45,7 @@ mae_checkpoint = dict(
     "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
     "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
     small="gs://576e2361-arc-agi-2/checkpoints/20251030-2020-vertex-ai-mae-small-4xv6e/"
-    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-002816.msgpack.xz",
+    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-003072.msgpack.xz",
 )[model_config]
 arc_solver_checkpoint = dict(
     tiny=None,
@@ -100,7 +100,7 @@ match training, model_config:
             eval_batch_size=dict(L4=128, v5e=64, cpu=8)[accelerator]
             * accelerator_count
             // num_solution_attempts,
-            learning_rate=1e-5,
+            learning_rate=1e-3,
             max_num_epochs=20,
             warmup_steps=128,
             checkpoint_every_steps=128,
@@ -136,7 +136,7 @@ match training, model_config:
             eval_batch_size=dict(L4=32, v6e=48, cpu=8)[accelerator]
             * accelerator_count
             // num_solution_attempts,
-            learning_rate=1e-5,
+            learning_rate=1e-3,
             max_num_epochs=10,
             warmup_steps=128,
             checkpoint_every_steps=256,

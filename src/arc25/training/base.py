@@ -274,7 +274,6 @@ class TrainerBase:
             warmup_rate = config.lr_finder_range ** (
                 config.warmup_steps / (total_steps - config.warmup_steps)
             )
-            print(f"{warmup_rate=}")
             return optax.schedules.exponential_decay(
                 init_value=lr / warmup_rate,
                 decay_rate=config.lr_finder_range * warmup_rate,
