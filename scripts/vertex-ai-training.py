@@ -23,6 +23,8 @@ accelerator_count = 4
 
 use_spot = False
 
+from_scratch = False
+
 if dry_run:
     # model_config = "tiny"
     accelerator = "cpu"
@@ -31,19 +33,19 @@ if dry_run:
 now = datetime.datetime.now().astimezone(datetime.timezone.utc)
 
 run_name = f"{now:%Y%m%d-%H%M}-vertex-ai-{training}-{model_config}-{accelerator_count}x{accelerator}"
-run_name = "20251030-1638-vertex-ai-arc-solver-small-4xv6e"
 print(f"Run: {run_name}")
 
-checkpoint = dict(
+mae_checkpoint = dict(
     tiny="gs://576e2361-arc-agi-2/aiplatform-custom-training-2025-10-23-13:37:52.100/"
     "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
     "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
-    small_prev="gs://576e2361-arc-agi-2/checkpoints/"
-    "20251025-1452-vertex-ai-mae-small-4xL4/"
-    "20251025-1452-vertex-ai-mae-small-4xL4-chkp-004096.msgpack.xz",
-    small="gs://576e2361-arc-agi-2/checkpoints/"
-    "20251029-1911-vertex-ai-mae-small-4xv6e/"
-    "20251029-1911-vertex-ai-mae-small-4xv6e-chkp-005376.msgpack.xz",
+    small="gs://576e2361-arc-agi-2/checkpoints/20251030-2020-vertex-ai-mae-small-4xv6e/"
+    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-002304.msgpack.xz",
+)[model_config]
+arc_solver_checkpoint = dict(
+    tiny=None,
+    small="gs://576e2361-arc-agi-2/checkpoints/20251030-1638-vertex-ai-arc-solver-small-4xv6e/"
+    "20251030-1638-vertex-ai-arc-solver-small-4xv6e-chkp-000256.msgpack.xz",
 )[model_config]
 
 
@@ -105,7 +107,7 @@ match training, model_config:
     case ("mae", "small"):
         training_config = MAETaskConfig(
             seed=43,
-            batch_size=1024 if accelerator != "cpu" else 128,
+            batch_size=1024 if accelerator != "cpu" else 16,
             base_cell_cost=dict(L4=0, v6e=64, cpu=0)[accelerator],
             minibatch_size=dict(L4=16, v6e=40, cpu=8)[accelerator] * accelerator_count,
             eval_batch_size=dict(L4=64, v6e=128, cpu=8)[accelerator]
@@ -122,7 +124,7 @@ match training, model_config:
         num_solution_attempts = 4
         training_config = ArcSolverConfig(
             seed=43,
-            batch_size=1024 if accelerator != "cpu" else 128,
+            batch_size=1024 if accelerator != "cpu" else 16,
             base_cell_cost=dict(L4=0, v6e=64, cpu=0)[accelerator],
             minibatch_size=dict(L4=64, v5e=24, v6e=64, cpu=16)[accelerator]
             * accelerator_count,
@@ -132,7 +134,7 @@ match training, model_config:
             learning_rate=1e-5,
             max_num_epochs=10,
             warmup_steps=128,
-            checkpoint_every_steps=256,
+            checkpoint_every_steps=1,  # 256,
             # on 1xv6e and 4 attempts, eval takes about 320s, and we have ~32 ex/s.
             # At batch size 256 ex/refbatch, that is 8s/refbatch.
             # Thus, eval breakeven is at 40 refbatches
@@ -145,6 +147,13 @@ match training, model_config:
         raise NotImplementedError(f"{training=} {model_config=}")
 
 
+checkpoint_type, checkpoint = {
+    ("mae", True): (None, None),
+    ("mae", False): (training, mae_checkpoint),
+    ("arc-solver", True): ("with-encoder", mae_checkpoint),
+    ("arc-solver", False): (training, arc_solver_checkpoint),
+}[training, from_scratch]
+
 config = Training(
     run_name=run_name,
     checkpoint_base_uri=f"gs://576e2361-arc-agi-2/checkpoints/",
@@ -155,7 +164,7 @@ config = Training(
     ),
     wandb_secret_name="wandb-api-key",
     starting_checkpoint=checkpoint,
-    starting_checkpoint_type={"arc-solver": "with-encoder"}.get(training, training),
+    starting_checkpoint_type=checkpoint_type,
     **{
         MAETaskConfig: dict(mae_training=training_config),
         ArcSolverConfig: dict(arc_solver_training=training_config),

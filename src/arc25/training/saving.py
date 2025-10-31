@@ -2,6 +2,7 @@ import contextlib
 import io
 import lzma
 import pickle
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, BinaryIO
@@ -15,6 +16,17 @@ import tqdm.auto
 from flax import nnx
 
 from ..serialisation import deserialise, serialise
+
+
+def reduce_jax(obj, path=()):
+    match obj:
+        case jaxlib._jax.ArrayImpl():
+            print(
+                f"`save_model` got unexpected JAX-Array of shape {obj.shape} at {path}",
+                file=sys.stderr,
+            )
+            return np.asarray(jax.device_get(obj))
+    return obj
 
 
 def save_model(
@@ -40,7 +52,7 @@ def save_model(
             fh.write(serialised)
 
         if metadata is not None:
-            write("M", serialise(metadata))
+            write("M", serialise(metadata, reduce=reduce_jax))
 
         graphdef, flatstate = nnx.graph.flatten(nnx.pure(nnx.state(model, nnx.Param)))
         write("G", pickle.dumps(graphdef))

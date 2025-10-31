@@ -6,9 +6,11 @@ from typing import Literal
 
 import attrs
 
+from ..serialisation import serialisable
 from ..vision2.symrep import RepSpec
 
 
+@serialisable
 @dataclass(frozen=True)
 class ImageTrainConfigBase:
     """Configuration for the training script."""

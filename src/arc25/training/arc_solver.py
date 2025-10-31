@@ -712,7 +712,7 @@ class ArcSolverTrainer(TrainerBase):
             for k, v in per_class.items()
         }
         per_class["loss"] = per_class_loss
-        loss = res.pop("loss") / res.pop("loss_weight")
+        loss = float(res.pop("loss") / res.pop("loss_weight"))
         stats = {k: float(v) / max(1, eval_data.total_weight) for k, v in res.items()}
         stats["loss"] = loss
         per_class_accuracy = per_class["pair_accuracy"]

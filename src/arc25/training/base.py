@@ -563,7 +563,7 @@ class TrainerBase:
         last_training_step = 0
         all_stats = []
 
-        def process_stats(stats_dev, was_jit_step):
+        def process_stats(stats_dev, was_jit_step, *, allow_eval=True):
             """Process stats from device, compute metrics, log and display."""
             nonlocal excluded_weight, excluded_time, last_training_step
 
@@ -610,7 +610,8 @@ class TrainerBase:
 
             # Check if it's time for Periodic evaluation (task-specific)
             if (
-                training_progress // config.eval_every_ref_batch
+                allow_eval
+                and training_progress // config.eval_every_ref_batch
                 > prev_progress // config.eval_every_ref_batch
             ):
                 eval_result = self.periodic_evaluation(stats)
@@ -618,12 +619,14 @@ class TrainerBase:
                 eval_result = None
             if eval_result is not None:
                 eval_dict, eval_time = eval_result
+                eval_dict = jax.tree.map(lambda a: np.asarray(a), eval_dict)
                 stats.update(eval_dict)
                 excluded_time += eval_time
 
             # Checkpointing (periodic)
             if (
-                checkpoint_dir is not None
+                allow_eval
+                and checkpoint_dir is not None
                 and not training_step % self.config.checkpoint_every_steps
             ):
                 checkpoint_path = (
@@ -686,7 +689,7 @@ class TrainerBase:
             except KeyboardInterrupt:
                 print("\nTraining interrupted by user")
                 if pending_stats is not None:
-                    process_stats(pending_stats, pending_is_jit_step)
+                    process_stats(pending_stats, pending_is_jit_step, allow_eval=False)
 
         # Save final checkpoint
         if checkpoint_dir is not None and all_stats:

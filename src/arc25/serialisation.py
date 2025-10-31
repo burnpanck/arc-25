@@ -1,7 +1,9 @@
 import dataclasses
 import enum
 import functools
+import typing
 from types import MappingProxyType
+from typing import Any
 
 import attrs
 import numpy as np
@@ -15,16 +17,23 @@ from .dsl import types
 from .symmetry import D4, PermRepBase
 
 
-def serialise(obj):
+def serialise(
+    obj,
+    *,
+    reduce: typing.Callable[[Any, tuple[Any, ...]], Any] | None = None,
+    path: tuple[Any, ...] = (),
+):
+    if reduce is not None:
+        obj = reduce(obj, path)
     match obj:
         case dict() | MappingProxyType():
-            return {k: serialise(v) for k, v in obj.items()}
+            return {k: serialise(v, path=path + (k,)) for k, v in obj.items()}
         case tuple() | list():
-            return type(obj)(serialise(v) for v in obj)
+            return type(obj)(serialise(v, path=path + (k,)) for k, v in enumerate(obj))
         case set() | frozenset():
             return dict(
                 __type__=type(obj).__qualname__,
-                data=[serialise(v) for v in obj],
+                data=[serialise(v, path=path + (k,)) for k, v in enumerate(obj)],
             )
         case np.ndarray():
             return dict(
@@ -36,21 +45,29 @@ def serialise(obj):
         case enum.Enum():
             return dict(__type__=type(obj).__qualname__, name=obj.name)
         case _ if attrs.has(type(obj)):
-            dct = attrs.asdict(
-                obj,
-                recurse=False,
-                filter=lambda attr, value: not attr.metadata.get("is_cache"),
+            dct = serialise(
+                attrs.asdict(
+                    obj,
+                    recurse=False,
+                    filter=lambda attr, value: not attr.metadata.get("is_cache"),
+                ),
+                path=path,
             )
             dct["__type__"] = type(obj).__qualname__
-            return serialise(dct)
+            return dct
         case np.dtype():
             return dict(__type__=type(obj).__qualname__, name=str(obj))
         case type():
-            return serialise(dict(__type__=obj.__qualname__, __just_type__=True))
+            return serialise(
+                dict(__type__=obj.__qualname__, __just_type__=True), path=path
+            )
         case _ if dataclasses.is_dataclass(obj):
-            dct = {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
+            dct = serialise(
+                {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)},
+                path=path,
+            )
             dct["__type__"] = type(obj).__qualname__
-            return serialise(dct)
+            return dct
         case _:
             return obj
 
