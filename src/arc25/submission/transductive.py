@@ -1,6 +1,7 @@
 import itertools
 import json
 import os
+import sys
 import time
 import typing
 from pathlib import Path
@@ -39,7 +40,9 @@ num_solution_attempts = 8
 class Config:
     """Unified training configuration for both MAE and ArcSolver."""
 
-    challenges_input_file: Path = Path("/kaggle/working/arc-agi_test_challenges.json")
+    challenges_input_file: Path = Path(
+        "/kaggle/input/arc-prize-2025/arc-agi_test_challenges.json"
+    )
     model_weights_file: Path
     output_file: Path = Path("/kaggle/working/submission.json")
     prediction_batch_size: int = 16 * num_devices
@@ -53,6 +56,7 @@ class Config:
 
     size_bins: frozenset[int] = frozenset([30])
 
+    # WARNING: These defaults are currently not respected by `attrs_to_click_options`!
     trainer: solver_trainer.ArcSolverConfig = solver_trainer.ArcSolverConfig(
         batch_size=128,
         base_cell_cost=0,
@@ -83,6 +87,7 @@ def solve(config: Config):
         "Solving ARC Prize 2025 (or at least attempting to ☺️) using transductive approach"
     )
     print(f"Config: {config}")
+    sys.stdout.flush()
 
     num_devices = jax.local_device_count()
     assert not config.prediction_batch_size % num_devices
@@ -138,6 +143,7 @@ def solve(config: Config):
 
     te = time.monotonic()
     print(f"Data loading complete, took {te-ts:.1f} s")
+    sys.stdout.flush()
     ts = te
 
     print("\n*** Build model")
@@ -165,6 +171,7 @@ def solve(config: Config):
 
     te = time.monotonic()
     print(f"Loading weights complete, took {te-ts:.1f} s")
+    sys.stdout.flush()
     ts = te
 
     print("\n*** Identify latent programs")
@@ -236,6 +243,7 @@ def solve(config: Config):
 
     te = time.monotonic()
     print(f"Training complete, final loss {res[-1]['loss']:.3f}, took {te-ts:.1f} s")
+    sys.stdout.flush()
     ts = te
 
     print("\n*** Compute predictions")
@@ -451,6 +459,7 @@ def solve(config: Config):
 
     te = time.monotonic()
     print(f"Evaluation complete, took {te-ts:.1f} s")
+    sys.stdout.flush()
     ts = te
 
     print("\n*** Writing submission file")
@@ -470,6 +479,7 @@ def solve(config: Config):
 
     tfinal = time.monotonic()
     print(f"All done; total time {(tfinal-tstart)/60:.1f} mins")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

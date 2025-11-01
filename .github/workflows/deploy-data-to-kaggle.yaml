@@ -9,6 +9,9 @@ on:
 jobs:
   deploy-data:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout (with LFS fixtures)
         uses: actions/checkout@v4
