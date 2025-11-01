@@ -10,6 +10,7 @@ import attrs
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+import squarify
 
 from .augment import all_colors_rex
 from .dataset import IAETriple, IOPair, ReasonedSolution
@@ -40,6 +41,79 @@ def show_image(img: AnyImage, *, ax=None, **kw):
         lw=0.1,
         **kw,
     )
+    ax.yaxis.set_inverted(True)
+    ax.xaxis.set_visible(False)
+    ax.yaxis.set_visible(False)
+    ax.set_aspect("equal", "box")
+    return ax
+
+
+def show_prediction(
+    prediction: np.ndarray,
+    *,
+    ground_truth: Image | None = None,
+    ax=None,
+    pad=0.05,
+    **kw,
+):
+    if ax is None:
+        ax = plt.gca()
+    match ground_truth:
+        case np.ndarray() | None:
+            pass
+        case Image():
+            ground_truth = ground_truth._data
+        case MaskedImage():
+            ground_truth = np.where(ground_truth._mask, ground_truth._data, np.nan)
+        case _:
+            raise TypeError(f"Unsupported image type {type(ground_truth).__qualname__}")
+
+    if ground_truth is not None:
+        raise NotImplementedError("ground_truth")
+
+    p = np.array(prediction)
+    p *= 1 / p.sum(axis=-1, keepdims=True)
+
+    if False:
+        # plot base mesh
+        img = np.tile(np.nan, p.shape[:-1])
+        # just for the mesh
+        ax.pcolormesh(
+            img,
+            ec="gray",
+            lw=0.4,
+            **kw,
+        )
+
+    seq = np.argsort(p, axis=-1)[..., ::-1]
+    sorted_p = np.take_along_axis(p, seq, axis=-1)
+    rects = [[] for _ in range(10)]
+    first = [[] for _ in range(10)]
+    s = 1 - 2 * pad
+    clist = tuple(c.value for c in Color)
+    for idx in np.ndindex(p.shape[:2]):
+        y, x = idx
+        a = sorted_p[idx]
+        assert np.all(a[1:] <= a[:-1]), str(np.round(a * 100).astype(int))
+        cell = squarify.squarify(
+            a * s**2,
+            x + pad,
+            y + pad,
+            s,
+            s,
+        )
+        for j, (i, r) in enumerate(zip(seq[idx], cell)):
+            (rects[i] if j else first[i]).append(
+                mpl.patches.Rectangle((r["x"], r["y"]), r["dx"], r["dy"])
+            )
+    for rss, a in zip([rects, first], [0.5, 1]):
+        for rs, c in zip(rss, clist):
+            coll = mpl.collections.PatchCollection(rs, fc=c, ec="none", lw=0.2, alpha=a)
+            ax.add_collection(coll)
+
+    h, w = p.shape[:2]
+    ax.set_xlim(0, w)
+    ax.set_ylim(0, h)
     ax.yaxis.set_inverted(True)
     ax.xaxis.set_visible(False)
     ax.yaxis.set_visible(False)

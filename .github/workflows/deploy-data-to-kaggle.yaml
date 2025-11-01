@@ -27,8 +27,14 @@ jobs:
           python -V
           pdm -V
 
-      - name: Install (from lock) + extras
-        run: pdm install --frozen-lockfile -G deploy
+      - name: Install
+        run: pdm install --frozen-lockfile -G deploy  # for models sourced from GCS
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: deep-time-358505
+          workload_identity_provider: 'projects/440754660445/locations/global/workloadIdentityPools/github-actions/providers/github-burnanck-only'
 
       - name: Upload dataset
         env:

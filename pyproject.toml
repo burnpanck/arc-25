@@ -23,6 +23,7 @@ dependencies = [
     "scipy>=1.15.3",
     "msgpack>=1.1.1",
     "cbor2>=5.7.0",
+    "squarify",
 ]
 
 [project.optional-dependencies]
@@ -67,6 +68,7 @@ test = [
 deploy = [
     "kaggle>=1.7.4.5",
     "asyncclick>=8.2.2.2",
+    "etils[epath]",
 ]
 
 [build-system]

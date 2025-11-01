@@ -3,6 +3,7 @@ import functools
 import inspect
 import types
 import typing
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
 
@@ -226,7 +227,7 @@ def attrs_to_click_options(func):
             )
             click_type = None
         # Handle basic types
-        elif field_type in {int, float, str, bool}:
+        elif field_type in {int, float, str, bool, Path}:
             click_type = field_type
         else:
             raise TypeError(

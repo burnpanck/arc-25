@@ -45,7 +45,7 @@ mae_checkpoint = dict(
     "checkpoints/20251023-1137-vertex-ai-mae-tiny-4xL4/"
     "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-007568-final.msgpack.xz",
     small="gs://576e2361-arc-agi-2/checkpoints/20251030-2020-vertex-ai-mae-small-4xv6e/"
-    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-003072.msgpack.xz",
+    "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-007568-final.msgpack.xz",
 )[model_config]
 arc_solver_checkpoint = dict(
     tiny=None,
@@ -136,7 +136,7 @@ match training, model_config:
             eval_batch_size=dict(L4=32, v6e=48, cpu=8)[accelerator]
             * accelerator_count
             // num_solution_attempts,
-            learning_rate=1e-3,
+            learning_rate=3e-4,
             max_num_epochs=10,
             warmup_steps=128,
             checkpoint_every_steps=256,

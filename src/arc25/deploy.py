@@ -9,6 +9,7 @@ from pathlib import Path
 import anyio
 import asyncclick as click
 import attrs
+import etils.epath
 
 
 @attrs.frozen
@@ -59,14 +60,19 @@ async def get_data_files_for_deployment(
         files.append(fn)
 
     if with_models:
+        import etils.epath
+
         # Pretrained models
-        models_root = data_root / "models"
-        for fn in [
-            "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-006912.msgpack.xz",
-            "20251025-1452-vertex-ai-mae-small-4xL4-chkp-004096.msgpack.xz",
+        models_root = etils.epath.Path("gs://576e2361-arc-agi-2/checkpoints/")
+        for chkp in [
+            #           "20251023-1137-vertex-ai-mae-tiny-4xL4-chkp-006912.msgpack.xz",
+            #           "20251025-1452-vertex-ai-mae-small-4xL4-chkp-004096.msgpack.xz",
+            #            "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-003072.msgpack.xz",
+            "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-007568-final.msgpack.xz",
             "20251031-1133-vertex-ai-arc-solver-small-4xv6e-chkp-000768.msgpack.xz",
+            "20251101-1834-vertex-ai-arc-solver-small-4xv6e-chkp-001024.msgpack.xz",
         ]:
-            files.append(models_root / fn)
+            files.append(models_root / f"{chkp.split('-chkp-')[0]}/{chkp}")
 
     return files
 
@@ -110,15 +116,21 @@ async def update_training_data(msg: str):
         def make_copy_fn(src, dst_root=tdir):
             async def copy_fn():
                 async with lim:
-                    rel = src.relative_to(data_root)
-                    dst = dst_root / rel
-                    if dst_root != tdir:
-                        print(f"Copy {rel} to {dst.relative_to(tdir)}")
+                    if isinstance(src, etils.epath.Path):
+                        srcind = src
+                        rel = Path("models") / src.name
                     else:
-                        print(f"Copy {rel}")
+                        srcind = rel = src.relative_to(data_root)
+                    dst = dst_root / rel
+                    print(f"Prepare {dst.relative_to(tdir)} from {srcind}")
                     if not dst.parent.exists():
                         await anyio.Path(dst.parent).mkdir(parents=True, exist_ok=True)
-                    await anyio.to_thread.run_sync(shutil.copy2, src, dst)
+                    if isinstance(src, etils.epath.Path):
+                        await anyio.to_thread.run_sync(lambda: src.copy(dst))
+                        assert dst.exists()
+                        print(f"{dst.name}: {dst.stat().st_size/2**20:.1f} MB")
+                    else:
+                        await anyio.to_thread.run_sync(shutil.copy2, src, dst)
 
             return copy_fn
 
