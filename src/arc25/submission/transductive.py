@@ -417,13 +417,17 @@ def solve(config: Config):
         Nt = len(solution.train_logits)
 
         logits = np.array(solution.train_logits)
-        sizes = np.array([img.input.shape for img in challenge.train])[:, None, :]
-        outputs = np.zeros((Nt, nsa, 30, 30), "i1")
-        output_masks = np.zeros((Nt, nsa, 30, 30), bool)
+        outputs = np.zeros((Nt, 1, 30, 30), "i1")
+        output_masks = np.zeros((Nt, 1, 30, 30), bool)
+        output_area = np.zeros((Nt, 1), int)
+        output_size_match = np.zeros((Nt, 1), bool)
         for i, ex in enumerate(challenge.train):
             h, w = ex.output.shape
+            m = ex.output.shape == ex.input.shape
             outputs[i, :, :h, :w] = ex.output._data
-            output_masks[i, :, :h, :w] = True
+            output_size_match[i, :] = m
+            output_masks[i, :, :h, :w] = True if m else False
+            output_area[i, :] = h * w
 
         cell_crossentropy = np.array(
             optax.softmax_cross_entropy_with_integer_labels(
@@ -431,7 +435,7 @@ def solve(config: Config):
             )
         )
 
-        cell_weights = output_masks / np.prod(sizes, axis=-1)[..., None, None]
+        cell_weights = output_masks / output_area[..., None, None]
         # Mask to valid output regions and weight by pre-normalized cell weights
         pair_crossentropy = (
             np.where(output_masks, cell_crossentropy * cell_weights, 0)
@@ -446,18 +450,22 @@ def solve(config: Config):
             np.where(cell_correct & output_masks, cell_weights, 0)
             .astype(jnp.float32)
             .sum(axis=(-2, -1))
-        ).mean(0)
+            .mean(0)
+        )
 
         # Per-pair accuracy (all cells in output must be correct)
         pair_accuracy = (
             (
-                # Padding doesn't count against accuracy
-                cell_correct
-                | ~output_masks
+                (
+                    # Padding doesn't count against accuracy
+                    cell_correct
+                    | ~output_masks
+                ).all(axis=(-2, -1))
+                & output_size_match
             )
-            .all(axis=(-2, -1))
             .astype(jnp.float32)
-        ).mean(0)
+            .mean(0)
+        )
 
         # shape (example, latent, Y, X, C)
         test_logits = np.array(solution.test_logits)
@@ -522,7 +530,10 @@ def solve(config: Config):
     serialise_msgpack_file(
         full_results_output,
         {
-            k: {kk: vv if kk != "challenge" else vv.id for kk, vv in vars(v).items()}
+            k: {
+                kk: vv.id if isinstance(vv, challenge_dataset.Challenge) else vv
+                for kk, vv in vars(v).items()
+            }
             for k, v in solutions.items()
         },
     )
