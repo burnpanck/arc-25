@@ -59,6 +59,7 @@ train = [
     "etils[epath]",
     "gcsfs",
 ]
+venv = ["pip"]
 
 [dependency-groups]
 test = [
@@ -69,6 +70,8 @@ deploy = [
     "kaggle>=1.7.4.5",
     "asyncclick>=8.2.2.2",
     "etils[epath]",
+    "gcsfs",
+    "packaging",
 ]
 
 [build-system]

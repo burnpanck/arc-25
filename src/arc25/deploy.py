@@ -71,6 +71,7 @@ async def get_data_files_for_deployment(
             "20251030-2020-vertex-ai-mae-small-4xv6e-chkp-007568-final.msgpack.xz",
             "20251031-1133-vertex-ai-arc-solver-small-4xv6e-chkp-000768.msgpack.xz",
             "20251101-1834-vertex-ai-arc-solver-small-4xv6e-chkp-001024.msgpack.xz",
+            "20251101-1834-vertex-ai-arc-solver-small-4xv6e-chkp-002403-final.msgpack.xz",
         ]:
             files.append(models_root / f"{chkp.split('-chkp-')[0]}/{chkp}")
 

@@ -23,8 +23,8 @@ jobs:
     steps:
       - id: mk
         run: |
-          GPU='{"accelerator":"gpu","python-version":"3.11","pdm-groups":"-G vision -G train -G cuda12"}'
-          TPU='{"accelerator":"tpu","python-version":"3.12","pdm-groups":"-G vision -G train -G tpu"}'
+          GPU='{"accelerator":"gpu","python-version":"3.11","pdm-groups":"-G vision,train,cuda12,venv"}'
+          TPU='{"accelerator":"tpu","python-version":"3.12","pdm-groups":"-G vision,train,tpu,venv"}'
 
           case "${{ inputs.accelerator }}" in
             gpu)
@@ -62,14 +62,62 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: true
 
-      - name: Install pdm-wheel plugin
-        run: pdm self add pdm-wheel
-
       - name: Build dependency wheels for ${{ matrix.accelerator }}
         run: |
           mkdir -p wheelhouse
-          # Production deps + specified groups
-          pdm wheel -w wheelhouse --prod -v ${{ matrix.pdm-groups }}
+          # Export requirements from lock file - this is our source of truth
+          pdm export --prod -v --no-hashes ${{ matrix.pdm-groups }} -o wheelhouse/requirements-all.txt
+          # Install packaging for marker evaluation
+          pip install packaging
+          # Filter to current Python version and strip git URLs
+          python - <<'PY'
+          import re
+          from packaging.markers import Marker
+
+          with open("wheelhouse/requirements-all.txt", "rt") as f:
+              lines = f.readlines()
+
+          with open("wheelhouse/requirements-with-urls.txt", "wt") as full_out, \
+               open("wheelhouse/requirements-${{ matrix.accelerator }}.txt", "wt") as wheel_out:
+              for line in lines:
+                  line = line.strip()
+                  if not line or line.startswith("#"):
+                      continue
+
+                  # Split off marker if present (format: "spec; marker")
+                  if ";" in line:
+                      spec_part, marker_str = line.split(";")
+                      try:
+                          marker = Marker(marker_str)
+                          if not marker.evaluate():
+                              print(f"- {line}")
+                              continue  # Skip deps not applicable to current Python version
+                      except Exception:
+                          pass  # Keep line if marker parsing fails
+                  else:
+                      spec_part = line
+                  # Parse package spec
+                  match = re.match(r'^([a-zA-Z0-9_-]+)(?:\[.*?\])?\s*(?:==|>=|@)\s*(.+)$', spec_part)
+                  if match:
+                      pkg_name = match.group(1)
+                      version_or_url = match.group(2).strip()
+                      # If it's a URL, write with @ for full reqs, just name for wheel reqs
+                      if version_or_url.startswith(('git+', 'http://', 'https://')):
+                          full_out.write(line + "\n")
+                          wheel_out.write(pkg_name + "\n")
+                          print(f"* {line}")
+                      else:
+                          full_out.write(line + "\n")
+                          wheel_out.write(line + "\n")
+                          print(f"+ {line}")
+                  else:
+                      full_out.write(line + "\n")
+                      wheel_out.write(line + "\n")
+                      print(f"+ {line}")
+          PY
+          # Build wheels from filtered requirements (no-deps since pdm already resolved everything)
+          pip wheel --no-deps -r wheelhouse/requirements-with-urls.txt -w wheelhouse/
+          rm wheelhouse/requirements-all.txt wheelhouse/requirements-with-urls.txt
 
       - name: Remove heavy libraries
         run: |
@@ -113,8 +161,9 @@ jobs:
       - name: Combine wheels into single directory
         run: |
           mkdir -p wheelhouse
-          # Copy wheels from all artifacts
+          # Copy wheels and requirements files from all artifacts
           find artifacts -name "*.whl" -exec cp {} wheelhouse/ \;
+          find artifacts -name "requirements-*.txt" -exec cp {} wheelhouse/ \;
           echo "Combined wheels:"
           ls -alh wheelhouse/
 

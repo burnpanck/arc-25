@@ -2,10 +2,10 @@
 # It is not intended for manual editing.
 
 [metadata]
-groups = ["default", "cuda12", "cuda13-local", "deploy", "explorer", "huggingface", "test", "tpu", "train", "vision"]
+groups = ["default", "cuda12", "cuda13-local", "deploy", "explorer", "huggingface", "test", "tpu", "train", "venv", "vision"]
 strategy = ["inherit_metadata", "static_urls"]
 lock_version = "4.5.0"
-content_hash = "sha256:c0a1652415fbef0824f995907e16c9e2965c78848c7a0a5131462388f748d88d"
+content_hash = "sha256:f755451d73434dae341d9c79e64d37e6c8c0fd44748bcc670e6437ac4f19e85d"
 
 [[metadata.targets]]
 requires_python = ">=3.11,<3.13"
@@ -66,7 +66,7 @@ name = "aiohappyeyeballs"
 version = "2.6.1"
 requires_python = ">=3.9"
 summary = "Happy Eyeballs for asyncio"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/0f/15/5bf3b99495fb160b63f95972b81750f18f7f4e02ad051373b669d17d44f2/aiohappyeyeballs-2.6.1-py3-none-any.whl", hash = "sha256:f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8"},
@@ -78,7 +78,7 @@ name = "aiohttp"
 version = "3.13.2"
 requires_python = ">=3.9"
 summary = "Async http client/server framework (asyncio)"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "aiohappyeyeballs>=2.5.0",
@@ -184,7 +184,7 @@ name = "aiosignal"
 version = "1.4.0"
 requires_python = ">=3.9"
 summary = "aiosignal: a list of registered asynchronous callbacks"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "frozenlist>=1.1.0",
@@ -260,7 +260,7 @@ name = "attrs"
 version = "25.4.0"
 requires_python = ">=3.9"
 summary = "Classes Without Boilerplate"
-groups = ["default", "explorer", "train"]
+groups = ["default", "deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373"},
@@ -317,7 +317,7 @@ name = "cachetools"
 version = "6.2.1"
 requires_python = ">=3.9"
 summary = "Extensible memoizing collections and decorators"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/96/c5/1e741d26306c42e2bf6ab740b2202872727e0f606033c9dd713f8b93f5a8/cachetools-6.2.1-py3-none-any.whl", hash = "sha256:09868944b6dde876dfd44e1d47e18484541eaf12f26f29b7af91b26cc892d701"},
@@ -605,7 +605,7 @@ name = "decorator"
 version = "5.2.1"
 requires_python = ">=3.8"
 summary = "Decorators for Humans"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/43/fa/6d96a0978d19e17b68d634497769987b16c8f4cd0a7a05048bec693caa6b/decorator-5.2.1.tar.gz", hash = "sha256:65f266143752f734b0a7cc83c46f4618af75b8c5911b00ccb61d0ac9b6da0360"},
@@ -819,7 +819,7 @@ name = "frozenlist"
 version = "1.8.0"
 requires_python = ">=3.9"
 summary = "A list-like structure which implements collections.abc.MutableSequence"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/03/a8/9ea226fbefad669f11b52e864c55f0bd57d3c8d7eb07e9f2e9a0b39502e1/frozenlist-1.8.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:21900c48ae04d13d416f0e1e0c4d81f7931f73a9dfa0b7a8746fb2fe7dd970ed"},
@@ -939,7 +939,7 @@ name = "gcsfs"
 version = "2025.10.0"
 requires_python = ">=3.9"
 summary = "Convenient Filesystem interface over GCS"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "aiohttp!=4.0.0a0,!=4.0.0a1",
@@ -991,7 +991,7 @@ name = "google-api-core"
 version = "2.28.1"
 requires_python = ">=3.7"
 summary = "Google API client core library"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "google-auth<3.0.0,>=2.14.1",
@@ -1034,7 +1034,7 @@ name = "google-auth"
 version = "2.41.1"
 requires_python = ">=3.7"
 summary = "Google Authentication Library"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "cachetools<7.0,>=2.0.0",
@@ -1051,7 +1051,7 @@ name = "google-auth-oauthlib"
 version = "1.2.3"
 requires_python = ">=3.7"
 summary = "Google Authentication Library"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "google-auth<2.42.0,>=2.15.0",
@@ -1116,7 +1116,7 @@ name = "google-cloud-core"
 version = "2.5.0"
 requires_python = ">=3.7"
 summary = "Google Cloud API client core library"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "google-api-core!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.0,<3.0.0,>=1.31.6",
@@ -1177,7 +1177,7 @@ name = "google-cloud-storage"
 version = "3.4.1"
 requires_python = ">=3.7"
 summary = "Google Cloud Storage API client library"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "google-api-core<3.0.0,>=2.15.0",
@@ -1197,7 +1197,7 @@ name = "google-crc32c"
 version = "1.7.1"
 requires_python = ">=3.9"
 summary = "A python wrapper of the C library 'Google CRC32C'"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "importlib-resources>=1.3; python_version < \"3.9\" and os_name == \"nt\"",
@@ -1252,7 +1252,7 @@ name = "google-resumable-media"
 version = "2.7.2"
 requires_python = ">=3.7"
 summary = "Utilities for Google Media Downloads and Resumable Uploads"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "google-crc32c<2.0dev,>=1.0",
@@ -1267,7 +1267,7 @@ name = "googleapis-common-protos"
 version = "1.71.0"
 requires_python = ">=3.7"
 summary = "Common protobufs used in Google APIs"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "protobuf!=4.21.1,!=4.21.2,!=4.21.3,!=4.21.4,!=4.21.5,<7.0.0,>=3.20.2",
@@ -2287,7 +2287,7 @@ name = "multidict"
 version = "6.7.0"
 requires_python = ">=3.9"
 summary = "multidict implementation"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "typing-extensions>=4.1.0; python_version < \"3.11\"",
@@ -2925,7 +2925,7 @@ name = "oauthlib"
 version = "3.3.1"
 requires_python = ">=3.8"
 summary = "A generic, spec-compliant, thorough implementation of the OAuth request-signing logic"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/0b/5f/19930f824ffeb0ad4372da4812c50edbd1434f678c90c2733e1188edfc63/oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9"},
@@ -3067,7 +3067,7 @@ name = "packaging"
 version = "25.0"
 requires_python = ">=3.8"
 summary = "Core utilities for Python packages"
-groups = ["default", "huggingface", "test", "train"]
+groups = ["default", "deploy", "huggingface", "test", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484"},
@@ -3189,6 +3189,18 @@ files = [
 ]
 
 [[package]]
+name = "pip"
+version = "25.3"
+requires_python = ">=3.9"
+summary = "The PyPA recommended tool for installing Python packages."
+groups = ["venv"]
+marker = "python_version >= \"3.11\" and python_version < \"3.15\""
+files = [
+    {url = "https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl", hash = "sha256:9655943313a94722b7774661c21049070f6bbb0a1516bf02f7c8d5d9201514cd"},
+    {url = "https://files.pythonhosted.org/packages/fe/6e/74a3f0179a4a73a53d66ce57fdb4de0080a8baa1de0063de206d6167acc2/pip-25.3.tar.gz", hash = "sha256:8d0538dbbd7babbd207f261ed969c65de439f6bc9e5dbd3b3b9a77f25d95f343"},
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.5.0"
 requires_python = ">=3.10"
@@ -3217,7 +3229,7 @@ name = "propcache"
 version = "0.4.1"
 requires_python = ">=3.9"
 summary = "Accelerated property cache"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/01/20/b0972d902472da9bcb683fa595099911f4d2e86e5683bcc45de60dd05dc3/propcache-0.4.1-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:6f6ff873ed40292cd4969ef5310179afd5db59fdf055897e282485043fc80ad0"},
@@ -3319,7 +3331,7 @@ name = "proto-plus"
 version = "1.26.1"
 requires_python = ">=3.7"
 summary = "Beautiful, Pythonic protocol buffers"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "protobuf<7.0.0,>=3.19.0",
@@ -3349,25 +3361,25 @@ files = [
 
 [[package]]
 name = "psutil"
-version = "7.1.2"
+version = "7.1.3"
 requires_python = ">=3.6"
 summary = "Cross-platform lib for process and system monitoring."
 groups = ["huggingface", "vision"]
 marker = "python_version >= \"3.11\" and python_version < \"3.14\""
 files = [
-    {url = "https://files.pythonhosted.org/packages/30/28/5e27f4d5a0e347f8e3cc16cd7d35533dbce086c95807f1f0e9cd77e26c10/psutil-7.1.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3efd8fc791492e7808a51cb2b94889db7578bfaea22df931424f874468e389e3"},
-    {url = "https://files.pythonhosted.org/packages/36/eb/28d22de383888deb252c818622196e709da98816e296ef95afda33f1c0a2/psutil-7.1.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:8e9e77a977208d84aa363a4a12e0f72189d58bbf4e46b49aae29a2c6e93ef206"},
-    {url = "https://files.pythonhosted.org/packages/6a/32/97ca2090f2f1b45b01b6aa7ae161cfe50671de097311975ca6eea3e7aabc/psutil-7.1.2-cp37-abi3-win_arm64.whl", hash = "sha256:3e988455e61c240cc879cb62a008c2699231bf3e3d061d7fce4234463fd2abb4"},
-    {url = "https://files.pythonhosted.org/packages/89/5d/220039e2f28cc129626e54d63892ab05c0d56a29818bfe7268dcb5008932/psutil-7.1.2-cp313-cp313t-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7d9623a5e4164d2220ecceb071f4b333b3c78866141e8887c072129185f41278"},
-    {url = "https://files.pythonhosted.org/packages/aa/cc/7eb93260794a42e39b976f3a4dde89725800b9f573b014fac142002a5c98/psutil-7.1.2-cp313-cp313t-win_amd64.whl", hash = "sha256:f101ef84de7e05d41310e3ccbdd65a6dd1d9eed85e8aaf0758405d022308e204"},
-    {url = "https://files.pythonhosted.org/packages/ab/1a/0681a92b53366e01f0a099f5237d0c8a2f79d322ac589cccde5e30c8a4e2/psutil-7.1.2-cp313-cp313t-win_arm64.whl", hash = "sha256:20c00824048a95de67f00afedc7b08b282aa08638585b0206a9fb51f28f1a165"},
-    {url = "https://files.pythonhosted.org/packages/ae/89/b9f8d47ddbc52d7301fc868e8224e5f44ed3c7f55e6d0f54ecaf5dd9ff5e/psutil-7.1.2-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:c9ba5c19f2d46203ee8c152c7b01df6eec87d883cfd8ee1af2ef2727f6b0f814"},
-    {url = "https://files.pythonhosted.org/packages/b8/d9/b56cc9f883140ac10021a8c9b0f4e16eed1ba675c22513cdcbce3ba64014/psutil-7.1.2-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:0cc5c6889b9871f231ed5455a9a02149e388fffcb30b607fb7a8896a6d95f22e"},
-    {url = "https://files.pythonhosted.org/packages/ba/7a/286f0e1c167445b2ef4a6cbdfc8c59fdb45a5a493788950cf8467201dc73/psutil-7.1.2-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:364b1c10fe4ed59c89ec49e5f1a70da353b27986fa8233b4b999df4742a5ee2f"},
-    {url = "https://files.pythonhosted.org/packages/c8/7a/8628c2f6b240680a67d73d8742bb9ff39b1820a693740e43096d5dcb01e5/psutil-7.1.2-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:2a486030d2fe81bec023f703d3d155f4823a10a47c36784c84f1cc7f8d39bedb"},
-    {url = "https://files.pythonhosted.org/packages/cd/ec/7b8e6b9b1d22708138630ef34c53ab2b61032c04f16adfdbb96791c8c70c/psutil-7.1.2.tar.gz", hash = "sha256:aa225cdde1335ff9684708ee8c72650f6598d5ed2114b9a7c5802030b1785018"},
-    {url = "https://files.pythonhosted.org/packages/e5/5c/79cf60c9acf36d087f0db0f82066fca4a780e97e5b3a2e4c38209c03d170/psutil-7.1.2-cp36-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e2aeb9b64f481b8eabfc633bd39e0016d4d8bbcd590d984af764d80bf0851b8a"},
-    {url = "https://files.pythonhosted.org/packages/f7/03/0a464404c51685dcb9329fdd660b1721e076ccd7b3d97dee066bcc9ffb15/psutil-7.1.2-cp37-abi3-win_amd64.whl", hash = "sha256:8e17852114c4e7996fe9da4745c2bdef001ebbf2f260dec406290e66628bdb91"},
+    {url = "https://files.pythonhosted.org/packages/30/1c/f921a009ea9ceb51aa355cb0cc118f68d354db36eae18174bab63affb3e6/psutil-7.1.3-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1068c303be3a72f8e18e412c5b2a8f6d31750fb152f9cb106b54090296c9d251"},
+    {url = "https://files.pythonhosted.org/packages/55/4c/c3ed1a622b6ae2fd3c945a366e64eb35247a31e4db16cf5095e269e8eb3c/psutil-7.1.3-cp37-abi3-win_amd64.whl", hash = "sha256:f39c2c19fe824b47484b96f9692932248a54c43799a84282cfe58d05a6449efd"},
+    {url = "https://files.pythonhosted.org/packages/62/61/23fd4acc3c9eebbf6b6c78bcd89e5d020cfde4acf0a9233e9d4e3fa698b4/psutil-7.1.3-cp313-cp313t-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:95ef04cf2e5ba0ab9eaafc4a11eaae91b44f4ef5541acd2ee91d9108d00d59a7"},
+    {url = "https://files.pythonhosted.org/packages/68/3a/9f93cff5c025029a36d9a92fef47220ab4692ee7f2be0fba9f92813d0cb8/psutil-7.1.3-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:bc31fa00f1fbc3c3802141eede66f3a2d51d89716a194bf2cd6fc68310a19880"},
+    {url = "https://files.pythonhosted.org/packages/6f/8d/b31e39c769e70780f007969815195a55c81a63efebdd4dbe9e7a113adb2f/psutil-7.1.3-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:19644c85dcb987e35eeeaefdc3915d059dac7bd1167cdcdbf27e0ce2df0c08c0"},
+    {url = "https://files.pythonhosted.org/packages/a6/82/62d68066e13e46a5116df187d319d1724b3f437ddd0f958756fc052677f4/psutil-7.1.3-cp313-cp313t-win_amd64.whl", hash = "sha256:18349c5c24b06ac5612c0428ec2a0331c26443d259e2a0144a9b24b4395b58fa"},
+    {url = "https://files.pythonhosted.org/packages/bd/93/0c49e776b8734fef56ec9c5c57f923922f2cf0497d62e0f419465f28f3d0/psutil-7.1.3-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:0005da714eee687b4b8decd3d6cc7c6db36215c9e74e5ad2264b90c3df7d92dc"},
+    {url = "https://files.pythonhosted.org/packages/c9/ad/33b2ccec09bf96c2b2ef3f9a6f66baac8253d7565d8839e024a6b905d45d/psutil-7.1.3-cp37-abi3-win_arm64.whl", hash = "sha256:bd0d69cee829226a761e92f28140bec9a5ee9d5b4fb4b0cc589068dbfff559b1"},
+    {url = "https://files.pythonhosted.org/packages/ce/b1/5f49af514f76431ba4eea935b8ad3725cdeb397e9245ab919dbc1d1dc20f/psutil-7.1.3-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3bb428f9f05c1225a558f53e30ccbad9930b11c3fc206836242de1091d3e7dd3"},
+    {url = "https://files.pythonhosted.org/packages/df/ad/c1cd5fe965c14a0392112f68362cfceb5230819dbb5b1888950d18a11d9f/psutil-7.1.3-cp313-cp313t-win_arm64.whl", hash = "sha256:c525ffa774fe4496282fb0b1187725793de3e7c6b29e41562733cae9ada151ee"},
+    {url = "https://files.pythonhosted.org/packages/e0/95/992c8816a74016eb095e73585d747e0a8ea21a061ed3689474fabb29a395/psutil-7.1.3-cp36-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:56d974e02ca2c8eb4812c3f76c30e28836fffc311d55d979f1465c1feeb2b68b"},
+    {url = "https://files.pythonhosted.org/packages/e1/88/bdd0a41e5857d5d703287598cbf08dad90aed56774ea52ae071bae9071b6/psutil-7.1.3.tar.gz", hash = "sha256:6c86281738d77335af7aec228328e944b30930899ea760ecf33a4dba66be5e74"},
+    {url = "https://files.pythonhosted.org/packages/ef/94/46b9154a800253e7ecff5aaacdf8ebf43db99de4a2dfa18575b02548654e/psutil-7.1.3-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:2bdbcd0e58ca14996a42adf3621a6244f1bb2e2e528886959c72cf1e326677ab"},
 ]
 
 [[package]]
@@ -3375,7 +3387,7 @@ name = "pyasn1"
 version = "0.6.1"
 requires_python = ">=3.8"
 summary = "Pure-Python implementation of ASN.1 types and DER/BER/CER codecs (X.208)"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 files = [
     {url = "https://files.pythonhosted.org/packages/ba/e9/01f1a64245b89f039897cb0130016d79f77d52669aae6ee7b159a6c4c018/pyasn1-0.6.1.tar.gz", hash = "sha256:6f580d2bdd84365380830acf45550f2511469f673cb4a5ae3857a3170128b034"},
@@ -3387,7 +3399,7 @@ name = "pyasn1-modules"
 version = "0.4.2"
 requires_python = ">=3.8"
 summary = "A collection of ASN.1-based protocols modules"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "pyasn1<0.7.0,>=0.6.1",
@@ -3815,7 +3827,7 @@ name = "requests-oauthlib"
 version = "2.0.0"
 requires_python = ">=3.4"
 summary = "OAuthlib authentication support for Requests."
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "oauthlib>=3.0.0",
@@ -3847,7 +3859,7 @@ name = "rsa"
 version = "4.9.1"
 requires_python = "<4,>=3.6"
 summary = "Pure-Python RSA implementation"
-groups = ["train"]
+groups = ["deploy", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "pyasn1>=0.1.3",
@@ -4713,7 +4725,7 @@ name = "yarl"
 version = "1.22.0"
 requires_python = ">=3.9"
 summary = "Yet another URL library"
-groups = ["explorer", "train"]
+groups = ["deploy", "explorer", "train"]
 marker = "python_version >= \"3.11\" and python_version < \"3.15\""
 dependencies = [
     "idna>=2.0",

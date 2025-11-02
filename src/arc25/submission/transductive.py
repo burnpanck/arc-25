@@ -1,5 +1,7 @@
+import contextlib
 import itertools
 import json
+import lzma
 import os
 import sys
 import time
@@ -12,6 +14,7 @@ import attrs
 import click
 import jax
 import jax.numpy as jnp
+import msgpack
 import numpy as np
 import optax
 import tqdm.auto
@@ -19,7 +22,7 @@ from flax import nnx
 
 from .. import dataset as challenge_dataset
 from ..lib.click_tools import attrs_to_click_options
-from ..serialisation import serialisable
+from ..serialisation import serialisable, serialise
 from ..training import arc_solver as solver_trainer
 from ..training import cli, dataset, saving
 from ..vision2 import arc_solver
@@ -35,6 +38,21 @@ num_devices = 4
 num_solution_attempts = 8
 
 
+def serialise_msgpack_file(outfile: Path, src: typing.Any):
+    outfile = Path(outfile)
+    reduced = serialise(src, reduce=saving.reduce_jax)
+    serialised = msgpack.dumps(reduced)
+    with contextlib.ExitStack() as stack:
+        match outfile.suffix:
+            case ".msgpack":
+                fh = stack.enter_context(open(outfile, "wb"))
+            case ".xz":
+                fh = stack.enter_context(lzma.LZMAFile(outfile, "wb"))
+            case _:
+                raise KeyError(f"Unsupported suffix {outfile.suffix}")
+        fh.write(serialised)
+
+
 @serialisable
 @attrs.frozen(kw_only=True)
 class Config:
@@ -46,7 +64,7 @@ class Config:
     model_weights_file: Path
     output_file: Path = Path("/kaggle/working/submission.json")
     prediction_batch_size: int = 16 * num_devices
-    latent_program_init_scale: float = 1.0
+    latent_program_init_scale: float = 0.2
 
     model: cli.ModelSelection = cli.ModelSelection(
         type="arc-solver",
@@ -241,14 +259,32 @@ def solve(config: Config):
     )
     res = trainer.run_main()
 
+    training_hist_file_name = config.output_file.with_name("training-hist.msgpack.xz")
+    print(f"Storing training history to {training_hist_file_name}")
+    serialise_msgpack_file(
+        training_hist_file_name,
+        res,
+    )
+
+    latent_pgm_file_name = config.output_file.with_name("latent-pgms.msgpack.xz")
+    print(f"Storing latent programs to {latent_pgm_file_name}")
+    lpe = np.asarray(solver.latent_program_embeddings)
+    nsa = trainer_config.num_solution_attempts
+
+    serialise_msgpack_file(
+        latent_pgm_file_name,
+        dict(
+            challenges=challenge_order,
+            latent_program_embeddings=lpe.reshape(-1, nsa, *lpe.shape[1:]),
+        ),
+    )
+
     te = time.monotonic()
     print(f"Training complete, final loss {res[-1]['loss']:.3f}, took {te-ts:.1f} s")
     sys.stdout.flush()
     ts = te
 
     print("\n*** Compute predictions")
-
-    nsa = trainer_config.num_solution_attempts
 
     print("Prepare model inputs")
     all_inputs = []
@@ -476,6 +512,15 @@ def solve(config: Config):
         json.dump(output_data, fh)
 
     print(f"Output file: {config.output_file}")
+
+    full_results_output = config.output_file.with_name(
+        "solutions.msgpack.xz",
+    )
+    print(f"Writing detailed solutions to: {full_results_output}")
+    serialise_msgpack_file(
+        full_results_output,
+        solutions,
+    )
 
     tfinal = time.monotonic()
     print(f"All done; total time {(tfinal-tstart)/60:.1f} mins")
