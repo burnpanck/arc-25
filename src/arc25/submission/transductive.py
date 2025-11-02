@@ -38,9 +38,11 @@ num_devices = 4
 num_solution_attempts = 8
 
 
-def serialise_msgpack_file(outfile: Path, src: typing.Any):
+def serialise_msgpack_file(
+    outfile: Path, src: typing.Any, *, log_all_types: bool = False
+):
     outfile = Path(outfile)
-    reduced = serialise(src, reduce=saving.reduce_jax)
+    reduced = serialise(src, reduce=saving.reduce_jax, log_all_types=log_all_types)
     serialised = msgpack.dumps(reduced)
     with contextlib.ExitStack() as stack:
         match outfile.suffix:

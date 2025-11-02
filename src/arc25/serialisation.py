@@ -22,18 +22,32 @@ def serialise(
     *,
     reduce: typing.Callable[[Any, tuple[Any, ...]], Any] | None = None,
     path: tuple[Any, ...] = (),
+    log_all_types: bool = False,
 ):
     if reduce is not None:
-        obj = reduce(obj, path)
+        robj = reduce(obj, path)
+        if log_all_types:
+            print(
+                f"{':'*len(path)} {path[-1] if path else path} {type(robj).__qualname__} <- {type(obj).__qualname__}"
+            )
+        obj = robj
+    elif log_all_types:
+        print(f"{':'*len(path)} {path[-1] if path else path} {type(obj).__qualname__}")
+    kw = dict(
+        reduce=reduce,
+        log_all_types=log_all_types,
+    )
     match obj:
         case dict() | MappingProxyType():
-            return {k: serialise(v, path=path + (k,)) for k, v in obj.items()}
+            return {k: serialise(v, **kw, path=path + (k,)) for k, v in obj.items()}
         case tuple() | list():
-            return type(obj)(serialise(v, path=path + (k,)) for k, v in enumerate(obj))
+            return type(obj)(
+                serialise(v, **kw, path=path + (k,)) for k, v in enumerate(obj)
+            )
         case set() | frozenset():
             return dict(
                 __type__=type(obj).__qualname__,
-                data=[serialise(v, path=path + (k,)) for k, v in enumerate(obj)],
+                data=[serialise(v, **kw, path=path + (k,)) for k, v in enumerate(obj)],
             )
         case np.ndarray():
             return dict(
@@ -45,7 +59,11 @@ def serialise(
         case enum.Enum():
             return dict(__type__=type(obj).__qualname__, name=obj.name)
         case SimpleNamespace():
-            return dict(__type__=type(obj).__qualname__, **vars(obj))
+            dct = {
+                k: serialise(v, **kw, path=path + (k,)) for k, v in vars(obj).items()
+            }
+            dct.update(__type__=type(obj).__qualname__)
+            return dct
         case _ if attrs.has(type(obj)):
             dct = serialise(
                 attrs.asdict(
@@ -53,9 +71,10 @@ def serialise(
                     recurse=False,
                     filter=lambda attr, value: not attr.metadata.get("is_cache"),
                 ),
+                **kw,
                 path=path,
             )
-            dct["__type__"] = type(obj).__qualname__
+            dct.update(__type__=type(obj).__qualname__)
             return dct
         case np.dtype():
             return dict(__type__=type(obj).__qualname__, name=str(obj))
@@ -66,9 +85,10 @@ def serialise(
         case _ if dataclasses.is_dataclass(obj):
             dct = serialise(
                 {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)},
+                **kw,
                 path=path,
             )
-            dct["__type__"] = type(obj).__qualname__
+            dct.update(__type__=type(obj).__qualname__)
             return dct
         case _:
             return obj
