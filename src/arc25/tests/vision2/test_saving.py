@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import flax
 import jax.numpy as jnp
@@ -25,6 +26,10 @@ flax_version = tuple(int(v) for v in flax.__version__.split("."))
         pytest.param(np.float32, id="float32"),
         pytest.param(jnp.bfloat16, id="bfloat16"),
         pytest.param(frozenset([1, 2, 3]), id="set"),
+        pytest.param(
+            SimpleNamespace(some_int=1, some_str="str", some_type=int),
+            id="SimpleNamespace",
+        ),
     ],
 )
 def test_serialisation(example):

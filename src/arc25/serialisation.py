@@ -2,7 +2,7 @@ import dataclasses
 import enum
 import functools
 import typing
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import attrs
@@ -44,6 +44,8 @@ def serialise(
             )
         case enum.Enum():
             return dict(__type__=type(obj).__qualname__, name=obj.name)
+        case SimpleNamespace():
+            return dict(__type__=type(obj).__qualname__, **vars(obj))
         case _ if attrs.has(type(obj)):
             dct = serialise(
                 attrs.asdict(
@@ -74,7 +76,8 @@ def serialise(
 
 _known_types = {
     t.__qualname__: t
-    for t in [np.ndarray, set, frozenset, D4, np.dtype] + list(PermRepBase._known_reps)
+    for t in [np.ndarray, SimpleNamespace, set, frozenset, D4, np.dtype]
+    + list(PermRepBase._known_reps)
 } | {
     t.__qualname__: t
     for k, t in vars(types).items()
@@ -141,7 +144,7 @@ def deserialise(data):
     elif issubclass(cls, enum.Enum):
         return cls[data["name"]]
     else:
-        assert attrs.has(cls) or dataclasses.is_dataclass(cls)
+        assert attrs.has(cls) or dataclasses.is_dataclass(cls) or cls is SimpleNamespace
     a = deserialise(data)
     if (renamed_attrs := _renamed_attrs.get(cls)) is not None:
         a = {renamed_attrs.get(k, k): v for k, v in a.items()}

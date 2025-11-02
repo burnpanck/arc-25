@@ -165,6 +165,7 @@ def solve(config: Config):
     ts = te
 
     print("\n*** Build model")
+    sys.stdout.flush()
     solver = arc_solver.ARCSolver(
         **arc_solver.configs[config.model.config],
         num_latent_programs=len(challenge_order) * config.trainer.num_solution_attempts,
@@ -285,7 +286,7 @@ def solve(config: Config):
     ts = te
 
     print("\n*** Compute predictions")
-
+    sys.stdout.flush()
     print("Prepare model inputs")
     all_inputs = []
     for challenge in main_dataset.challenges.values():
@@ -499,6 +500,7 @@ def solve(config: Config):
     ts = te
 
     print("\n*** Writing submission file")
+    sys.stdout.flush()
     output_data = {}
     for sol in solutions.values():
         output_data[sol.challenge.id] = [
@@ -519,7 +521,10 @@ def solve(config: Config):
     print(f"Writing detailed solutions to: {full_results_output}")
     serialise_msgpack_file(
         full_results_output,
-        solutions,
+        {
+            k: {kk: vv if kk != "challenge" else vv.id for kk, vv in vars(v).items()}
+            for k, v in solutions.items()
+        },
     )
 
     tfinal = time.monotonic()
