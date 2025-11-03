@@ -21,10 +21,11 @@ from ..serialisation import deserialise, serialise
 def reduce_jax(obj, path=()):
     match obj:
         case jaxlib._jax.ArrayImpl():
-            print(
-                f"`save_model` got unexpected JAX-Array of shape {obj.shape} at {path}",
-                file=sys.stderr,
-            )
+            if False:
+                print(
+                    f"`save_model` got unexpected JAX-Array of shape {obj.shape} at {path}",
+                    file=sys.stderr,
+                )
             return np.asarray(jax.device_get(obj))
     return obj
 

@@ -69,6 +69,7 @@ class Config:
     output_file: Path = Path("/kaggle/working/submission.json")
     prediction_batch_size: int = 16 * num_devices
     latent_program_init_scale: float = 0.02
+    debug_output_dir: Path | None = None
 
     model: cli.ModelSelection = cli.ModelSelection(
         type="arc-solver",
@@ -116,6 +117,18 @@ def solve(config: Config):
     assert not config.prediction_batch_size % num_devices
 
     trainer_config = config.trainer
+
+    for key in [
+        "challenges_input_file",
+        "model_weights_file",
+        "output_file",
+        "debug_output_dir",
+    ]:
+        if (val := getattr(config, key)) is not None:
+            setattr(config, key, Path(val))
+
+    if config.debug_output_dir is not None:
+        config.debug_output_dir.mkdir(parents=True, exist_ok=True)
 
     ts = time.monotonic()
     print("\n*** Load data")
@@ -266,38 +279,39 @@ def solve(config: Config):
     )
     res = trainer.run_main()
 
-    training_hist_file_name = config.output_file.with_name("training-hist.msgpack.xz")
-    print(f"Storing training history to {training_hist_file_name}")
-    serialise_msgpack_file(
-        training_hist_file_name,
-        res,
-    )
+    if config.debug_output_dir is not None:
+        training_hist_file_name = config.debug_output_dir / "training-hist.msgpack.xz"
+        print(f"Storing training history to {training_hist_file_name}")
+        serialise_msgpack_file(
+            training_hist_file_name,
+            res,
+        )
 
-    latent_pgm_file_name = config.output_file.with_name("latent-pgms.msgpack.xz")
-    print(f"Storing latent programs to {latent_pgm_file_name}")
-    lpe = np.asarray(solver.latent_program_embeddings)
-    nsa = trainer_config.num_solution_attempts
+        latent_pgm_file_name = config.debug_output_dir / "latent-pgms.msgpack.xz"
+        print(f"Storing latent programs to {latent_pgm_file_name}")
+        lpe = np.asarray(solver.latent_program_embeddings)
+        nsa = trainer_config.num_solution_attempts
 
-    serialise_msgpack_file(
-        latent_pgm_file_name,
-        dict(
-            challenges=challenge_order,
-            latent_program_embeddings=lpe.reshape(-1, nsa, *lpe.shape[1:]),
-        ),
-    )
-
-    if config.freeze_decoder:
-        model_weights_file = config.output_file.with_name("model-weights.msgpack.xz")
-        print(f"Storing model weights to {model_weights_file}")
-        saving.save_model(
-            solver,
-            model_weights_file,
-            metadata=dict(
-                config=dict(self=config, model=solver.config),
-                code_version=arc25.__version__,
-                training_history=res,
+        serialise_msgpack_file(
+            latent_pgm_file_name,
+            dict(
+                challenges=challenge_order,
+                latent_program_embeddings=lpe.reshape(-1, nsa, *lpe.shape[1:]),
             ),
         )
+
+        if not config.freeze_decoder:
+            model_weights_file = config.debug_output_dir / "model-weights.msgpack.xz"
+            print(f"Storing model weights to {model_weights_file}")
+            saving.save_model(
+                solver,
+                model_weights_file,
+                metadata=dict(
+                    config=dict(self=config, model=solver.config),
+                    code_version=arc25.__version__,
+                    training_history=res,
+                ),
+            )
 
     te = time.monotonic()
     print(f"Training complete, final loss {res[-1]['loss']:.3f}, took {te-ts:.1f} s")
@@ -542,20 +556,20 @@ def solve(config: Config):
 
     print(f"Output file: {config.output_file}")
 
-    full_results_output = config.output_file.with_name(
-        "solutions.msgpack.xz",
-    )
-    print(f"Writing detailed solutions to: {full_results_output}")
-    serialise_msgpack_file(
-        full_results_output,
-        {
-            k: {
-                kk: vv.id if isinstance(vv, challenge_dataset.Challenge) else vv
-                for kk, vv in vars(v).items()
-            }
-            for k, v in solutions.items()
-        },
-    )
+    if config.debug_output_dir is not None:
+        full_results_output = config.debug_output_dir / "solutions.msgpack.xz"
+
+        print(f"Writing detailed solutions to: {full_results_output}")
+        serialise_msgpack_file(
+            full_results_output,
+            {
+                k: {
+                    kk: vv.id if isinstance(vv, challenge_dataset.Challenge) else vv
+                    for kk, vv in vars(v).items()
+                }
+                for k, v in solutions.items()
+            },
+        )
 
     tfinal = time.monotonic()
     print(f"All done; total time {(tfinal-tstart)/60:.1f} mins")
