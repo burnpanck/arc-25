@@ -52,6 +52,8 @@ class ArcSolverConfig(ImageTrainConfigBase):
 
     num_solution_attempts: int = 1
 
+    embedding_lr_scale: float = 1
+
 
 class TrainState(TrainStateBase):
     """Training state for ArcSolver with encoder-decoder architecture.
@@ -72,8 +74,11 @@ class TrainState(TrainStateBase):
         main_opt_chain = optax.chain(*super()._make_optimiser(config, trainable_state))
         # we currently don't do any weight-decay. If we did, we'd need to
         # also scale it with the weight, perhaps easiest to just include in this custom Adam.
-        embedding_chain = scale_by_adam_with_step_weights(
-            b1=config.betas[0], b2=config.betas[1], eps=config.eps
+        embedding_chain = optax.chain(
+            scale_by_adam_with_step_weights(
+                b1=config.betas[0], b2=config.betas[1], eps=config.eps
+            ),
+            optax.scale(config.embedding_lr_scale),
         )
         partition_labels = nnx.State(
             {
