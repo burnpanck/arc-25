@@ -108,7 +108,7 @@ def solve(config: Config):
     tstart = time.monotonic()
 
     print(
-        "Solving ARC Prize 2025 (or at least attempting to ☺️) using transductive approach"
+        "Solving ARC Prize 2025 (or at least attempting to ☺️) using a transductive approach"
     )
     print(f"Config: {config}")
     sys.stdout.flush()
@@ -308,15 +308,21 @@ def solve(config: Config):
         if not config.freeze_decoder:
             model_weights_file = config.debug_output_dir / "model-weights.msgpack.xz"
             print(f"Storing model weights to {model_weights_file}")
-            saving.save_model(
-                solver,
-                model_weights_file,
-                metadata=dict(
-                    config=dict(self=config, model=solver.config),
-                    code_version=arc25.__version__,
-                    training_history=res,
-                ),
-            )
+            try:
+                saving.save_model(
+                    solver,
+                    model_weights_file,
+                    metadata=dict(
+                        config=dict(self=config, model=solver.config),
+                        code_version=arc25.__version__,
+                        training_history=res,
+                    ),
+                )
+            except Exception as ex:
+                import traceback
+
+                traceback.print_exc()
+                print(f"Ignoring failure during model-weight saving: {ex!r}")
 
     te = time.monotonic()
     print(f"Training complete, final loss {res[-1]['loss']:.3f}, took {te-ts:.1f} s")

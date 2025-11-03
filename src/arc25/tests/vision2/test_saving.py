@@ -27,13 +27,18 @@ flax_version = tuple(int(v) for v in flax.__version__.split("."))
         pytest.param(jnp.bfloat16, id="bfloat16"),
         pytest.param(frozenset([1, 2, 3]), id="set"),
         pytest.param(
-            SimpleNamespace(some_int=1, some_str="str", some_type=int),
+            SimpleNamespace(
+                some_int=1,
+                some_str="str",
+                some_type=SimpleNamespace,
+                some_path=Path("/temp"),
+            ),
             id="SimpleNamespace",
         ),
     ],
 )
 def test_serialisation(example):
-    serialised = serialisation.serialise(example)
+    serialised = serialisation.serialise(example, log_all_types=True)
     try:
         deserialised = serialisation.deserialise(serialised)
     except Exception as ex:

@@ -2,6 +2,7 @@ import dataclasses
 import enum
 import functools
 import typing
+from pathlib import PosixPath, PurePath
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
@@ -56,6 +57,11 @@ def serialise(
                 dtype=str(obj.dtype),
                 data=bytes(obj.ravel()),
             )
+        case PurePath():
+            return dict(
+                __type__=type(obj).__qualname__,
+                data=str(obj),
+            )
         case enum.Enum():
             return dict(__type__=type(obj).__qualname__, name=obj.name)
         case SimpleNamespace():
@@ -96,7 +102,7 @@ def serialise(
 
 _known_types = {
     t.__qualname__: t
-    for t in [np.ndarray, SimpleNamespace, set, frozenset, D4, np.dtype]
+    for t in [np.ndarray, SimpleNamespace, set, frozenset, D4, np.dtype, PosixPath]
     + list(PermRepBase._known_reps)
 } | {
     t.__qualname__: t
@@ -151,13 +157,13 @@ def deserialise(data):
             return np.dtype(name)
     cls = _known_types.get(typ)
     if cls is None:
-        raise TypeError(f"Unsupported type {typ}")
+        raise TypeError(f"Unsupported type {typ!r} ({data=!r})")
     if data.pop("__just_type__", False):
         assert not data
         return cls
     if cls is np.ndarray:
         return np.frombuffer(data["data"], dtype=data["dtype"]).reshape(data["shape"])
-    elif cls in {set, frozenset}:
+    elif cls in {set, frozenset, PosixPath}:
         d = data.pop("data")
         assert not data
         return cls(d)
