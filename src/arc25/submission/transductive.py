@@ -116,16 +116,21 @@ def solve(config: Config):
     num_devices = jax.local_device_count()
     assert not config.prediction_batch_size % num_devices
 
-    trainer_config = config.trainer
+    config = attrs.evolve(
+        config,
+        **{
+            k: Path(v)
+            for k in [
+                "challenges_input_file",
+                "model_weights_file",
+                "output_file",
+                "debug_output_dir",
+            ]
+            if (v := getattr(config, k)) is not None
+        },
+    )
 
-    for key in [
-        "challenges_input_file",
-        "model_weights_file",
-        "output_file",
-        "debug_output_dir",
-    ]:
-        if (val := getattr(config, key)) is not None:
-            setattr(config, key, Path(val))
+    trainer_config = config.trainer
 
     if config.debug_output_dir is not None:
         config.debug_output_dir.mkdir(parents=True, exist_ok=True)
