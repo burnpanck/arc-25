@@ -284,6 +284,8 @@ def solve(config: Config):
     )
     res = trainer.run_main()
 
+    nsa = trainer_config.num_solution_attempts
+
     if config.debug_output_dir is not None:
         training_hist_file_name = config.debug_output_dir / "training-hist.msgpack.xz"
         print(f"Storing training history to {training_hist_file_name}")
@@ -295,7 +297,6 @@ def solve(config: Config):
         latent_pgm_file_name = config.debug_output_dir / "latent-pgms.msgpack.xz"
         print(f"Storing latent programs to {latent_pgm_file_name}")
         lpe = np.asarray(solver.latent_program_embeddings)
-        nsa = trainer_config.num_solution_attempts
 
         serialise_msgpack_file(
             latent_pgm_file_name,

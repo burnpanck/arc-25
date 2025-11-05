@@ -88,7 +88,29 @@ Architecture:
 
 ## Components
 
-### Domain-specific Transformer
+
+### Domain-specific Encoder
+
+- ViT style backbone based on the transformer block below
+  (S-size: 12 layers of equivariant co-attention)
+- Perceiver stack (S-size: 6 layers of *context* attending to *cells*)
+- S-size encoder trained as a MAE on ~15 epochs of the
+ full pre-computed 400 x 1000k I/O pairs of [Re-ARC]
+  (about 150 TPU v6e core-hours).
+
+**Currently implemented**:
+- (Training as a classifier predicting task IDs - not used anymore)
+- Online evaluation of the embedding quality using k-NN prediction of task IDs from which the image is taken.
+- Offline evaluation of the embedding quality using linear probing, again on the task IDs.
+- Focal loss: Prioritise *easy* examples - complex tasks
+  are out of reach for this architecture.
+- Implemented in `flax.nnx` (JAX).
+
+...
+
+### Domain-specific Transformer Block
+
+<img src="docs/figures/field-transformer.png" alt="Transformer Block" height=500>
 
 Architecture:
  - D4 dihedral symmetry and colour permutation symmetry built-in
@@ -112,21 +134,25 @@ Implementation details:
 
 ...
 
-### Domain-specific Encoder
 
-- ViT style backbone based on the above transformer
-  (S-size: 12 layers of equivariant co-attention)
-- Perceiver stack (S-size: 6 layers of *context* attending to *cells*)
-- S-size encoder trained as a MAE on ~15 epochs of the
- full pre-computed 400 x 1000k I/O pairs of [Re-ARC]
-  (about 150 TPU v6e core-hours).
+### Symmetric Axial Attention
 
-**Currently implemented**:
-- (Training as a classifier predicting task IDs - not used anymore)
-- Online evaluation of the embedding quality using k-NN prediction of task IDs from which the image is taken.
-- Offline evaluation of the embedding quality using linear probing, again on the task IDs.
-- Focal loss: Prioritise *easy* examples - complex tasks
-  are out of reach for this architecture.
-- Implemented in `flax.nnx` (JAX).
+Each cell token attends to both rows and columns simultaneously.
+The results from each attention "direction" are accumulated separately,
+and then stacked to form a new tensor dimension.
+Under space-symmetric transformation of the input grid,
+the values along the individual directions get permuted,
+such that a suitably equivariant final output projection
+can continue to guarantee symmetric behaviour.
 
-...
+### Covariant tensors and equivariant neural nets
+
+The vision part is built such to intrinsically respect the
+domain-specific inductive biases of the the ARC-AGI challenges;
+namely the dihedral symmetry group of the grid, as well as
+permutation symmetry between individual colors.
+
+This is achieved by defining, for each activation tensor,
+how it transforms under symmetry transformations of the input.
+This, in turn, constrains the weights of each projection tensor
+so the output follows the symmetry guarantees provided the input does.

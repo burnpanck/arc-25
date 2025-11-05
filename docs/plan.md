@@ -23,6 +23,6 @@ In the first version, we'll let the model generate all of that in a single step.
 ## Next steps
 - **Telemetry**: log compile_rate, diffs, and final pass on training I/O.
 - **Runner skeleton**: prompt → code → sandbox run → simple repair (1 pass).
-- **RAG hookup**: index DSL docs + your 30 solutions; add 3–5 helpful chunks to the prompt.
+- **RAG hookup**: index DSL docs + the example solutions; add 3–5 helpful chunks to the prompt.
   (ask ChatGPT for a tiny **FAISS/Chroma** indexer snippet for RAG.)
 - **Top-k candidates** (k=2–3) + temp ladder on repairs.
