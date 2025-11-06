@@ -70,9 +70,9 @@
         edge()
         blob((x, y + 1), [Attention], tint: c)
         norm((x, y + 4), c)
-        edge(auto, (rel: (0, -0.8)), (rel: (0.4*outs, 0)), "uu", "-|>", [Q], ..qkvkw)
-        edge(auto, (rel: (0, -0.8)), (-x+0.4*outs,y+2.5),(rel: (0, -1.5)), "-|>", [V], ..qkvkw)
-        edge(auto, (rel: (0, -0.8)), (-x+0.4*outs,y+2.5),(rel:(-0.4*outs,-0.2)),(rel: (0, -1.5)), "-|>", [K], ..qkvkw)
+        edge(auto, (rel: (0, -0.8)), (rel: (0.4*outs, -1)), (rel: (0, -1.2)), "-|>", [Q], ..qkvkw)
+        edge(auto, (rel: (0, -0.8)), (-x+0.4*outs,y+2.4),(rel: (0, -1.5)), "-|>", [V], ..qkvkw)
+        edge(auto, (rel: (0, -0.8)), (-x+0.4*outs,y+2.4),(rel:(-0.4*outs,-0.2)),(rel: (0, -1.2)), "-|>", [K], ..qkvkw)
 
         edge("<|-")
         y = y + 6
